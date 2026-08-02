@@ -18,8 +18,10 @@ payment route across offered chains, signs an authorization, and retries the req
 of 50 discards all upstream work. Existing clients hard-wire one facilitator and one chain. The
 protocol layer is settled (x402 v2); the gap is resilience and developer ergonomics.
 
-**Current state:** the repo `tx402-dev` contains only `PRD.md` and `SPEC.md` and has **no commits**.
-Everything below is greenfield.
+**Current state:** _(updated end of S1)_ the workspace is bootstrapped — both package scaffolds
+build, lint, typecheck, and test green; ADR-001..010 are recorded; CI covers Node 20/22 and
+CPython 3.10–3.13; the size gate runs. `tx402` is reserved on npm. No SDK behavior is implemented
+yet — the first real code lands at M0/M1 (S2/S3).
 
 **Sources of truth, in precedence order:**
 
@@ -269,26 +271,49 @@ _Exit:_ **T-016 — 100 % fixture parity** with TS on selected route, error code
 
 ## 7. Status Board _(update every session)_
 
-| Session | Milestone                | Status         | Notes |
-| ------- | ------------------------ | -------------- | ----- |
-| S1      | Bootstrap & Reserve      | ⬜ Not started |       |
-| S2      | M0 Spec fixtures         | ⬜ Not started |       |
-| S3      | M1 TS transport/protocol | ⬜ Not started |       |
-| S4      | M2 TS policy/ledger      | ⬜ Not started |       |
-| S5      | M3 TS Base adapter       | ⬜ Not started |       |
-| S6      | M4 TS Solana adapter     | ⬜ Not started |       |
-| S7      | M5 TS routing/health     | ⬜ Not started |       |
-| S8      | M6 TS completion         | ⬜ Not started |       |
-| S9      | Python M1–M3             | ⬜ Not started |       |
-| S10     | Python M4–M6             | ⬜ Not started |       |
-| S11     | M7 CLI + docs            | ⬜ Not started |       |
-| S12     | M8 hardening + release   | ⬜ Not started |       |
+| Session | Milestone                | Status         | Notes                                                                                                              |
+| ------- | ------------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------ |
+| S1      | Bootstrap & Reserve      | ✅ Complete    | 2026-08-02. Workspace, ADR-001..010, both package scaffolds, size gate, CI. npm name reserved; PyPI blocked on O1. |
+| S2      | M0 Spec fixtures         | ⬜ Not started |                                                                                                                    |
+| S3      | M1 TS transport/protocol | ⬜ Not started |                                                                                                                    |
+| S4      | M2 TS policy/ledger      | ⬜ Not started |                                                                                                                    |
+| S5      | M3 TS Base adapter       | ⬜ Not started |                                                                                                                    |
+| S6      | M4 TS Solana adapter     | ⬜ Not started |                                                                                                                    |
+| S7      | M5 TS routing/health     | ⬜ Not started |                                                                                                                    |
+| S8      | M6 TS completion         | ⬜ Not started |                                                                                                                    |
+| S9      | Python M1–M3             | ⬜ Not started |                                                                                                                    |
+| S10     | Python M4–M6             | ⬜ Not started |                                                                                                                    |
+| S11     | M7 CLI + docs            | ⬜ Not started |                                                                                                                    |
+| S12     | M8 hardening + release   | ⬜ Not started |                                                                                                                    |
 
 Legend: ⬜ not started · 🟨 in progress · ✅ complete · 🟥 blocked
 
-**Normative test status (SPEC §12.2):** T-001 … T-020 — all ⬜. Update as they go green.
+**Normative test status (SPEC §12.2):** T-001 … T-020 — all ⬜. None are in scope before S3.
 
-**Name reservation:** npm `tx402` ⬜ · PyPI `tx402` ⬜ _(blocked on API token)_
+**Name reservation:** npm `tx402` ✅ `0.0.0` published 2026-08-02 (maintainer `jay.komarraju`,
+Apache-2.0, `bin` resolves so `npx tx402` works) · PyPI `tx402` ⬜ — distributions built and
+verified at `packages/tx402-python/dist/`, publish blocked on open item **O1**. Runbook:
+`docs/operations/publishing.md`.
+
+**Session 1 verification results (all green):**
+
+| Check                          | Result                                                                      |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| `pnpm lint`                    | clean, `--max-warnings 0`                                                   |
+| `pnpm format:check`            | clean                                                                       |
+| `pnpm typecheck`               | clean, `strict` + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes` |
+| `pnpm test`                    | 7 passed / 7                                                                |
+| `pnpm build`                   | clean                                                                       |
+| `pnpm size`                    | own code 0.30 KiB gz of a 25.00 KiB budget — PASS                           |
+| `uv run ruff check .`          | clean                                                                       |
+| `uv run ruff format --check .` | clean                                                                       |
+| `uv run mypy`                  | clean, `strict`, 4 source files                                             |
+| `uv run pytest -q`             | 9 passed / 9                                                                |
+| `uv build`                     | sdist + wheel built                                                         |
+| CLI smoke (both)               | `--version`, `--help` OK; unknown command exits 2 per SPEC §11              |
+
+Note: the two size-gate numbers are currently identical only because the scaffold does not yet
+import `@x402/core`. They diverge at M1, which is when the reported ceiling gets frozen (O4).
 
 ---
 
@@ -361,16 +386,19 @@ with the code, and emit the next handoff prompt.
 
 ## 9. Open Items & Risk Log _(append-only; never delete, mark resolved)_
 
-| #   | Item                                                                                                                                 | Owner    | Status                |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------ | -------- | --------------------- |
-| O1  | PyPI account + API token needed to reserve `tx402` on PyPI (D3).                                                                     | **User** | 🟥 Open               |
-| O2  | Testnet wallets must be funded for Base Sepolia + Solana Devnet before S5/S6. Keep balances low and dedicated.                       | **User** | 🟥 Open, needed by S5 |
-| O3  | Public GitHub org/repo for the open-source migration. Keep repo URLs behind one constant until decided.                              | **User** | 🟨 Deferred           |
-| O4  | Informational size ceiling (ADR-008) is a placeholder until measured for real at S3/M1.                                              | Agent    | ⬜ Pending S3         |
-| O5  | `routing.maxQuoteAgeMs` is inert for standard v2 challenges (no upstream timestamp). Document as conditional.                        | Agent    | ⬜ Pending S3         |
-| O6  | Upstream `@x402/*` is on a fast release cadence (2.20.0 at planning time). Every bump replays all conformance fixtures per SPEC §15. | Agent    | ⬜ Ongoing            |
-| O7  | SPEC §12.1 asks for Windows CI "where supported" — decide at S1 whether to include or document the exclusion.                        | Agent    | ⬜ Pending S1         |
-| O8  | Independent security review (SPEC §12.4) needs a reviewer lined up well before S12.                                                  | **User** | 🟨 Deferred           |
+| #   | Item                                                                                                                                                                                                                                                                                                                       | Owner    | Status                |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------- |
+| O1  | PyPI account + API token needed to reserve `tx402` on PyPI (D3). Distributions are built and verified; only the credential is missing. Step-by-step in `docs/operations/publishing.md`.                                                                                                                                    | **User** | 🟥 Open               |
+| O2  | Testnet wallets must be funded for Base Sepolia + Solana Devnet before S5/S6. Keep balances low and dedicated.                                                                                                                                                                                                             | **User** | 🟥 Open, needed by S5 |
+| O3  | Public GitHub org/repo for the open-source migration. Keep repo URLs behind one constant until decided.                                                                                                                                                                                                                    | **User** | 🟨 Deferred           |
+| O4  | Informational size ceiling (ADR-008) is a placeholder until measured for real at S3/M1.                                                                                                                                                                                                                                    | Agent    | ⬜ Pending S3         |
+| O5  | `routing.maxQuoteAgeMs` is inert for standard v2 challenges (no upstream timestamp). Document as conditional.                                                                                                                                                                                                              | Agent    | ⬜ Pending S3         |
+| O6  | Upstream `@x402/*` is on a fast release cadence (2.20.0 at planning time). Every bump replays all conformance fixtures per SPEC §15.                                                                                                                                                                                       | Agent    | ⬜ Ongoing            |
+| O7  | SPEC §12.1 asks for Windows CI "where supported". **Resolved at S1:** Linux-only for now. Nothing platform-sensitive exists yet — no filesystem paths, no shell-outs, no native bindings. macOS and Windows legs are added at S12 (M8) before release, when the CLI and file-based `--body @file` handling actually exist. | Agent    | ✅ Resolved S1        |
+| O8  | Independent security review (SPEC §12.4) needs a reviewer lined up well before S12.                                                                                                                                                                                                                                        | **User** | 🟨 Deferred           |
+| O9  | npm's 72-hour unpublish window on `tx402@0.0.0` closes **2026-08-05**. After that the version number is permanent and cannot be reused. No action needed — `0.0.0` is intended to stay burned — but any change of heart about the placeholder must happen before then.                                                     | Agent    | ⬜ Informational      |
+| O10 | `publishConfig.provenance: true` is set on the npm package, but the S1 placeholder was published from a laptop with `--no-provenance` (provenance needs CI OIDC). The release workflow must **not** carry that flag, and trusted publishing must be configured on both registries before `0.1.0`.                          | Agent    | ⬜ Pending S12        |
+| O11 | Test coverage thresholds are not yet enforced. SPEC §12.1 requires ≥90 % line and branch in core modules; `packages/tx402/vitest.config.ts` has the coverage scope wired but no threshold. Raise to the gate value once core modules land.                                                                                 | Agent    | ⬜ Pending S4         |
 
 ---
 
