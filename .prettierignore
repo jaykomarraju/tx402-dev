@@ -1,0 +1,8 @@
+dist/
+node_modules/
+coverage/
+pnpm-lock.yaml
+.venv/
+packages/tx402-python/
+PRD.md
+SPEC.md

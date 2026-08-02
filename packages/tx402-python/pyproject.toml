@@ -1,0 +1,82 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tx402"
+version = "0.0.0"
+description = "Resilient x402 buyer SDK — deterministic multi-chain payment routing, local spend guardrails, and a drop-in httpx wrapper for autonomous agents."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+keywords = ["x402", "http-402", "payments", "usdc", "stablecoin", "ai-agents", "base", "solana", "httpx", "sdk"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+# Core install stays minimal: protocol codec plus the HTTP transport. Chain support is an
+# extra so that web3/solders are only paid for by callers who need them (mirrors the
+# TypeScript subpath-export split — ADR-009).
+dependencies = [
+    "x402>=2.17,<3",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+evm = ["x402[evm]>=2.17,<3"]
+svm = ["x402[svm]>=2.17,<3"]
+all = ["tx402[evm,svm]"]
+
+[project.scripts]
+tx402 = "tx402.cli:run"
+
+[project.urls]
+Homepage = "https://tx402.dev"
+Documentation = "https://tx402.dev/docs"
+Repository = "https://github.com/tx402/tx402"
+Issues = "https://github.com/tx402/tx402/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "mypy>=1.13",
+    "ruff>=0.8",
+    # stdlib tomllib is 3.11+; the 3.10 CI leg needs the backport.
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tx402"]
+
+[tool.ruff]
+line-length = 92
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "PT", "RET", "SIM", "TID", "RUF"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unreachable = true
+files = ["src", "tests"]
+
+# The tomli backport is only installed on the 3.10 leg (stdlib tomllib is 3.11+), so it is
+# absent from the environment mypy itself runs in.
+[[tool.mypy.overrides]]
+module = ["tomli"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

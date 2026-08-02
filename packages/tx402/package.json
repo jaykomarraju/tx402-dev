@@ -1,0 +1,88 @@
+{
+  "name": "tx402",
+  "version": "0.0.0",
+  "description": "Resilient x402 buyer SDK — deterministic multi-chain payment routing, local spend guardrails, and a drop-in fetch wrapper for autonomous agents.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "bin": {
+    "tx402": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./evm": {
+      "types": "./dist/evm/index.d.ts",
+      "default": "./dist/evm/index.js"
+    },
+    "./solana": {
+      "types": "./dist/solana/index.d.ts",
+      "default": "./dist/solana/index.js"
+    },
+    "./signers": {
+      "types": "./dist/signers/index.d.ts",
+      "default": "./dist/signers/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "x402",
+    "http-402",
+    "payments",
+    "usdc",
+    "stablecoin",
+    "ai-agents",
+    "base",
+    "solana",
+    "fetch",
+    "sdk"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@x402/core": "~2.20.0"
+  },
+  "peerDependencies": {
+    "@solana/kit": ">=5.1.0",
+    "@x402/evm": "~2.20.0",
+    "@x402/svm": "~2.20.0",
+    "viem": "^2.48.11"
+  },
+  "peerDependenciesMeta": {
+    "@x402/evm": {
+      "optional": true
+    },
+    "@x402/svm": {
+      "optional": true
+    },
+    "@solana/kit": {
+      "optional": true
+    },
+    "viem": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@solana/kit": "^5.1.0",
+    "@x402/evm": "~2.20.0",
+    "@x402/svm": "~2.20.0",
+    "viem": "^2.48.11"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

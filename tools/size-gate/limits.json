@@ -1,0 +1,17 @@
+{
+  "$comment": [
+    "Budgets for the tx402 core import path. Authority: ADR-008.",
+    "",
+    "ownCodeGzipBytes is RELEASE-BLOCKING. It measures only the code tx402 itself emits,",
+    "treating @x402/core, zod, and every chain adapter as external. 25 KiB = 25600 bytes.",
+    "",
+    "totalCorePathGzipBytes is REPORTED, not blocking, until it is frozen from a real",
+    "measurement at M1 (session S3). Tracked as PLAN.md open item O4. When it is frozen,",
+    "set `enforced` to true and amend ADR-008 — do not silently edit this number.",
+    "",
+    "Chain adapters (tx402/evm, tx402/solana) are measured and reported separately and are",
+    "excluded from both figures, consistent with the SPEC §12.3 carve-out."
+  ],
+  "ownCodeGzipBytes": { "limit": 25600, "enforced": true },
+  "totalCorePathGzipBytes": { "limit": null, "enforced": false }
+}
