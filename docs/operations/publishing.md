@@ -4,10 +4,10 @@ Covers reserving the `tx402` name on both registries and, later, cutting real re
 
 ## Current reservation status
 
-| Registry | Name    | Status                                       | Version                      |
-| :------- | :------ | :------------------------------------------- | :--------------------------- |
-| npm      | `tx402` | ✅ **Reserved** (maintainer `jay.komarraju`) | `0.0.0`                      |
-| PyPI     | `tx402` | ⏳ **Pending an API token** — see below      | `0.0.0` (built, unpublished) |
+| Registry | Name    | Status                                       | Version |
+| :------- | :------ | :------------------------------------------- | :------ |
+| npm      | `tx402` | ✅ **Reserved** (maintainer `jay.komarraju`) | `0.0.0` |
+| PyPI     | `tx402` | ✅ **Reserved**                              | `0.0.0` |
 
 Neither registry offers a true "reserve" operation. A name is held only by publishing to it,
 which is why a deliberately inert `0.0.0` placeholder was published. Both placeholder READMEs
@@ -21,8 +21,8 @@ state plainly that nothing is implemented and that the first functional release 
 
 ## Reserving `tx402` on PyPI
 
-This is the one outstanding step (PLAN.md open item **O1**). It needs a credential that does not
-exist on this machine.
+Completed 2026-08-03 (PLAN.md open item **O1**). The prebuilt placeholder wheel and source
+distribution were published without rebuilding later development code into version `0.0.0`.
 
 ### 1. Create the account and token — _you_
 
@@ -62,6 +62,13 @@ curl -s https://pypi.org/pypi/tx402/json | python3 -c \
 ```
 
 Then update the table at the top of this file and the reservation line in `PLAN.md` §7.
+
+Publication verification on 2026-08-03:
+
+- PyPI reported `tx402` version `0.0.0`, Apache-2.0, Python `>=3.10`.
+- Wheel SHA-256: `d2e81d16f19a1cae92f049d5298bd8ff85293a491c1b862c4f36f02a2aee036b`.
+- Source SHA-256: `01d32fbdba6c816215a585c3575684a24aa72c35e2c2c0373b83724b9f0f49e8`.
+- A clean `uvx --from tx402==0.0.0 tx402 --version` returned `tx402 0.0.0`.
 
 ---
 
