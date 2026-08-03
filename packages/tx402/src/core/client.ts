@@ -195,14 +195,55 @@ function requestUrl(input: Tx402RequestInfo): URL {
   return new URL(input instanceof Request ? input.url : input);
 }
 
-/** Combines a caller signal with an SDK deadline without shortening the caller's own. */
-function withTimeout(
-  signal: AbortSignal | null,
-  timeoutMs?: number,
-): AbortSignal | undefined {
-  if (timeoutMs === undefined) return signal ?? undefined;
-  const deadline = AbortSignal.timeout(timeoutMs);
-  return signal === null ? deadline : AbortSignal.any([signal, deadline]);
+/** An SDK deadline layered over the caller's own signal, plus its cleanup. */
+interface Deadline {
+  readonly signal: AbortSignal | undefined;
+  dispose(): void;
+}
+
+/**
+ * Combines a caller signal with an SDK deadline without shortening the caller's own.
+ *
+ * **Deliberately not `AbortSignal.any([signal, AbortSignal.timeout(ms)])`.** That composition
+ * looks equivalent and is not: `AbortSignal.timeout` unrefs its timer and the composite holds
+ * its source signals weakly, so once this function returns, nothing strongly references the
+ * timeout signal. If it is collected before it fires, the deadline silently never fires — and
+ * a paid retry to an unresponsive merchant hangs forever instead of raising
+ * `AmbiguousPaymentError`, which is the one outcome SPEC §6.7 most needs reported. It failed
+ * that way roughly one CI run in six.
+ *
+ * The controller and the timer handle are both captured by the returned disposer, so the
+ * caller holds them alive for exactly as long as the request is in flight.
+ */
+function withDeadline(signal: AbortSignal | null, timeoutMs?: number): Deadline {
+  if (timeoutMs === undefined) {
+    return { signal: signal ?? undefined, dispose: () => undefined };
+  }
+
+  const controller = new AbortController();
+  const expire = (): void => {
+    const reason = new Error(`tx402 deadline of ${timeoutMs} ms exceeded`);
+    // Matches what `AbortSignal.timeout` reports, so failure categorization is unchanged.
+    reason.name = "TimeoutError";
+    controller.abort(reason);
+  };
+  const timer = setTimeout(expire, timeoutMs);
+  // The in-flight request already keeps the loop alive; tx402 need not hold it open too.
+  timer.unref();
+
+  const forward = (): void => controller.abort(signal?.reason);
+  if (signal !== null) {
+    if (signal.aborted) forward();
+    else signal.addEventListener("abort", forward, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", forward);
+    },
+  };
 }
 
 /**
@@ -292,10 +333,12 @@ async function issueInitial(
   requestId: string,
   timeoutMs?: number,
 ): Promise<Response> {
+  const deadline = withDeadline(request.signal, timeoutMs);
   try {
-    const signal = withTimeout(request.signal, timeoutMs);
     return await globalThis.fetch(
-      signal === undefined ? request : new Request(request, { signal }),
+      deadline.signal === undefined || deadline.signal === request.signal
+        ? request
+        : new Request(request, { signal: deadline.signal }),
     );
   } catch (error) {
     if (isTx402Error(error)) throw error;
@@ -304,6 +347,8 @@ async function issueInitial(
       details: { causeCategory: "network" },
       cause: error,
     });
+  } finally {
+    deadline.dispose();
   }
 }
 
@@ -519,12 +564,18 @@ function readPaymentResponse(
   }
 }
 
+/**
+ * Builds the one signature-bearing request, together with the deadline holding it.
+ *
+ * The `Deadline` comes back to the caller rather than staying here so its timer survives as a
+ * live reference for the whole attempt and is cleared once the attempt settles.
+ */
 async function buildPaidRequest(
   prepared: PreparedRequest,
   signatureHeader: string,
   requestId: string,
   runtime: ClientRuntime,
-): Promise<Request> {
+): Promise<{ request: Request; deadline: Deadline }> {
   const headers = new Headers(prepared.request.headers);
   headers.set(PROTOCOL_HEADERS.paymentSignature, signatureHeader);
   if (!runtime.disableRequestIdHeader) headers.set(REQUEST_ID_HEADER, requestId);
@@ -549,12 +600,12 @@ async function buildPaidRequest(
     redirect: "manual",
     ...(body === undefined ? {} : { body }),
   };
-  const signal = withTimeout(prepared.request.signal, runtime.paymentRetryMs);
-  if (signal !== undefined) init.signal = signal;
+  const deadline = withDeadline(prepared.request.signal, runtime.paymentRetryMs);
+  if (deadline.signal !== undefined) init.signal = deadline.signal;
   if (body instanceof ReadableStream) {
     (init as RequestInit & { duplex: "half" }).duplex = "half";
   }
-  return new Request(prepared.request, init);
+  return { request: new Request(prepared.request, init), deadline };
 }
 
 /**
@@ -696,9 +747,9 @@ async function executePayment(
   }
 
   /* One signature, one attempt (ADR-003). */
-  let paidRequest: Request;
+  let paid: { request: Request; deadline: Deadline };
   try {
-    paidRequest = await buildPaidRequest(prepared, signatureHeader, requestId, runtime);
+    paid = await buildPaidRequest(prepared, signatureHeader, requestId, runtime);
   } catch (error) {
     await releaseQuietly(runtime, reservation.reservationId);
     throw error;
@@ -713,7 +764,7 @@ async function executePayment(
 
   let response: Response;
   try {
-    response = await issuePaidRetry(paidRequest, requestId);
+    response = await issuePaidRetry(paid.request, requestId);
   } catch (error) {
     if (error instanceof PaidRedirectBlockedError) {
       // The signature reached the merchant; only the follow-up was blocked. Whether the
@@ -721,6 +772,10 @@ async function executePayment(
       throw ambiguous(runtime, error, reservation, errorContext, "redirect-blocked");
     }
     throw ambiguous(runtime, error, reservation, errorContext, "transport-after-signature");
+  } finally {
+    // Held until the attempt settles, then released — the timer must outlive the request and
+    // must not outlive it by longer than necessary.
+    paid.deadline.dispose();
   }
 
   if (response.status === 402) {

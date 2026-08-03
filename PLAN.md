@@ -487,16 +487,16 @@ in both languages**. M2 adds three request-fingerprint goldens and three ledger 
 | `pnpm lint` / format / types | clean; strict TypeScript remains green                                   |
 | `pnpm conformance:check`     | 49 vectors, index hashes match; 24 M0 + 12 M1 + 6 M2 + 7 M3              |
 | `pnpm manifest:verify`       | signed manifest valid; 4 networks; expires 2027-08-02                    |
-| TypeScript tests             | 299 passed / 299, 2 skipped (the opt-in Base Sepolia live suite)         |
-| TS coverage                  | 96.17 % statements / 91.60 % branch — 90 % gate enforced                 |
+| TypeScript tests             | 302 passed / 302, 2 skipped (the opt-in Base Sepolia live suite)         |
+| TS coverage                  | 96.20 % statements / 91.68 % branch — 90 % gate enforced                 |
 | Python lint / format / mypy  | clean; strict mypy over 20 source/test files                             |
 | Python tests + coverage      | 164 passed / 164; 92.16 % branch-inclusive coverage                      |
 | `pnpm build`                 | clean                                                                    |
 | `pnpm size`                  | own 13.69 / 25 KiB; total 28.40 / amended 30 KiB; `tx402/evm` 5.51 KiB   |
 | T-002                        | one reservation, one signature, one paid retry; ledger order proven      |
 | SEC-002                      | signer count 0 for every policy, plan, liquidity, and chain-ID rejection |
-| GitHub Actions CI #8         | 🟥 failed — clock-boundary race in the signer adapter; fixed, see below  |
-| GitHub Actions CI #9         | 7 / 7 jobs green on `d90cb7a`; Node 20/22, Python 3.10–3.13, parity      |
+| GitHub Actions CI #8, #11    | 🟥 failed — two distinct defects, both fixed; see below                  |
+| GitHub Actions CI #12        | 7 / 7 jobs green; Node 20/22, Python 3.10–3.13, parity                   |
 
 **A real defect the first CI run caught.** CI #8 failed only in the conformance-parity job while
 both TypeScript matrix jobs passed on the same commit — the signature of a race rather than a
@@ -513,6 +513,32 @@ on upstream's output, so the defect was in the guard rather than in what it guar
 bug that a guard's presence tends to hide. And the local race window is well under a millisecond, so
 it survived nine clean local runs, a clean-clone reproduction, and a single-worker run; only a
 contended CI runner widened it enough to hit.
+
+**A second, worse defect the same signal exposed.** CI #11 then failed on a PLAN-only commit, which
+ruled out the first fix being the whole story. The step timings gave it away without any log access:
+green runs finished the TypeScript suite in 5 seconds, both failures took 17–18, and exactly one
+test carried a 15-second budget — the one asserting that a hanging merchant yields
+`AmbiguousPaymentError`.
+
+Both SDK deadlines were built as `AbortSignal.any([callerSignal, AbortSignal.timeout(ms)])`. That
+composition is not equivalent to a timeout: `AbortSignal.timeout` unrefs its timer and the composite
+holds its sources **weakly**, so once the helper returned nothing strongly referenced the timeout
+signal. Collected before it fired, the deadline never fired at all. A standalone probe against a
+hanging server, forcing collection, measured it directly — the composed signal missed its deadline
+**10 times out of 10**, an explicitly-held `AbortController` + `setTimeout` **0 out of 10**.
+
+This one was a production defect, not a test problem: a paid retry to a merchant that accepts the
+connection and never answers would hang the caller's `fetch` indefinitely instead of raising the
+`AmbiguousPaymentError` SPEC §6.7 requires — silence in precisely the case where money may already
+have moved. Deadlines are now built from an `AbortController` and a `setTimeout` whose handles are
+held by a disposer the request path keeps alive and clears when the attempt settles.
+
+The regression tests deliberately do **not** force garbage collection. Driving `global.gc()` on an
+interval inside a vitest worker starves undici badly enough that even a caller's own
+`AbortController` stops taking effect — the instrument breaks what it measures, so a proof built on
+it would prove nothing. `test/deadline.test.ts` asserts the behaviour that must hold regardless: the
+deadline fires, a caller's abort is still honoured when a deadline is layered over it, and no
+deadline is imposed when none is configured.
 
 Conformance suite composition at S5: 24 M0 + 12 M1 + 6 M2 + 7 M3. **The TypeScript runner executes
 all 49 at Stage B; Python executes 42 and validates the other seven at Stage A**, which is the
