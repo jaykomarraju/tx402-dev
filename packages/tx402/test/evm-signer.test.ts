@@ -20,8 +20,11 @@ import { privateKeyToEvmSigner } from "../src/signers/index.js";
 const PAYER = "0x1111111111111111111111111111111111111111" as const;
 const PAY_TO = "0x2222222222222222222222222222222222222222";
 const TOKEN = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-const NOW_SECONDS = 1_785_000_000;
+const LIFETIME_SECONDS = 60;
 const CONTEXT = { requestId: "signer-test", phase: "sign" } as const;
+
+/** Wall-clock seconds, because the adapter now derives its window from the real clock. */
+const nowSeconds = () => Math.floor(Date.now() / 1000);
 
 const PLAN = {
   chainId: 8453,
@@ -31,8 +34,7 @@ const PLAN = {
   from: PAYER,
   to: PAY_TO,
   valueAtomic: "50000",
-  notBeforeEpochSeconds: NOW_SECONDS,
-  notAfterEpochSeconds: NOW_SECONDS + 60,
+  lifetimeSeconds: LIFETIME_SECONDS,
 } as const;
 
 const PRESENTATION = {
@@ -77,7 +79,7 @@ function typedData(overrides: { domain?: object; message?: object } = {}) {
       to: PAY_TO,
       value: 50_000n,
       validAfter: 0n,
-      validBefore: BigInt(NOW_SECONDS + 60),
+      validBefore: BigInt(nowSeconds() + LIFETIME_SECONDS),
       nonce: `0x${"ab".repeat(32)}`,
       ...overrides.message,
     },
@@ -152,18 +154,19 @@ describe("EvmSigner plan enforcement", () => {
     const signer = fakeSigner();
     const { client, record } = adapt(signer);
 
-    const signature = await client.signTypedData(typedData());
+    const expected = typedData();
+    const signature = await client.signTypedData(expected);
 
     expect(signature).toMatch(/^0x[0-9a-f]+$/u);
     expect(record.signCount).toBe(1);
-    expect(record.expiresAtEpochMs).toBe((NOW_SECONDS + 60) * 1000);
+    expect(record.expiresAtEpochMs).toBe(Number(expected.message.validBefore) * 1000);
 
     // SPEC §6.6: the request presented to an external signer carries the domain, asset,
     // atomic and decimal amounts, recipient, network, expiry, and request hash.
     const presented = signer.calls[0]?.presentation;
     expect(presented).toEqual({
       ...PRESENTATION,
-      expiresAt: new Date((NOW_SECONDS + 60) * 1000).toISOString(),
+      expiresAt: new Date(Number(expected.message.validBefore) * 1000).toISOString(),
     });
     expect(signer.calls[0]?.types.TransferWithAuthorization).toHaveLength(6);
   });
@@ -192,8 +195,11 @@ describe("EvmSigner plan enforcement", () => {
       ["wrong recipient", { message: { to: PAYER } }],
       ["wrong amount", { message: { value: 50_001n } }],
       ["delayed start", { message: { validAfter: 5n } }],
-      ["lifetime beyond the bound", { message: { validBefore: BigInt(NOW_SECONDS + 61) } }],
-      ["already expired", { message: { validBefore: BigInt(NOW_SECONDS) } }],
+      [
+        "lifetime beyond the bound",
+        { message: { validBefore: BigInt(nowSeconds() + LIFETIME_SECONDS + 120) } },
+      ],
+      ["already expired", { message: { validBefore: BigInt(nowSeconds() - 10) } }],
       ["short nonce", { message: { nonce: "0xdead" } }],
       ["non-integer amount", { message: { value: "fifty thousand" } }],
       ["non-string recipient", { message: { to: 42 } }],
@@ -207,6 +213,31 @@ describe("EvmSigner plan enforcement", () => {
       );
       expect(signer.calls, label).toHaveLength(0);
     }
+  });
+
+  it("accepts an authorization stamped before the window is derived", async () => {
+    // Regression. Upstream reads its own clock inside `createPaymentPayload`, so the message
+    // is always stamped *before* this adapter checks it. When the bound was computed ahead of
+    // that call instead, any second boundary falling between the two reads made `validBefore`
+    // exceed it by one and rejected a perfectly valid authorization — rare, random, and a
+    // burnt reservation each time. Deriving the bound from the later clock removes the race:
+    // a message stamped up to `lifetime - 1` seconds earlier is still inside the window.
+    const signer = fakeSigner();
+    const { client } = adapt(signer);
+    const start = 1_785_000_000_000;
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(start);
+      const stamped = typedData();
+      // Time passes — including a second boundary — between upstream stamping and the check.
+      vi.setSystemTime(start + 1_500);
+
+      await expect(client.signTypedData(stamped)).resolves.toMatch(/^0x/u);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(signer.calls).toHaveLength(1);
   });
 
   it("rejects an unexpected primary type and malformed type definitions", async () => {

@@ -68,12 +68,19 @@ export interface ExactEvmPlan {
   readonly payer: string;
   readonly recipient: string;
   readonly valueAtomic: string;
-  /** `min(60, merchant maxTimeoutSeconds)` (SPEC §6.6). */
+  /** `min(60, merchant maxTimeoutSeconds)` (SPEC §6.6). The bound that is enforced. */
   readonly lifetimeSeconds: number;
   readonly validAfterSeconds: number;
-  /** Lower bound the signed `validBefore` must exceed. */
+  /**
+   * The window this plan describes, as of `nowEpochMs`.
+   *
+   * Descriptive, not enforcing. The signer adapter re-derives the same formula from a clock
+   * read *after* upstream has produced the message, because a window computed here would sit
+   * a whole second behind upstream's whenever the two clock reads straddle a second boundary.
+   * These two fields exist so the derivation is visible, frozen by the conformance vectors,
+   * and reproducible in Python at S9.
+   */
   readonly notBeforeEpochSeconds: number;
-  /** Upper bound the signed `validBefore` may not exceed. */
   readonly notAfterEpochSeconds: number;
   /** `eth_call` data for `balanceOf(payer)`. */
   readonly balanceOfCallData: string;

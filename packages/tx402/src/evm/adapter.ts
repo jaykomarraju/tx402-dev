@@ -182,12 +182,9 @@ export function createEvmChainAdapter(options: EvmChainAdapterOptions = {}): Cha
 
       const record = { signCount: 0, expiresAtEpochMs: 0 };
 
-      // The enforcement window is re-derived here rather than reused from the plan. Upstream
-      // reads its own clock inside `createPaymentPayload`, so a plan computed a few
-      // milliseconds earlier can sit one whole second behind the value it produces. Deriving
-      // the bound immediately before the check keeps the comparison exact without a fudge
-      // factor, and the formula — now + min(60, merchant bound) — is the plan's.
-      const nowSeconds = Math.floor(Date.now() / 1000);
+      // The lifetime travels as a duration, not as a pre-computed window. The signer adapter
+      // turns it into bounds after upstream has written the message, which is the only
+      // ordering under which `validBefore <= now + lifetime` holds by construction.
       const clientSigner = toClientEvmSigner({
         signer,
         address,
@@ -199,8 +196,7 @@ export function createEvmChainAdapter(options: EvmChainAdapterOptions = {}): Cha
           from: address,
           to: plan.recipient,
           valueAtomic: plan.valueAtomic,
-          notBeforeEpochSeconds: nowSeconds,
-          notAfterEpochSeconds: nowSeconds + plan.lifetimeSeconds,
+          lifetimeSeconds: plan.lifetimeSeconds,
         },
         presentation: {
           network: request.networkId,

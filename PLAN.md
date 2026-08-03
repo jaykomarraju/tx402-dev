@@ -495,6 +495,24 @@ in both languages**. M2 adds three request-fingerprint goldens and three ledger 
 | `pnpm size`                  | own 13.69 / 25 KiB; total 28.40 / amended 30 KiB; `tx402/evm` 5.51 KiB   |
 | T-002                        | one reservation, one signature, one paid retry; ledger order proven      |
 | SEC-002                      | signer count 0 for every policy, plan, liquidity, and chain-ID rejection |
+| GitHub Actions CI #8         | 🟥 failed — clock-boundary race in the signer adapter; fixed, see below  |
+| GitHub Actions CI #9         | 7 / 7 jobs green; Node 20/22, Python 3.10–3.13, parity                   |
+
+**A real defect the first CI run caught.** CI #8 failed only in the conformance-parity job while
+both TypeScript matrix jobs passed on the same commit — the signature of a race rather than a
+regression. It was one. `createAuthorization` computed the permitted `validBefore` window _before_
+calling upstream's `createPaymentPayload`, which reads its own clock to stamp the message. Whenever
+a second boundary fell between the two reads, the signed `validBefore` exceeded the bound by exactly
+one second and the adapter rejected a valid authorization — rare, random, and a burnt reservation
+each time. The window is now derived inside the signer adapter from a clock read _after_ the message
+exists, which makes `validBefore <= now + lifetime` true by construction rather than by timing. A
+fake-timer regression test pins the ordering.
+
+Worth recording for two reasons. The failing assertion was the adapter's own plan-enforcement check
+on upstream's output, so the defect was in the guard rather than in what it guards — the class of
+bug that a guard's presence tends to hide. And the local race window is well under a millisecond, so
+it survived nine clean local runs, a clean-clone reproduction, and a single-worker run; only a
+contended CI runner widened it enough to hit.
 
 Conformance suite composition at S5: 24 M0 + 12 M1 + 6 M2 + 7 M3. **The TypeScript runner executes
 all 49 at Stage B; Python executes 42 and validates the other seven at Stage A**, which is the

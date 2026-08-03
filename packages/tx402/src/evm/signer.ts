@@ -35,10 +35,17 @@ export interface EvmAuthorizationPlan {
   readonly from: `0x${string}`;
   readonly to: string;
   readonly valueAtomic: string;
-  /** `validBefore` may not exceed this (SPEC §6.6). */
-  readonly notAfterEpochSeconds: number;
-  /** `validBefore` must be later than this — a signature already expired is useless. */
-  readonly notBeforeEpochSeconds: number;
+  /**
+   * `min(60, merchant maxTimeoutSeconds)` (SPEC §6.6).
+   *
+   * The permitted window is derived from this **at assertion time**, not handed in
+   * pre-computed. Upstream reads its own clock inside `createPaymentPayload`; a bound
+   * computed even a moment earlier can sit a whole second behind the `validBefore` upstream
+   * produces, which would reject a perfectly valid authorization whenever the two reads
+   * straddle a second boundary. Reading the clock after upstream has written the message
+   * makes `validBefore <= now + lifetime` true by construction rather than by luck.
+   */
+  readonly lifetimeSeconds: number;
 }
 
 /** Observations the adapter records for the caller. Never includes the signature. */
@@ -264,9 +271,12 @@ export function toClientEvmSigner(input: {
         );
       }
       const validBefore = requireQuantity(message.validBefore, "validBefore", context);
+      // Read now, after upstream has produced the message, so this clock is never behind the
+      // one upstream used. See `lifetimeSeconds` on the plan for why that matters.
+      const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
       if (
-        validBefore > BigInt(plan.notAfterEpochSeconds) ||
-        validBefore <= BigInt(plan.notBeforeEpochSeconds)
+        validBefore > nowSeconds + BigInt(plan.lifetimeSeconds) ||
+        validBefore <= nowSeconds
       ) {
         throw signerFailure(
           "Authorization lifetime is outside the approved window",
