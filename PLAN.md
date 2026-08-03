@@ -487,7 +487,7 @@ in both languages**. M2 adds three request-fingerprint goldens and three ledger 
 | `pnpm lint` / format / types | clean; strict TypeScript remains green                                   |
 | `pnpm conformance:check`     | 49 vectors, index hashes match; 24 M0 + 12 M1 + 6 M2 + 7 M3              |
 | `pnpm manifest:verify`       | signed manifest valid; 4 networks; expires 2027-08-02                    |
-| TypeScript tests             | 298 passed / 298, 2 skipped (the opt-in Base Sepolia live suite)         |
+| TypeScript tests             | 299 passed / 299, 2 skipped (the opt-in Base Sepolia live suite)         |
 | TS coverage                  | 96.17 % statements / 91.60 % branch — 90 % gate enforced                 |
 | Python lint / format / mypy  | clean; strict mypy over 20 source/test files                             |
 | Python tests + coverage      | 164 passed / 164; 92.16 % branch-inclusive coverage                      |
@@ -496,7 +496,7 @@ in both languages**. M2 adds three request-fingerprint goldens and three ledger 
 | T-002                        | one reservation, one signature, one paid retry; ledger order proven      |
 | SEC-002                      | signer count 0 for every policy, plan, liquidity, and chain-ID rejection |
 | GitHub Actions CI #8         | 🟥 failed — clock-boundary race in the signer adapter; fixed, see below  |
-| GitHub Actions CI #9         | 7 / 7 jobs green; Node 20/22, Python 3.10–3.13, parity                   |
+| GitHub Actions CI #9         | 7 / 7 jobs green on `d90cb7a`; Node 20/22, Python 3.10–3.13, parity      |
 
 **A real defect the first CI run caught.** CI #8 failed only in the conformance-parity job while
 both TypeScript matrix jobs passed on the same commit — the signature of a race rather than a
