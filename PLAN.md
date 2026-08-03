@@ -368,6 +368,13 @@ import `@x402/core`. They diverge at M1, which is when the reported ceiling gets
 | `uv run pytest -q`             | 132 passed / 132                                                 |
 | Python coverage (core modules) | 98.41 % — gate 90 % **enforced** via pytest addopts              |
 
+**CI is now genuinely verified.** `origin` (`github.com/jaykomarraju/tx402-dev`) was configured
+before S2 but had never been pushed, so the workflow had never run. `main` was pushed at the end of
+S2 and all seven jobs passed on the first run: TypeScript on Node 20 and 22, Python on CPython
+3.10/3.11/3.12/3.13, and the TS↔Python conformance parity job. The workflow now also enforces
+`conformance:check` (index integrity, SEC-007), `manifest:verify` (signature, SEC-007), and the
+coverage thresholds.
+
 Cross-language parity is real, not asserted: the release manifest is signed by the Node tool and
 verified by the Python SDK, so tx402 canonical JSON and the Ed25519 envelope are proven identical
 across the two implementations by the signature itself.
