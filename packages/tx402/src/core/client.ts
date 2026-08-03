@@ -198,41 +198,65 @@ function requestUrl(input: Tx402RequestInfo): URL {
 /** An SDK deadline layered over the caller's own signal, plus its cleanup. */
 interface Deadline {
   readonly signal: AbortSignal | undefined;
+  /**
+   * Rejects when the deadline expires. **This is what enforces it**, not the signal.
+   *
+   * The signal is still passed down so the socket is torn down, but a signal alone cannot be
+   * relied on: see the note on {@link withDeadline}.
+   */
+  readonly expired: Promise<never> | undefined;
   dispose(): void;
 }
 
 /**
  * Combines a caller signal with an SDK deadline without shortening the caller's own.
  *
- * **Deliberately not `AbortSignal.any([signal, AbortSignal.timeout(ms)])`.** That composition
- * looks equivalent and is not: `AbortSignal.timeout` unrefs its timer and the composite holds
- * its source signals weakly, so once this function returns, nothing strongly references the
- * timeout signal. If it is collected before it fires, the deadline silently never fires — and
- * a paid retry to an unresponsive merchant hangs forever instead of raising
- * `AmbiguousPaymentError`, which is the one outcome SPEC §6.7 most needs reported. It failed
- * that way roughly one CI run in six.
+ * **A deadline may not be entrusted to an `AbortSignal`.** Two separate mechanisms in the
+ * platform drop it on the floor, and both were found the hard way:
  *
- * The controller and the timer handle are both captured by the returned disposer, so the
- * caller holds them alive for exactly as long as the request is in flight.
+ *  1. `AbortSignal.any([signal, AbortSignal.timeout(ms)])` — the obvious spelling — holds its
+ *     source signals *weakly*, and `AbortSignal.timeout` unrefs its timer. Once the helper
+ *     returns, nothing strongly references the timeout signal; collect it and the deadline
+ *     never fires. Measured against a hanging server under forced collection: 10 misses in 10.
+ *  2. Even with the timer held strongly, `new Request(input)` does not share `input`'s signal —
+ *     it creates a new one that *follows* it through a **`WeakRef` to the intermediate
+ *     controller**. The request path builds several Requests in sequence (add the signature
+ *     header, set `redirect: "manual"`, whatever a caller's transport wrapper does), and if any
+ *     intermediate Request is collected, the follow chain breaks silently from that link on.
  *
- * Note the distinction, because it is the whole of the bug: a **bare** `AbortSignal.timeout`
- * handed straight to `fetch` is fine — the `Request` references it strongly — and that is what
- * `evm/rpc.ts` uses for its per-provider budget. Only `AbortSignal.any` is affected, because
- * only it holds its sources weakly. Measured against a hanging server under forced collection:
- * bare 0 misses in 10, composed 10 in 10, this construction 0 in 10.
+ * So the signal is passed down as a courtesy — it is what actually tears the socket down — and
+ * `expired` is what *enforces* the deadline, in tx402's own control flow, where nothing can
+ * collect it. The caller races the two.
+ *
+ * Why this matters beyond a flaky test: a paid retry to a merchant that accepts the connection
+ * and never answers would hang forever instead of raising `AmbiguousPaymentError`, which is the
+ * one outcome SPEC §6.7 most needs reported — silence exactly where money may already have
+ * moved.
+ *
+ * By contrast a **bare** `AbortSignal.timeout` handed straight to a single `fetch` is fine —
+ * the `Request` references it strongly and there is no follow chain — which is why
+ * `evm/rpc.ts` can keep using one for its per-provider budget.
  */
 function withDeadline(signal: AbortSignal | null, timeoutMs?: number): Deadline {
   if (timeoutMs === undefined) {
-    return { signal: signal ?? undefined, dispose: () => undefined };
+    return { signal: signal ?? undefined, expired: undefined, dispose: () => undefined };
   }
 
   const controller = new AbortController();
-  const expire = (): void => {
-    const reason = new Error(`tx402 deadline of ${timeoutMs} ms exceeded`);
-    // Matches what `AbortSignal.timeout` reports, so failure categorization is unchanged.
-    reason.name = "TimeoutError";
-    controller.abort(reason);
-  };
+  let expire!: () => void;
+  const expired = new Promise<never>((_resolve, reject) => {
+    expire = () => {
+      const reason = new Error(`tx402 deadline of ${timeoutMs} ms exceeded`);
+      // Matches what `AbortSignal.timeout` reports, so failure categorization is unchanged.
+      reason.name = "TimeoutError";
+      controller.abort(reason);
+      reject(reason);
+    };
+  });
+  // The race usually settles on the response instead, and a rejected promise nobody awaited
+  // is an unhandled rejection. This keeps the loser quiet.
+  expired.catch(() => undefined);
+
   const timer = setTimeout(expire, timeoutMs);
   // The in-flight request already keeps the loop alive; tx402 need not hold it open too.
   timer.unref();
@@ -245,11 +269,17 @@ function withDeadline(signal: AbortSignal | null, timeoutMs?: number): Deadline 
 
   return {
     signal: controller.signal,
+    expired,
     dispose: () => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", forward);
     },
   };
+}
+
+/** Resolves the request, or rejects the moment the deadline expires — whichever comes first. */
+async function raceDeadline<T>(work: Promise<T>, deadline: Deadline): Promise<T> {
+  return deadline.expired === undefined ? work : Promise.race([work, deadline.expired]);
 }
 
 /**
@@ -341,10 +371,13 @@ async function issueInitial(
 ): Promise<Response> {
   const deadline = withDeadline(request.signal, timeoutMs);
   try {
-    return await globalThis.fetch(
-      deadline.signal === undefined || deadline.signal === request.signal
-        ? request
-        : new Request(request, { signal: deadline.signal }),
+    return await raceDeadline(
+      globalThis.fetch(
+        deadline.signal === undefined || deadline.signal === request.signal
+          ? request
+          : new Request(request, { signal: deadline.signal }),
+      ),
+      deadline,
     );
   } catch (error) {
     if (isTx402Error(error)) throw error;
@@ -368,10 +401,18 @@ export async function issuePaidRetry(
   request: Request,
   requestId: string,
   transport: typeof globalThis.fetch = globalThis.fetch,
+  deadline?: Deadline,
 ): Promise<Response> {
   let response: Response;
   try {
-    response = await transport(new Request(request, { redirect: "manual" }));
+    // Rebuilt only when it is not already manual: every extra `new Request` adds another
+    // weakly-linked hop to the abort-follow chain (see `withDeadline`).
+    const outbound =
+      request.redirect === "manual"
+        ? request
+        : new Request(request, { redirect: "manual" });
+    const sent = transport(outbound);
+    response = await (deadline === undefined ? sent : raceDeadline(sent, deadline));
   } catch (error) {
     throw new TransportError("Paid resource retry failed", {
       context: context(requestId, "retry"),
@@ -770,7 +811,12 @@ async function executePayment(
 
   let response: Response;
   try {
-    response = await issuePaidRetry(paid.request, requestId);
+    response = await issuePaidRetry(
+      paid.request,
+      requestId,
+      globalThis.fetch,
+      paid.deadline,
+    );
   } catch (error) {
     if (error instanceof PaidRedirectBlockedError) {
       // The signature reached the merchant; only the follow-up was blocked. Whether the
