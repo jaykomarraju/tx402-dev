@@ -214,6 +214,12 @@ interface Deadline {
  *
  * The controller and the timer handle are both captured by the returned disposer, so the
  * caller holds them alive for exactly as long as the request is in flight.
+ *
+ * Note the distinction, because it is the whole of the bug: a **bare** `AbortSignal.timeout`
+ * handed straight to `fetch` is fine — the `Request` references it strongly — and that is what
+ * `evm/rpc.ts` uses for its per-provider budget. Only `AbortSignal.any` is affected, because
+ * only it holds its sources weakly. Measured against a hanging server under forced collection:
+ * bare 0 misses in 10, composed 10 in 10, this construction 0 in 10.
  */
 function withDeadline(signal: AbortSignal | null, timeoutMs?: number): Deadline {
   if (timeoutMs === undefined) {

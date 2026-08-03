@@ -57,8 +57,20 @@ jobs:
       - name: Release manifest signature (SEC-007)
         run: pnpm manifest:verify
 
+      # Diagnostic: an intermittent failure in this suite could not be reproduced locally,
+      # and job logs are not readable without admin rights on the repository. Emitting the
+      # failing lines as workflow annotations surfaces them through the checks API, which is
+      # readable. Remove once the cause is settled (PLAN.md open item O21).
       - name: Test
-        run: pnpm test
+        run: |
+          set -o pipefail
+          if ! pnpm test 2>&1 | tee /tmp/vitest.log; then
+            echo "::error::pnpm test failed — first failure lines follow"
+            grep -E "FAIL|AssertionError|Error:|timed out|Hook timed out" /tmp/vitest.log \
+              | head -25 \
+              | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
 
       - name: Coverage thresholds (SPEC §12.1)
         run: pnpm --filter tx402 exec vitest run --coverage
@@ -139,8 +151,20 @@ jobs:
       - name: Conformance index integrity
         run: pnpm conformance:check
 
+      # Diagnostic: an intermittent failure in this suite could not be reproduced locally,
+      # and job logs are not readable without admin rights on the repository. Emitting the
+      # failing lines as workflow annotations surfaces them through the checks API, which is
+      # readable. Remove once the cause is settled (PLAN.md open item O21).
       - name: TypeScript conformance + package contract
-        run: pnpm --filter tx402 test
+        run: |
+          set -o pipefail
+          if ! pnpm --filter tx402 test 2>&1 | tee /tmp/vitest.log; then
+            echo "::error::TypeScript suite failed — first failure lines follow"
+            grep -E "FAIL|AssertionError|Error:|timed out|Hook timed out" /tmp/vitest.log \
+              | head -25 \
+              | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
 
       - name: Python conformance + package contract
         working-directory: packages/tx402-python
