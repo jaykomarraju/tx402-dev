@@ -6,3 +6,12 @@ pnpm-lock.yaml
 packages/tx402-python/
 PRD.md
 SPEC.md
+
+# Tool-owned formatting. `tx402-manifest sign` rewrites the manifest, and the generated
+# SDK copies are emitted by `tx402-manifest embed`. Letting prettier reformat them would
+# put the tool and the formatter in a loop. The signature is computed over the canonical
+# form, so on-disk whitespace is irrelevant to verification either way.
+core-spec/manifests/bundled.manifest.json
+core-spec/manifests/keys/
+packages/tx402/src/core/bundled-manifest.ts
+packages/tx402-python/src/tx402/bundled_manifest.py

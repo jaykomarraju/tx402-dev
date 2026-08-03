@@ -17,7 +17,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "size": "node tools/size-gate/index.js",
-    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm size"
+    "conformance:build": "node tools/conformance/index.js build",
+    "conformance:check": "node tools/conformance/index.js check",
+    "manifest:verify": "node tools/manifest-signer/index.js verify",
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm conformance:check && pnpm manifest:verify && pnpm test && pnpm build && pnpm size"
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",

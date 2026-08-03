@@ -77,8 +77,12 @@
   },
   "devDependencies": {
     "@solana/kit": "^5.1.0",
+    "@tx402-dev/test-merchant": "workspace:*",
+    "@vitest/coverage-v8": "^2.1.9",
     "@x402/evm": "~2.20.0",
     "@x402/svm": "~2.20.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "viem": "^2.48.11"
   },
   "publishConfig": {

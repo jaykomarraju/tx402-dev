@@ -9,6 +9,9 @@ export default tseslint.config(
       "**/coverage/**",
       "**/.venv/**",
       "packages/tx402-python/**",
+      // Hand-written declarations for the JS tools. They belong to no tsconfig project, so
+      // the type-aware linter cannot parse them; `tsc` still checks them at every import.
+      "tools/**/*.d.ts",
     ],
   },
   js.configs.recommended,
@@ -32,7 +35,13 @@ export default tseslint.config(
       "@typescript-eslint/consistent-type-imports": "error",
       "@typescript-eslint/no-unused-vars": [
         "error",
-        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+        // `ignoreRestSiblings` is what allows the omit-a-key idiom, which is how the
+        // manifest's signing input is built: `const { signature: _s, ...unsigned } = doc`.
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          ignoreRestSiblings: true,
+        },
       ],
     },
   },
@@ -58,8 +67,26 @@ export default tseslint.config(
         console: "readonly",
         process: "readonly",
         URL: "readonly",
+        Buffer: "readonly",
+        TextEncoder: "readonly",
+        TextDecoder: "readonly",
+        fetch: "readonly",
         __dirname: "readonly",
       },
+    },
+    rules: {
+      // Spread first: an explicit `rules` key replaces the one from the spread above, and
+      // dropping `disableTypeChecked` would re-enable type-aware rules on files that have
+      // no TypeScript program behind them.
+      ...tseslint.configs.disableTypeChecked.rules,
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          ignoreRestSiblings: true,
+        },
+      ],
     },
   },
 );

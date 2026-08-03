@@ -42,10 +42,20 @@ class TestPackageContract:
         extras = PYPROJECT["project"]["optional-dependencies"]
         assert set(extras) >= {"evm", "svm", "all"}
 
-    def test_core_install_pulls_only_codec_and_transport(self) -> None:
+    def test_core_install_pulls_only_codec_transport_and_ed25519(self) -> None:
+        """The core install is a closed set, and each member has to justify itself.
+
+        ``x402`` is the protocol codec and ``httpx`` the transport. ``cryptography`` is
+        there because SPEC §5.4 makes offline manifest signature verification a
+        precondition of client construction, SPEC §3.2 forbids implementing Ed25519 from
+        scratch, and CPython has none in its standard library — TypeScript gets the same
+        capability from ``node:crypto`` for free (ADR-012).
+
+        Chain support is deliberately absent: it lives behind the ``evm``/``svm`` extras.
+        """
         deps = PYPROJECT["project"]["dependencies"]
         names = sorted(d.split(">")[0].split("[")[0].strip() for d in deps)
-        assert names == ["httpx", "x402"]
+        assert names == ["cryptography", "httpx", "x402"]
 
     def test_supports_python_3_10_through_3_13(self) -> None:
         assert PYPROJECT["project"]["requires-python"] == ">=3.10"

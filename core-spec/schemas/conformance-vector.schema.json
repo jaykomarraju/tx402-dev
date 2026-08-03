@@ -1,0 +1,357 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tx402.dev/schemas/v1/conformance-vector.schema.json",
+  "title": "ConformanceVector",
+  "description": "One language-neutral conformance fixture (ADR-005).\n\nEvery vector is a self-contained document: it carries its own inputs, its own expected outputs, and the milestone at which an implementation is required to execute it. Runners in both languages read the same files; neither language may carry a private fixture.\n\nExecution is two-stage — see core-spec/conformance/README.md:\n  Stage A validates the *vector* against the frozen schemas and taxonomy. It runs from M0 in both languages for every vector, including vectors whose milestone has not landed.\n  Stage B runs the *implementation* against the vector. It runs only where a handler for the vector's `kind` is registered.\n\nA vector whose `milestone` is at or below a language's implemented-through marker MUST have a Stage B handler; otherwise the runner fails. That is what stops an unimplemented milestone from passing silently.",
+
+  "type": "object",
+  "required": ["id", "kind", "milestone", "title", "spec", "expected"],
+  "additionalProperties": false,
+
+  "properties": {
+    "id": {
+      "description": "Globally unique, stable, and never reused. Referenced from PLAN.md and from release notes, so renaming one is a documentation break. Dotted segments read as `<area>.<subject>.<case>`; the leading segment conventionally matches the vector's `kind`.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*(\\.[a-z0-9-]+)+$",
+      "maxLength": 128
+    },
+
+    "kind": {
+      "description": "Selects the handler. A runner that encounters an unknown kind fails rather than skipping — an unrecognized kind means the fixture set moved ahead of the runner.",
+      "type": "string",
+      "enum": [
+        "errors.taxonomy",
+        "canonical-json",
+        "manifest.verify",
+        "manifest.network-resolution",
+        "protocol.decode-payment-required"
+      ]
+    },
+
+    "milestone": {
+      "description": "The SPEC §14 milestone that must execute this vector under Stage B.",
+      "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/milestone"
+    },
+
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+
+    "description": {
+      "type": "string",
+      "maxLength": 2000
+    },
+
+    "spec": {
+      "description": "The clauses this vector pins. Non-empty: a vector that cannot cite a requirement is testing an implementation detail, not a contract.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1, "maxLength": 80 }
+    },
+
+    "input": {
+      "description": "Kind-specific. Absent for kinds that take no input, such as errors.taxonomy."
+    },
+
+    "expected": {
+      "description": "Kind-specific."
+    }
+  },
+
+  "allOf": [
+    {
+      "if": {
+        "properties": { "kind": { "const": "errors.taxonomy" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": { "expected": { "$ref": "#/$defs/expectedErrorTaxonomy" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "canonical-json" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "required": ["input"],
+        "properties": {
+          "input": { "$ref": "#/$defs/inputCanonicalJson" },
+          "expected": { "$ref": "#/$defs/expectedCanonicalJson" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "manifest.verify" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "required": ["input"],
+        "properties": {
+          "input": { "$ref": "#/$defs/inputManifestVerify" },
+          "expected": { "$ref": "#/$defs/expectedOutcome" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "manifest.network-resolution" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "required": ["input"],
+        "properties": {
+          "input": { "$ref": "#/$defs/inputNetworkResolution" },
+          "expected": { "$ref": "#/$defs/expectedNetworkResolution" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "protocol.decode-payment-required" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "required": ["input"],
+        "properties": {
+          "input": { "$ref": "#/$defs/inputDecodePaymentRequired" },
+          "expected": { "$ref": "#/$defs/expectedDecodePaymentRequired" }
+        }
+      }
+    }
+  ],
+
+  "$defs": {
+    "taxonomyEntry": {
+      "type": "object",
+      "required": ["code", "className", "retryability", "retryable", "requiredDetails"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/errorCode"
+        },
+        "className": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/errorClassName"
+        },
+        "retryability": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/retryability"
+        },
+        "retryable": {
+          "description": "Derived from `retryability`, not chosen independently: true only for `caller-policy` (ADR-011). Stated explicitly here so a drift between the rule and the derivation is caught by the fixture rather than by a user.",
+          "type": "boolean"
+        },
+        "requiredDetails": {
+          "description": "Keys the SPEC §8 'required context' column obliges this error to carry in `details`. Every key must be redaction-safe.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" }
+        }
+      }
+    },
+
+    "expectedErrorTaxonomy": {
+      "type": "object",
+      "required": ["entries"],
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "type": "array",
+          "minItems": 15,
+          "maxItems": 15,
+          "items": { "$ref": "#/$defs/taxonomyEntry" }
+        }
+      }
+    },
+
+    "inputCanonicalJson": {
+      "type": "object",
+      "required": ["document"],
+      "additionalProperties": false,
+      "properties": {
+        "document": {
+          "description": "Any JSON value. Values that canonical serialization rejects — floats, non-ASCII object keys — are expressed as vectors with an `error` expectation."
+        }
+      }
+    },
+
+    "expectedCanonicalJson": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["canonical", "sha256"],
+          "additionalProperties": false,
+          "properties": {
+            "canonical": { "type": "string" },
+            "sha256": {
+              "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/sha256Digest"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["error"],
+          "additionalProperties": false,
+          "properties": {
+            "error": {
+              "description": "Both languages must reject for the same stated reason, not merely both reject.",
+              "type": "string",
+              "enum": [
+                "non-integer-number",
+                "number-out-of-safe-range",
+                "non-ascii-key",
+                "unsupported-type"
+              ]
+            }
+          }
+        }
+      ]
+    },
+
+    "inputManifestVerify": {
+      "type": "object",
+      "required": ["manifest", "nowEpochMs"],
+      "additionalProperties": false,
+      "properties": {
+        "manifest": {
+          "description": "The document under test. Deliberately unconstrained: invalid manifests are the point of most of these vectors.",
+          "type": "object"
+        },
+        "nowEpochMs": {
+          "description": "Injected clock (SPEC §4.3 `clock`), so expiry vectors are not time-dependent.",
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/epochMs"
+        },
+        "trustedKeys": {
+          "description": "keyId to standard-base64 raw 32-byte Ed25519 public key. Omitted means 'the keys the SDK ships with', which is the realistic case.",
+          "type": "object",
+          "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9+/]{43}=$" }
+        }
+      }
+    },
+
+    "expectedOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["outcome"],
+          "additionalProperties": false,
+          "properties": { "outcome": { "const": "valid" } }
+        },
+        {
+          "type": "object",
+          "required": ["outcome", "errorCode", "reason"],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": { "const": "invalid" },
+            "errorCode": {
+              "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/errorCode"
+            },
+            "reason": {
+              "description": "Stable machine-readable discriminator. Two implementations must fail for the same reason, not merely both fail.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$",
+              "maxLength": 64
+            }
+          }
+        }
+      ]
+    },
+
+    "inputNetworkResolution": {
+      "type": "object",
+      "required": ["manifest", "query"],
+      "additionalProperties": false,
+      "properties": {
+        "manifest": { "type": "object" },
+        "query": {
+          "description": "A canonical CAIP-2 identifier or a manifest-declared alias, as it would arrive from `policy.allowedNetworks` or the CLI `--network` flag.",
+          "type": "string",
+          "maxLength": 64
+        }
+      }
+    },
+
+    "expectedNetworkResolution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["resolved", "wasAlias"],
+          "additionalProperties": false,
+          "properties": {
+            "resolved": {
+              "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/caip2"
+            },
+            "wasAlias": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["errorCode", "reason"],
+          "additionalProperties": false,
+          "properties": {
+            "errorCode": {
+              "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/errorCode"
+            },
+            "reason": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 }
+          }
+        }
+      ]
+    },
+
+    "inputDecodePaymentRequired": {
+      "type": "object",
+      "required": ["requestUrl", "requestMethod", "clockEpochMs"],
+      "additionalProperties": false,
+      "properties": {
+        "requestUrl": {
+          "description": "The URL tx402 actually requested. Origin binding is checked against this (ADR-010 decision 2).",
+          "type": "string",
+          "maxLength": 2048
+        },
+        "requestMethod": {
+          "description": "The method tx402 actually issued. This is what populates `resource.method`; it is not read from the challenge.",
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/httpMethod"
+        },
+        "header": {
+          "description": "Raw PAYMENT-REQUIRED header value, exactly as it would arrive on the wire. Standard base64 alphabet with padding, matching upstream's Base64EncodedRegex `^[A-Za-z0-9+/]*={0,2}$`. Absent for vectors that test a missing header.",
+          "type": "string",
+          "maxLength": 131072
+        },
+        "clockEpochMs": {
+          "description": "Injected clock, so `receivedAt` is deterministic.",
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/epochMs"
+        }
+      }
+    },
+
+    "expectedDecodePaymentRequired": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["outcome", "normalized"],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": { "const": "valid" },
+            "normalized": {
+              "$ref": "https://tx402.dev/schemas/v1/normalized-payment-required.schema.json"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["outcome", "errorCode", "reason"],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": { "const": "invalid" },
+            "errorCode": {
+              "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/errorCode"
+            },
+            "reason": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 }
+          }
+        }
+      ]
+    }
+  }
+}

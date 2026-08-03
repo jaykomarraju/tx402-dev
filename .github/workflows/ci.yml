@@ -51,8 +51,17 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Conformance index integrity (SEC-007)
+        run: pnpm conformance:check
+
+      - name: Release manifest signature (SEC-007)
+        run: pnpm manifest:verify
+
       - name: Test
         run: pnpm test
+
+      - name: Coverage thresholds (SPEC §12.1)
+        run: pnpm --filter tx402 exec vitest run --coverage
 
       - name: Build
         run: pnpm build
@@ -91,15 +100,16 @@ jobs:
       - name: Typecheck
         run: uv run mypy
 
+      # Coverage thresholds are enforced through pytest addopts (SPEC §12.1).
       - name: Test
         run: uv run pytest -q
 
       - name: Build distributions
         run: uv build
 
-  # Cross-language parity is a release gate (SPEC §12.4, ADR-005). The conformance runner
-  # lands in M0 (session S2); until then this job asserts only that both packages agree on
-  # their shared public constants.
+  # Cross-language parity is a release gate (SPEC §12.4, ADR-005). Both SDKs execute the
+  # same vectors from core-spec/conformance; this job runs the two suites side by side so a
+  # parity break is reported as one failure rather than two unrelated ones.
   conformance:
     name: Conformance parity (TS ↔ Python)
     runs-on: ubuntu-latest
@@ -123,11 +133,14 @@ jobs:
       - name: Install TypeScript workspace
         run: pnpm install --frozen-lockfile
 
-      - name: TypeScript package contract
+      - name: Conformance index integrity
+        run: pnpm conformance:check
+
+      - name: TypeScript conformance + package contract
         run: pnpm --filter tx402 test
 
-      - name: Python package contract (includes TS parity assertions)
+      - name: Python conformance + package contract
         working-directory: packages/tx402-python
         run: |
           uv sync --all-extras
-          uv run pytest -q tests/test_package_contract.py
+          uv run pytest -q

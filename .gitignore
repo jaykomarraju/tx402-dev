@@ -32,6 +32,10 @@ htmlcov/
 .pypirc
 secrets/
 
+# Manifest signing keys. Public halves (*.pub.json) ARE committed — the SDKs trust
+# compiled-in keys and CI verifies against these. Private halves never are.
+core-spec/manifests/keys/*.private.*
+
 # Editor / OS
 .DS_Store
 .idea/

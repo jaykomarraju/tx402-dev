@@ -1,0 +1,87 @@
+/**
+ * Type declarations for the deterministic test merchant.
+ *
+ * Hand-written rather than emitted: the implementation is plain JavaScript so it can be
+ * spawned by the Python suite without a build step, but every TypeScript integration test
+ * from M1 onward talks to it, and those tests are typechecked under `strict`.
+ */
+
+/** Requirement sets the merchant can offer, matching the bundled release manifest. */
+export declare const DEFAULT_REQUIREMENTS: Readonly<
+  Record<
+    "base" | "baseSepolia" | "solana" | "solanaDevnet",
+    {
+      scheme: string;
+      network: string;
+      asset: string;
+      amount: string;
+      payTo: string;
+      maxTimeoutSeconds: number;
+      extra: Record<string, unknown>;
+    }
+  >
+>;
+
+export declare const SCENARIOS: Readonly<
+  Record<string, { description: string; covers: readonly string[] }>
+>;
+
+/** One request as the merchant saw it. The signature header value is never retained. */
+export interface RecordedRequest {
+  /** 0-based, in arrival order. */
+  index: number;
+  method: string;
+  path: string;
+  /** Lowercased. `payment-signature` reads `<redacted>` — SEC-003. */
+  headers: Record<string, string>;
+  body: string;
+  hasSignature: boolean;
+  /** How many signed attempts had arrived, including this one. */
+  paidAttempt: number;
+  /** What the server answered, or -1 if it deliberately hung. */
+  status: number;
+  /** Set when retry validation rejected the attempt. */
+  violation?: string;
+}
+
+export interface TestMerchantOptions {
+  /** Default `"pay-once"`. See `SCENARIOS` for the catalogue. */
+  scenario?: string;
+  /** Defaults to a single Base USDC requirement. */
+  requirements?: Record<string, unknown>[];
+  /** Default 0 (ephemeral). */
+  port?: number;
+  /** Body returned on successful delivery. */
+  body?: string;
+  contentType?: string;
+  /** Deterministic transaction id placed in PAYMENT-RESPONSE. */
+  settlementId?: string;
+  resourceDescription?: string;
+  /**
+   * Default true. Turn it off only to test what an unvalidating merchant does — with it on,
+   * a malformed retry is answered `400` with a machine-readable reason.
+   */
+  validateRetries?: boolean;
+}
+
+export interface TestMerchant {
+  /** Base URL, e.g. `http://127.0.0.1:54321`. */
+  readonly url: string;
+  readonly origin: string;
+  readonly port: number;
+  readonly scenario: string;
+  readonly requirements: Record<string, unknown>[];
+  /** Every request seen, in order. */
+  readonly requests: RecordedRequest[];
+  /** Requests that carried a PAYMENT-SIGNATURE. */
+  readonly paidRequests: RecordedRequest[];
+  /** Retry-validation violations. Empty is the expected state. */
+  readonly violations: (string | undefined)[];
+  /** Clears the request log and the paid-attempt counter. */
+  reset(): void;
+  close(): Promise<void>;
+}
+
+export declare function createTestMerchant(
+  options?: TestMerchantOptions,
+): Promise<TestMerchant>;

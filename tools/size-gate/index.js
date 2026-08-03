@@ -27,6 +27,14 @@ const pkgSrc = path.join(repoRoot, "packages/tx402/src");
 
 const limits = JSON.parse(readFileSync(path.join(here, "limits.json"), "utf8"));
 
+/**
+ * Node built-ins. Never bundled by anyone — a consumer's bundler resolves them from the
+ * runtime — so they count against neither figure. tx402 reaches for `node:crypto` on the
+ * core path for Ed25519 manifest verification, which SPEC §5.4 requires at construction and
+ * SPEC §3.2 forbids implementing by hand.
+ */
+const NODE_BUILTINS = ["node:*"];
+
 /** Dependencies that are never tx402's own code. */
 const PROTOCOL_DEPS = ["@x402/core", "zod"];
 /** Optional chain adapters — excluded from the core-path figures by ADR-008. */
@@ -85,10 +93,14 @@ async function main() {
   console.log("\ntx402 size gate — ADR-008\n");
 
   const ownCode = await measure(path.join(pkgSrc, "index.ts"), [
+    ...NODE_BUILTINS,
     ...PROTOCOL_DEPS,
     ...CHAIN_DEPS,
   ]);
-  const totalCorePath = await measure(path.join(pkgSrc, "index.ts"), CHAIN_DEPS);
+  const totalCorePath = await measure(path.join(pkgSrc, "index.ts"), [
+    ...NODE_BUILTINS,
+    ...CHAIN_DEPS,
+  ]);
 
   console.log("Core import path (`tx402`)");
   let passing = report("own code (blocking)", ownCode, limits.ownCodeGzipBytes);
@@ -102,7 +114,11 @@ async function main() {
   ]) {
     report(
       label,
-      await measure(path.join(pkgSrc, entry), [...PROTOCOL_DEPS, ...CHAIN_DEPS]),
+      await measure(path.join(pkgSrc, entry), [
+        ...NODE_BUILTINS,
+        ...PROTOCOL_DEPS,
+        ...CHAIN_DEPS,
+      ]),
     );
   }
 

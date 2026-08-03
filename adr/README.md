@@ -19,6 +19,8 @@ ADR-008 onward are new decisions taken during implementation.
 | [008](008-bundle-size-gate-rebaseline.md)         | Bundle size gate re-baseline              | Accepted | Amends SPEC §12.3                |
 | [009](009-unscoped-package-and-bundled-cli.md)    | Unscoped `tx402` package with bundled CLI | Accepted | Amends SPEC §3.1, §4.1, §13, §16 |
 | [010](010-upstream-envelope-reconciliation.md)    | Upstream envelope reconciliation          | Accepted | Clarifies SPEC §5.1, §7.1, §7.2  |
+| [011](011-error-taxonomy-concretization.md)       | Error taxonomy concretization             | Accepted | Concretizes SPEC §8, §4.2        |
+| [012](012-manifest-signing-envelope.md)           | Release manifest signing envelope         | Accepted | Concretizes SPEC §5.4            |
 
 ## Format
 
