@@ -30,7 +30,7 @@ CONFORMANCE_DIR: Final = REPO_ROOT / "core-spec" / "conformance"
 #: Raising this constant is how a milestone is claimed, and it cannot be raised without
 #: registering the handlers.
 #:
-IMPLEMENTED_THROUGH: Final = "M1"
+IMPLEMENTED_THROUGH: Final = "M2"
 
 _MILESTONE_ORDER: Final = ("M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8")
 

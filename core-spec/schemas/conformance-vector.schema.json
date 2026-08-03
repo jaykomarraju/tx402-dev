@@ -24,7 +24,9 @@
         "canonical-json",
         "manifest.verify",
         "manifest.network-resolution",
-        "protocol.decode-payment-required"
+        "protocol.decode-payment-required",
+        "request.fingerprint",
+        "spend-ledger.behavior"
       ]
     },
 
@@ -119,6 +121,32 @@
         "properties": {
           "input": { "$ref": "#/$defs/inputDecodePaymentRequired" },
           "expected": { "$ref": "#/$defs/expectedDecodePaymentRequired" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "request.fingerprint" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "required": ["input"],
+        "properties": {
+          "input": { "$ref": "#/$defs/inputRequestFingerprint" },
+          "expected": { "$ref": "#/$defs/expectedRequestFingerprint" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "spend-ledger.behavior" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "required": ["input"],
+        "properties": {
+          "input": { "$ref": "#/$defs/inputSpendLedger" },
+          "expected": { "$ref": "#/$defs/expectedSpendLedger" }
         }
       }
     }
@@ -363,6 +391,120 @@
           }
         }
       ]
+    },
+
+    "inputRequestFingerprint": {
+      "type": "object",
+      "required": ["method", "url", "body", "challengeHash"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/httpMethod"
+        },
+        "url": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "body": { "type": ["string", "null"] },
+        "challengeHash": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/sha256Digest"
+        }
+      }
+    },
+
+    "expectedRequestFingerprint": {
+      "type": "object",
+      "required": ["normalizedUrl", "bodyHash", "fingerprint"],
+      "additionalProperties": false,
+      "properties": {
+        "normalizedUrl": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "bodyHash": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/sha256Digest"
+        },
+        "fingerprint": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/sha256Digest"
+        }
+      }
+    },
+
+    "inputSpendLedger": {
+      "type": "object",
+      "required": ["operations"],
+      "additionalProperties": false,
+      "properties": {
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["action"],
+            "properties": {
+              "action": { "enum": ["reserve", "commit", "release", "snapshot"] },
+              "reservationId": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/uuidV7"
+              },
+              "requestId": { "type": "string", "minLength": 1 },
+              "policyScope": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "requestFingerprint": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/sha256Digest"
+              },
+              "assetId": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/caip19"
+              },
+              "amountAtomic": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/positiveAtomicAmount"
+              },
+              "maxPerHourAtomic": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/positiveAtomicAmount"
+              },
+              "nowEpochMs": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/epochMs"
+              },
+              "committedAtEpochMs": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/epochMs"
+              },
+              "settlementId": { "type": "string", "minLength": 1, "maxLength": 256 }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+
+    "expectedSpendLedger": {
+      "type": "object",
+      "required": ["outcomes"],
+      "additionalProperties": false,
+      "properties": {
+        "outcomes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["outcome"],
+            "properties": {
+              "outcome": {
+                "enum": ["reserved", "committed", "released", "snapshot", "error"]
+              },
+              "state": { "enum": ["reserved", "committed", "released", "expired"] },
+              "errorCode": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/errorCode"
+              },
+              "committedAtomic": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/atomicAmount"
+              },
+              "reservedAtomic": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/atomicAmount"
+              },
+              "reservationStates": {
+                "type": "array",
+                "items": { "enum": ["reserved", "committed", "released", "expired"] }
+              },
+              "entryCount": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
     }
   }
 }

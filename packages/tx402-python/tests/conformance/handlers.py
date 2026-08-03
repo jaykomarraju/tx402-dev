@@ -19,6 +19,12 @@ import pytest
 from tests.conformance.runner import register_handler
 from tx402.canonical_json import CanonicalJsonError, canonicalize_json
 from tx402.errors import TX402_ERROR_TAXONOMY, Tx402Error
+from tx402.fingerprint import (
+    digest_request_body,
+    fingerprint_request,
+    normalize_fingerprint_url,
+)
+from tx402.ledger import MemorySpendStore
 from tx402.manifest import resolve_network, verify_release_manifest
 from tx402.protocol import decode_payment_required
 
@@ -146,3 +152,78 @@ def _protocol_decode_payment_required(vector: dict[str, Any]) -> None:
 
 
 register_handler("protocol.decode-payment-required", _protocol_decode_payment_required)
+
+
+def _request_fingerprint(vector: dict[str, Any]) -> None:
+    payload = vector["input"]
+    expected = vector["expected"]
+    assert normalize_fingerprint_url(payload["url"]) == expected["normalizedUrl"]
+    assert digest_request_body(payload["body"]) == expected["bodyHash"]
+    assert (
+        fingerprint_request(
+            method=payload["method"],
+            url=payload["url"],
+            body=payload["body"],
+            challenge_hash=payload["challengeHash"],
+        )
+        == expected["fingerprint"]
+    )
+
+
+def _spend_ledger_behavior(vector: dict[str, Any]) -> None:
+    store = MemorySpendStore()
+    outcomes: list[dict[str, Any]] = []
+    for operation in vector["input"]["operations"]:
+        action = operation["action"]
+        try:
+            if action == "reserve":
+                reservation = store.reserve(
+                    reservation_id=operation["reservationId"],
+                    request_id=operation["requestId"],
+                    policy_scope=operation["policyScope"],
+                    request_fingerprint=operation["requestFingerprint"],
+                    asset_id=operation["assetId"],
+                    amount_atomic=operation["amountAtomic"],
+                    max_per_hour_atomic=operation["maxPerHourAtomic"],
+                    now_epoch_ms=operation["nowEpochMs"],
+                )
+                outcomes.append({"outcome": "reserved", "state": reservation.state})
+            elif action == "commit":
+                store.commit(
+                    reservation_id=operation["reservationId"],
+                    committed_at_epoch_ms=operation["committedAtEpochMs"],
+                    settlement_id=operation.get("settlementId"),
+                )
+                outcomes.append({"outcome": "committed"})
+            elif action == "release":
+                reservation = store.release(
+                    reservation_id=operation["reservationId"],
+                    now_epoch_ms=operation["nowEpochMs"],
+                )
+                outcomes.append({"outcome": "released", "state": reservation.state})
+            elif action == "snapshot":
+                state = store.get_budget_state(
+                    policy_scope=operation["policyScope"],
+                    asset_id=operation["assetId"],
+                    now_epoch_ms=operation["nowEpochMs"],
+                )
+                outcomes.append(
+                    {
+                        "outcome": "snapshot",
+                        "committedAtomic": state.committed_atomic,
+                        "reservedAtomic": state.reserved_atomic,
+                        "reservationStates": [
+                            reservation.state for reservation in state.reservations
+                        ],
+                        "entryCount": len(state.entries),
+                    }
+                )
+            else:
+                raise ValueError(f"Unknown ledger operation {action}")
+        except Tx402Error as error:
+            outcomes.append({"outcome": "error", "errorCode": error.code})
+    assert outcomes == vector["expected"]["outcomes"]
+
+
+register_handler("request.fingerprint", _request_fingerprint)
+register_handler("spend-ledger.behavior", _spend_ledger_behavior)

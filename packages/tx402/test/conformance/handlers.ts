@@ -15,6 +15,12 @@ import { canonicalizeJson, CanonicalJsonError } from "../../src/core/canonical-j
 import { TX402_ERROR_TAXONOMY } from "../../src/core/errors.js";
 import { isTx402Error } from "../../src/core/errors.js";
 import {
+  digestRequestBody,
+  fingerprintRequest,
+  normalizeFingerprintUrl,
+} from "../../src/core/fingerprint.js";
+import { MemorySpendStore } from "../../src/core/ledger.js";
+import {
   resolveNetwork,
   verifyReleaseManifest,
   type ReleaseManifest,
@@ -162,4 +168,76 @@ registerHandler("protocol.decode-payment-required", (vector: ConformanceVector) 
     expect(error.code).toBe(expected.errorCode);
     expect(error.details.reason).toBe(expected.reason);
   }
+});
+
+registerHandler("request.fingerprint", (vector: ConformanceVector) => {
+  const input = vector.input as {
+    method: string;
+    url: string;
+    body: string | null;
+    challengeHash: string;
+  };
+  const expected = vector.expected as {
+    normalizedUrl: string;
+    bodyHash: string;
+    fingerprint: string;
+  };
+  expect(normalizeFingerprintUrl(input.url)).toBe(expected.normalizedUrl);
+  expect(digestRequestBody(input.body)).toBe(expected.bodyHash);
+  expect(
+    fingerprintRequest({
+      method: input.method,
+      url: input.url,
+      body: input.body,
+      challengeHash: input.challengeHash,
+    }),
+  ).toBe(expected.fingerprint);
+});
+
+registerHandler("spend-ledger.behavior", async (vector: ConformanceVector) => {
+  const input = vector.input as { operations: Record<string, unknown>[] };
+  const expected = vector.expected as { outcomes: unknown[] };
+  const store = new MemorySpendStore();
+  const outcomes: Record<string, unknown>[] = [];
+  for (const operation of input.operations) {
+    try {
+      switch (operation.action) {
+        case "reserve": {
+          const reservation = await store.reserve(operation as never);
+          outcomes.push({ outcome: "reserved", state: reservation.state });
+          break;
+        }
+        case "commit": {
+          await store.commit(operation as never);
+          outcomes.push({ outcome: "committed" });
+          break;
+        }
+        case "release": {
+          const reservation = await store.release(
+            operation.reservationId as string,
+            operation.nowEpochMs as number,
+          );
+          outcomes.push({ outcome: "released", state: reservation.state });
+          break;
+        }
+        case "snapshot": {
+          const state = await store.getBudgetState(operation as never);
+          outcomes.push({
+            outcome: "snapshot",
+            committedAtomic: state.committedAtomic,
+            reservedAtomic: state.reservedAtomic,
+            reservationStates: state.reservations.map((item) => item.state),
+            entryCount: state.entries.length,
+          });
+          break;
+        }
+        default:
+          throw new Error(`Unknown ledger operation ${String(operation.action)}`);
+      }
+    } catch (error) {
+      if (!isTx402Error(error)) throw error;
+      outcomes.push({ outcome: "error", errorCode: error.code });
+    }
+  }
+  expect(outcomes).toEqual(expected.outcomes);
 });

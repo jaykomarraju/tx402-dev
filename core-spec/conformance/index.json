@@ -252,6 +252,48 @@
       "milestone": "M1",
       "file": "vectors/protocol/decode-zero-amount.json",
       "sha256": "sha256:00a8bc72a7b4856ca28cca5303eaac4be4a9c64de847c0d6f76bce90c4c55582"
+    },
+    {
+      "id": "request.fingerprint.basic",
+      "kind": "request.fingerprint",
+      "milestone": "M2",
+      "file": "vectors/fingerprint/basic.json",
+      "sha256": "sha256:b0eb5368cb044166f02cd1f434a662eba895fc60b3f9178c22539f93fbfdf7bb"
+    },
+    {
+      "id": "request.fingerprint.secrets-excluded",
+      "kind": "request.fingerprint",
+      "milestone": "M2",
+      "file": "vectors/fingerprint/secrets-excluded.json",
+      "sha256": "sha256:06a8bcef7e6d35ba01cdcaa461954a555758326483fbb1f22957829edeae0a9e"
+    },
+    {
+      "id": "request.fingerprint.unicode",
+      "kind": "request.fingerprint",
+      "milestone": "M2",
+      "file": "vectors/fingerprint/unicode.json",
+      "sha256": "sha256:c053434286dfa89eb5de23b3fea30993349ffe49c89bbaf72fdf637fb1dfeb2d"
+    },
+    {
+      "id": "spend-ledger.behavior.atomic-cap",
+      "kind": "spend-ledger.behavior",
+      "milestone": "M2",
+      "file": "vectors/ledger/atomic-cap.json",
+      "sha256": "sha256:61091ba7ee37cde7ae52f443ec1168cf585d65581318dff5f03d0c2b28d6c1e6"
+    },
+    {
+      "id": "spend-ledger.behavior.lifecycle",
+      "kind": "spend-ledger.behavior",
+      "milestone": "M2",
+      "file": "vectors/ledger/lifecycle.json",
+      "sha256": "sha256:be621c3f8ec0ffd368a7683581b7791ec394e270c62cb00d7e45860275790da2"
+    },
+    {
+      "id": "spend-ledger.behavior.ttl-window",
+      "kind": "spend-ledger.behavior",
+      "milestone": "M2",
+      "file": "vectors/ledger/ttl-window.json",
+      "sha256": "sha256:59014c7478cee38286b933540d01187946e77fed86e1c20aa6f3d063a8ed8ba3"
     }
   ]
 }

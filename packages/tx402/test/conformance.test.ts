@@ -51,9 +51,9 @@ const pending = vectors.filter(({ vector }) => !milestoneIsImplemented(vector.mi
 
 describe(`Stage B — implementation, through ${IMPLEMENTED_THROUGH}`, () => {
   for (const { vector } of executable) {
-    it(`${vector.id} — ${vector.title}`, () => {
+    it(`${vector.id} — ${vector.title}`, async () => {
       // Non-null: `executable` filtered on the handler's presence.
-      handlerFor(vector.kind)!(vector);
+      await handlerFor(vector.kind)!(vector);
     });
   }
 

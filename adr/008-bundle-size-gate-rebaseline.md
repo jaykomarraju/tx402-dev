@@ -75,3 +75,16 @@ The total core-path ceiling is frozen at **24 KiB gzipped (24,576 bytes)** and i
 releases without permitting a new runtime dependency or a material upstream expansion to pass
 silently. Any increase above 24 KiB requires an explicit amendment to this ADR with a new measured
 baseline and rationale.
+
+## M2 amendment — policy and ledger baseline (2026-08-03)
+
+M2 adds the SPEC-required integer money parser, PolicyEngine, request fingerprinting, and atomic
+SpendStore to the same `tx402` core path used by `createTx402Client`. These modules cannot be moved
+behind an optional chain entry point or tree-shaken from the client constructor without weakening
+SPEC §6.3 or SEC-002. With no dependency changes, the measured total became **25.79 KiB gzipped**
+and tx402's own portion became **10.99 KiB gzipped**.
+
+The total ceiling is therefore amended to **28 KiB gzipped (28,672 bytes)**. This gives the measured
+M2 core 2.21 KiB (8.6 %) of build and implementation headroom while continuing to fail material
+growth. The independent tx402-own-code blocking limit remains unchanged at 25 KiB; no runtime
+dependency was added and no optional chain adapter entered the core path.

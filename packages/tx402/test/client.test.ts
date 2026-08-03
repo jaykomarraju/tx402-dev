@@ -19,7 +19,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function challenge(scheme = "exact", network = "eip155:8453"): string {
+function challenge(scheme = "exact", network = "eip155:8453", amount = "1"): string {
   return encodePaymentRequiredHeader({
     x402Version: 2,
     resource: { url: "https://api.example.com/resource" },
@@ -27,8 +27,8 @@ function challenge(scheme = "exact", network = "eip155:8453"): string {
       {
         scheme,
         network: network as `${string}:${string}`,
-        asset: "asset",
-        amount: "1",
+        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        amount,
         payTo: "recipient",
         maxTimeoutSeconds: 60,
         extra: {},
@@ -145,6 +145,30 @@ describe("M1 client transport", () => {
       code: "TX402_SCHEME_UNSUPPORTED",
       details: { offeredSchemes: ["mystery"], offeredNetworks: ["eip155:999999"] },
     });
+  });
+
+  it("T-006 never invokes a configured signer when policy rejects the price", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(null, {
+            status: 402,
+            headers: { "payment-required": challenge("exact", "eip155:8453", "2") },
+          }),
+        ),
+      ),
+    );
+    const signTypedData = vi.fn();
+    const client = createTx402Client({
+      signers: { evm: { signTypedData } },
+      policy: { maxPerRequest: "0.000001 USDC", maxPerHour: "1 USDC" },
+    });
+    await expect(client.fetch("https://api.example.com/resource")).rejects.toHaveProperty(
+      "code",
+      "TX402_POLICY_BUDGET",
+    );
+    expect(signTypedData).not.toHaveBeenCalled();
   });
 
   it("rejects caller-supplied protocol headers and public HTTP", async () => {

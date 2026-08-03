@@ -5,13 +5,13 @@
     "ownCodeGzipBytes is RELEASE-BLOCKING. It measures only the code tx402 itself emits,",
     "treating @x402/core, zod, and every chain adapter as external. 25 KiB = 25600 bytes.",
     "",
-    "totalCorePathGzipBytes was frozen at M1 from a 22.28 KiB measured baseline.",
-    "The enforced 24 KiB ceiling permits only modest build variance; authority is the",
-    "M1 amendment in ADR-008.",
+    "totalCorePathGzipBytes was amended at M2 from a 25.79 KiB measured baseline.",
+    "The enforced 28 KiB ceiling permits 8.6% headroom; authority is the M2 amendment",
+    "in ADR-008. The independent own-code limit remains unchanged.",
     "",
     "Chain adapters (tx402/evm, tx402/solana) are measured and reported separately and are",
     "excluded from both figures, consistent with the SPEC §12.3 carve-out."
   ],
   "ownCodeGzipBytes": { "limit": 25600, "enforced": true },
-  "totalCorePathGzipBytes": { "limit": 24576, "enforced": true }
+  "totalCorePathGzipBytes": { "limit": 28672, "enforced": true }
 }

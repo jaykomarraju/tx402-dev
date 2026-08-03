@@ -10,10 +10,11 @@ import {
   PaidRedirectBlockedError,
   ReservedHeaderError,
   TransportError,
-  UnsupportedSchemeError,
   isTx402Error,
 } from "./errors.js";
+import { MemorySpendStore, type BudgetState, type SpendStore } from "./ledger.js";
 import { assertValidReleaseManifest, type ReleaseManifest } from "./manifest.js";
+import { PolicyEngine, type PolicyConfig, type RoutingPolicyConfig } from "./policy.js";
 import { decodePaymentRequired, type NormalizedPaymentRequired } from "./protocol.js";
 import { PROTOCOL_HEADERS, RESERVED_REQUEST_HEADERS } from "../meta.js";
 
@@ -31,9 +32,10 @@ export interface Tx402Clock {
 
 export interface Tx402ClientConfig {
   readonly signers?: Readonly<{ evm?: unknown; solana?: unknown }>;
-  readonly policy?: Readonly<Record<string, unknown>>;
+  readonly policy?: PolicyConfig;
   readonly timeouts?: Readonly<Record<string, unknown>>;
-  readonly routing?: Readonly<Record<string, unknown>>;
+  readonly routing?: RoutingPolicyConfig;
+  readonly spendStore?: SpendStore;
   readonly manifest?: ReleaseManifest;
   readonly logger?: Tx402Logger;
   readonly clock?: Tx402Clock;
@@ -53,14 +55,6 @@ export interface PaymentInspection {
   readonly paymentRequired?: NormalizedPaymentRequired;
 }
 
-export interface BudgetState {
-  readonly storeKind: "memory";
-  readonly committedAtomic: "0";
-  readonly reservedAtomic: "0";
-  readonly entries: readonly never[];
-  readonly reservations: readonly never[];
-}
-
 export interface Tx402Client {
   fetch(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<Response>;
   inspect(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<PaymentInspection>;
@@ -78,14 +72,6 @@ const NOOP_LOGGER: Tx402Logger = Object.freeze({
 const SYSTEM_CLOCK: Tx402Clock = Object.freeze({
   now: () => Date.now(),
   monotonic: () => performance.now(),
-});
-
-const EMPTY_BUDGET_STATE: BudgetState = Object.freeze({
-  storeKind: "memory",
-  committedAtomic: "0",
-  reservedAtomic: "0",
-  entries: Object.freeze([]),
-  reservations: Object.freeze([]),
 });
 
 function uuidV7(nowEpochMs: number): string {
@@ -273,6 +259,30 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
   const logger = config.logger ?? NOOP_LOGGER;
   const clock = config.clock ?? SYSTEM_CLOCK;
   const allowInsecureLocalhost = config.allowInsecureLocalhost ?? false;
+  const spendStore = config.spendStore ?? new MemorySpendStore();
+  if (
+    typeof spendStore !== "object" ||
+    spendStore === null ||
+    typeof spendStore.kind !== "string" ||
+    typeof spendStore.reserve !== "function" ||
+    typeof spendStore.commit !== "function" ||
+    typeof spendStore.release !== "function" ||
+    typeof spendStore.getBudgetState !== "function"
+  ) {
+    throw new ConfigurationError("spendStore must implement the SpendStore contract", {
+      context: context("configuration", "initial"),
+      details: { configPath: "spendStore", reason: "invalid-spend-store" },
+    });
+  }
+  const policyEngine = new PolicyEngine(manifest, config.policy, config.routing);
+  const policyScope = uuidV7(clock.now());
+  let budgetState: BudgetState = Object.freeze({
+    storeKind: spendStore.kind,
+    committedAtomic: "0",
+    reservedAtomic: "0",
+    entries: Object.freeze([]),
+    reservations: Object.freeze([]),
+  });
 
   const inspect = async (
     input: Tx402RequestInfo,
@@ -283,6 +293,7 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
     let request: Request | undefined;
     try {
       request = await prepareRequest(input, init, allowInsecureLocalhost, requestId);
+      policyEngine.assertDomain(request.url, requestId, "initial");
       emit(logger, "info", {
         event: "request.started",
         requestId,
@@ -335,38 +346,32 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
       const inspection = await inspect(input, init);
       if (inspection.paymentRequired === undefined) return inspection.response;
 
-      const offeredSchemes = [
-        ...new Set(inspection.paymentRequired.requirements.map((item) => item.scheme)),
-      ];
-      const offeredNetworks = [
-        ...new Set(inspection.paymentRequired.requirements.map((item) => item.network)),
-      ];
-      const hasSupportedOffer = inspection.paymentRequired.requirements.some(
-        (item) => item.scheme === "exact" && Object.hasOwn(manifest.networks, item.network),
-      );
-      if (!hasSupportedOffer) {
-        const error = new UnsupportedSchemeError(
-          "No supported payment scheme and network was offered",
-          {
-            context: { requestId: inspection.requestId, phase: "route" },
-            details: { offeredSchemes, offeredNetworks },
-          },
-        );
-        emit(logger, "error", {
-          event: "request.failed",
-          requestId: inspection.requestId,
-          errorCode: error.code,
-          phase: error.context.phase,
-          paid: false,
+      const decision = await policyEngine.evaluate(inspection.paymentRequired, {
+        requestId: inspection.requestId,
+        policyScope,
+        nowEpochMs: clock.now(),
+        spendStore,
+      });
+      const first = decision.requirements[0];
+      if (first !== undefined) {
+        budgetState = await spendStore.getBudgetState({
+          policyScope,
+          assetId: first.assetId,
+          nowEpochMs: clock.now(),
         });
-        throw error;
       }
+      emit(logger, "info", {
+        event: "policy.checked",
+        requestId: inspection.requestId,
+        outcome: "allowed",
+        policyCode: "allowed",
+      });
 
       // M1 stops at the validated first challenge. Later milestones replace this return
       // with policy, routing, reservation, signing, and the paid retry.
       return inspection.response;
     },
-    getBudgetState: () => EMPTY_BUDGET_STATE,
+    getBudgetState: () => budgetState,
     resetHealth: () => undefined,
   };
   return Object.freeze(client);
@@ -379,3 +384,5 @@ export function paymentRequiredReason(error: unknown): string | undefined {
     ? error.details.reason
     : undefined;
 }
+
+export type { BudgetState } from "./ledger.js";

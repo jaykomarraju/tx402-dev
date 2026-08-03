@@ -119,6 +119,41 @@ export type {
 } from "./core/client.js";
 
 export {
+  parseMoneyAtomic,
+  parsePositiveMoneyAtomic,
+  MoneyParseError,
+} from "./core/money.js";
+export type { MoneyAssetMetadata, MoneyParseFailureReason } from "./core/money.js";
+
+export {
+  fingerprintRequest,
+  digestRequestBody,
+  normalizeFingerprintUrl,
+  REQUEST_FINGERPRINT_DOMAIN,
+} from "./core/fingerprint.js";
+export type { RequestFingerprintInput } from "./core/fingerprint.js";
+
+export { MemorySpendStore, RESERVATION_TTL_MS, ROLLING_WINDOW_MS } from "./core/ledger.js";
+export type {
+  SpendStore,
+  SpendReservation,
+  SpendReservationState,
+  SpendEntry,
+  SpendTotals,
+  ReserveSpendInput,
+  CommitSpendInput,
+  SpendQuery,
+} from "./core/ledger.js";
+
+export { PolicyEngine, normalizePolicyHost } from "./core/policy.js";
+export type {
+  PolicyConfig,
+  RoutingPolicyConfig,
+  PolicyDecision,
+  PolicyRequirement,
+} from "./core/policy.js";
+
+export {
   decodePaymentRequired,
   MAX_PAYMENT_REQUIRED_BYTES,
   MAX_PAYMENT_REQUIRED_DEPTH,

@@ -38,7 +38,7 @@ const CONFORMANCE_DIR = path.join(REPO_ROOT, "core-spec/conformance");
  * Raising this constant is how a milestone is claimed, and it cannot be raised without
  * registering the handlers.
  */
-export const IMPLEMENTED_THROUGH: Milestone = "M1";
+export const IMPLEMENTED_THROUGH: Milestone = "M2";
 
 export type Milestone = "M0" | "M1" | "M2" | "M3" | "M4" | "M5" | "M6" | "M7" | "M8";
 
@@ -247,7 +247,7 @@ export function stageA(loaded: LoadedVector): StageAResult {
  * Handlers throw on mismatch — the test harness surfaces the message. Returning a boolean
  * would lose the diff, which is the only genuinely useful part of a conformance failure.
  */
-export type StageBHandler = (vector: ConformanceVector) => void;
+export type StageBHandler = (vector: ConformanceVector) => void | Promise<void>;
 
 const handlers = new Map<string, StageBHandler>();
 
