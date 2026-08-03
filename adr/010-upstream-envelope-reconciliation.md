@@ -121,6 +121,41 @@ requires a **synchronous** `Tx402Client` on an httpx-compatible transport. tx402
 `httpx.BaseTransport` (sync) and `httpx.AsyncBaseTransport` (async). This follows anyway from
 decision 6 — tx402 owns the loop in both languages.
 
+### 5a. Amendment (S5) — the address is resolved on first use, not at construction
+
+Decision 5 said the address is resolved "once at client construction". That is not reachable:
+SPEC §4.1 requires `createTx402Client(config)` to validate configuration **synchronously** and return
+a client, while `EvmSigner.getAddress()` is asynchronous by design — a KMS, a hardware wallet, or a
+remote signing service cannot answer synchronously, which is why SPEC §7.1 declares it returning a
+promise.
+
+The resolution therefore happens on **first use** and is memoized per signer object for that
+object's lifetime (`packages/tx402/src/evm/signer.ts`). A failed lookup is not cached, so a transient
+KMS outage does not disable a signer for the life of the process. What decision 5 was actually
+securing is unchanged: upstream still reads a plain synchronous `address` property, and it is read
+exactly once per signer no matter how many payments follow.
+
+### 5b. What the adapter adds beyond shape bridging
+
+The adapter turned out to be the natural place to enforce SPEC §6.6, so it does two things upstream
+cannot:
+
+- **Plan enforcement.** Every field of the EIP-712 message upstream produces is compared against the
+  requirement policy approved — chain ID, verifying contract, token domain, payer, recipient, amount,
+  `validAfter`, `validBefore`, and nonce length — before the caller's signer is invoked. A mismatch
+  raises `SignerError` and no signature is requested. This is what makes "the authorization lifetime
+  must never exceed the merchant bound" an assertion rather than a comment.
+- **Presentation.** SPEC §6.6 requires the request presented to an external signer to carry a
+  human-readable domain, asset, atomic amount, decimal amount, recipient, network, expiry, and
+  request hash. Upstream's `ClientEvmSigner` contract has no room for any of that, so tx402's
+  `EvmTypedDataRequest` carries a `presentation` member alongside the typed data, and the adapter
+  populates it from data already validated against the signed manifest.
+
+The lifetime bound itself is applied by handing upstream a requirement whose `maxTimeoutSeconds` is
+already clamped to `min(60, merchant bound)`. The **offered** requirement still goes on the wire as
+`accepted`, unmodified, so a facilitator comparing the payload against the merchant's own offer sees
+exactly what the merchant published.
+
 ## Consequences
 
 - No SPEC **MUST** is weakened. Every item above resolves an ambiguity or supplies a fact SPEC

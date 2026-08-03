@@ -37,8 +37,27 @@ const NODE_BUILTINS = ["node:*"];
 
 /** Dependencies that are never tx402's own code. */
 const PROTOCOL_DEPS = ["@x402/core", "zod"];
-/** Optional chain adapters — excluded from the core-path figures by ADR-008. */
-const CHAIN_DEPS = ["@x402/evm", "@x402/svm", "viem", "@solana/kit", "@solana-program/*"];
+/**
+ * Optional chain adapters — excluded from the core-path figures by ADR-008 and by
+ * SPEC §12.3's "excluding optional chain adapters".
+ *
+ * The two relative paths are the lazy `import()` targets in `src/core/chain.ts`. A real
+ * bundler code-splits them, so a caller who never pays on a chain never downloads its
+ * adapter; without these entries esbuild would inline both into the core measurement and
+ * report adapter bytes as core bytes.
+ */
+const CHAIN_DEPS = [
+  "@x402/evm",
+  "@x402/evm/*",
+  "@x402/svm",
+  "@x402/svm/*",
+  "viem",
+  "viem/*",
+  "@solana/kit",
+  "@solana-program/*",
+  "../evm/adapter.js",
+  "../solana/adapter.js",
+];
 
 /**
  * Bundles an entry point and returns its minified gzipped size in bytes.

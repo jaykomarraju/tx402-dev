@@ -11,6 +11,7 @@
 
 import { expect } from "vitest";
 
+import { BUNDLED_MANIFEST } from "../../src/core/bundled-manifest.js";
 import { canonicalizeJson, CanonicalJsonError } from "../../src/core/canonical-json.js";
 import { TX402_ERROR_TAXONOMY } from "../../src/core/errors.js";
 import { isTx402Error } from "../../src/core/errors.js";
@@ -23,9 +24,14 @@ import { MemorySpendStore } from "../../src/core/ledger.js";
 import {
   resolveNetwork,
   verifyReleaseManifest,
+  type EvmManifestNetwork,
   type ReleaseManifest,
 } from "../../src/core/manifest.js";
 import { decodePaymentRequired } from "../../src/core/protocol.js";
+import {
+  planExactEvmAuthorization,
+  type ExactEvmRequirementInput,
+} from "../../src/evm/plan.js";
 import { registerHandler, type ConformanceVector } from "./runner.js";
 
 /** Manifest failures all surface to callers as ConfigurationError (SPEC §5.4). */
@@ -240,4 +246,59 @@ registerHandler("spend-ledger.behavior", async (vector: ConformanceVector) => {
     }
   }
   expect(outcomes).toEqual(expected.outcomes);
+});
+
+registerHandler("evm.authorization-plan", (vector: ConformanceVector) => {
+  const input = vector.input as {
+    networkId: string;
+    requirement: ExactEvmRequirementInput;
+    payer: string;
+    nowEpochMs: number;
+    maxAuthorizationSeconds?: number;
+  };
+  const expected = vector.expected as {
+    outcome: "valid" | "invalid";
+    plan?: Record<string, unknown>;
+    errorCode?: string;
+    reason?: string;
+  };
+
+  // The network and asset are resolved from the bundled manifest rather than carried in the
+  // vector, so the fixture pins that lookup too — SPEC §0 admits chain and token data through
+  // the signed manifest and nowhere else.
+  const network = BUNDLED_MANIFEST.networks[input.networkId] as EvmManifestNetwork;
+  const asset =
+    network.assets.find(
+      (candidate) =>
+        candidate.address.toLowerCase() === input.requirement.asset.toLowerCase(),
+    ) ?? network.assets[0];
+  // Vectors that name an off-manifest token still need an asset to be rejected against.
+  if (asset === undefined) throw new Error(`${input.networkId} declares no assets`);
+
+  const run = () =>
+    planExactEvmAuthorization({
+      requirement: input.requirement,
+      networkId: input.networkId,
+      network,
+      asset,
+      payer: input.payer,
+      nowEpochMs: input.nowEpochMs,
+      maxAuthorizationSeconds: input.maxAuthorizationSeconds ?? 60,
+      context: { requestId: vector.id, phase: "route" },
+    });
+
+  if (expected.outcome === "valid") {
+    expect({ ...run() }).toEqual(expected.plan);
+    return;
+  }
+  try {
+    run();
+    expect.unreachable(`${vector.id} should have been rejected`);
+  } catch (error) {
+    if (!isTx402Error(error)) throw error;
+    expect({ errorCode: error.code, reason: error.details.reason }).toEqual({
+      errorCode: expected.errorCode,
+      reason: expected.reason,
+    });
+  }
 });

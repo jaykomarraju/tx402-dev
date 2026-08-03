@@ -1,7 +1,7 @@
 {
   "name": "tx402",
   "version": "0.0.0",
-  "description": "Resilient x402 buyer SDK — deterministic multi-chain payment routing, local spend guardrails, and a drop-in fetch wrapper for autonomous agents.",
+  "description": "Resilient x402 buyer SDK \u2014 deterministic multi-chain payment routing, local spend guardrails, and a drop-in fetch wrapper for autonomous agents.",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -77,6 +77,7 @@
   },
   "devDependencies": {
     "@solana/kit": "^5.1.0",
+    "@tx402-dev/evm-rpc-stub": "workspace:*",
     "@tx402-dev/test-merchant": "workspace:*",
     "@vitest/coverage-v8": "^2.1.9",
     "@x402/evm": "~2.20.0",

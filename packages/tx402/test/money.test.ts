@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   MoneyParseError,
+  formatMoneyDecimal,
   parseMoneyAtomic,
   parsePositiveMoneyAtomic,
 } from "../src/core/money.js";
@@ -62,5 +63,34 @@ describe("integer money parsing", () => {
       const expected = whole * 1_000_000n + BigInt((fraction || "0").padEnd(6, "0"));
       expect(parseMoneyAtomic(text, USDC)).toBe(expected);
     }
+  });
+});
+
+describe("formatMoneyDecimal", () => {
+  it("renders atomic units for presentation without ever touching a float", () => {
+    // SPEC §6.6 requires a decimal amount beside the atomic one in the signer request.
+    expect(formatMoneyDecimal(50_000n, 6)).toBe("0.05");
+    expect(formatMoneyDecimal("1", 6)).toBe("0.000001");
+    expect(formatMoneyDecimal("0", 6)).toBe("0");
+    expect(formatMoneyDecimal(1_000_000n, 6)).toBe("1");
+    expect(formatMoneyDecimal(1_234_567n, 6)).toBe("1.234567");
+    expect(formatMoneyDecimal(1_230_000n, 6)).toBe("1.23");
+    expect(formatMoneyDecimal(42n, 0)).toBe("42");
+    // Beyond IEEE-754's exact integer range, which is the point of the string arithmetic.
+    expect(formatMoneyDecimal(90_071_992_547_409_910n, 6)).toBe("90071992547.40991");
+  });
+
+  it("round-trips through the parser for the same asset", () => {
+    for (const atomic of [1n, 50_000n, 999_999n, 1_000_000n, 123_456_789n]) {
+      const decimal = formatMoneyDecimal(atomic, 6);
+      expect(parseMoneyAtomic(`${decimal} USDC`, USDC)).toBe(atomic);
+    }
+  });
+
+  it("rejects negative amounts and impossible decimals", () => {
+    expect(() => formatMoneyDecimal(-1n, 6)).toThrow(MoneyParseError);
+    expect(() => formatMoneyDecimal(1n, -1)).toThrow(MoneyParseError);
+    expect(() => formatMoneyDecimal(1n, 37)).toThrow(MoneyParseError);
+    expect(() => formatMoneyDecimal(1n, 1.5)).toThrow(MoneyParseError);
   });
 });

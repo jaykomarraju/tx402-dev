@@ -268,12 +268,15 @@ export async function createTestMerchant(options = {}) {
           /** @type {Record<string, string>} */
           const headers = {};
           if (!action.omitPaymentResponse) {
-            headers[HEADER_PAYMENT_RESPONSE] = encodePaymentResponseHeader({
-              success: true,
-              transaction: settlementId,
-              network: requirements[0].network,
-              payer: requirements[0].payTo,
-            });
+            headers[HEADER_PAYMENT_RESPONSE] =
+              action.paymentResponse === "corrupt"
+                ? "!!!not-base64~~~"
+                : encodePaymentResponseHeader({
+                    success: action.paymentResponse !== "unsuccessful",
+                    transaction: settlementId,
+                    network: requirements[0].network,
+                    payer: requirements[0].payTo,
+                  });
           }
           send(action.status ?? 200, headers, body);
           return;

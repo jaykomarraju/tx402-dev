@@ -36,6 +36,13 @@ export interface RoutingPolicyConfig {
 
 export interface PolicyRequirement extends NormalizedPaymentRequirement {
   readonly assetId: string;
+  /**
+   * The **manifest** asset this requirement was matched to — decimals, symbol, and the
+   * canonical address — not the merchant's claim about it. Route planning and the signer
+   * presentation read token metadata from here, so a merchant cannot restate a token's
+   * decimals and change what an amount means (SPEC §0, ADR-006).
+   */
+  readonly manifestAsset: ManifestAsset;
   readonly maxPerRequestAtomic: string;
   readonly maxPerHourAtomic: string;
 }
@@ -377,6 +384,7 @@ export class PolicyEngine {
           Object.freeze({
             ...requirement,
             assetId: asset.assetId,
+            manifestAsset: asset.manifest,
             maxPerRequestAtomic: asset.maxPerRequest.toString(),
             maxPerHourAtomic: asset.maxPerHour.toString(),
           }),

@@ -26,7 +26,8 @@
         "manifest.network-resolution",
         "protocol.decode-payment-required",
         "request.fingerprint",
-        "spend-ledger.behavior"
+        "spend-ledger.behavior",
+        "evm.authorization-plan"
       ]
     },
 
@@ -147,6 +148,19 @@
         "properties": {
           "input": { "$ref": "#/$defs/inputSpendLedger" },
           "expected": { "$ref": "#/$defs/expectedSpendLedger" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "evm.authorization-plan" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "required": ["input"],
+        "properties": {
+          "input": { "$ref": "#/$defs/inputEvmAuthorizationPlan" },
+          "expected": { "$ref": "#/$defs/expectedEvmAuthorizationPlan" }
         }
       }
     }
@@ -467,6 +481,117 @@
           }
         }
       }
+    },
+
+    "inputEvmAuthorizationPlan": {
+      "description": "One policy-approved requirement, as the Base adapter receives it. The manifest is not carried here: the network and asset are resolved from the implementation's own bundled manifest by `networkId` and `requirement.asset`, so the vector also pins that lookup.",
+      "type": "object",
+      "required": ["networkId", "requirement", "payer", "nowEpochMs"],
+      "additionalProperties": false,
+      "properties": {
+        "networkId": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/caip2"
+        },
+        "requirement": {
+          "type": "object",
+          "required": [
+            "scheme",
+            "network",
+            "asset",
+            "amountAtomic",
+            "payTo",
+            "maxTimeoutSeconds",
+            "extra"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "index": { "type": "integer", "minimum": 0 },
+            "scheme": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "network": { "type": "string", "minLength": 3, "maxLength": 64 },
+            "asset": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "amountAtomic": { "type": "string", "minLength": 1, "maxLength": 78 },
+            "payTo": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "maxTimeoutSeconds": { "type": "integer" },
+            "extra": { "type": "object" }
+          }
+        },
+        "payer": {
+          "description": "The address the configured signer resolved to.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "nowEpochMs": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/epochMs"
+        },
+        "maxAuthorizationSeconds": {
+          "description": "SPEC §6.6's ceiling. Defaults to 60 when the vector omits it.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+
+    "expectedEvmAuthorizationPlan": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["outcome", "plan"],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": { "const": "valid" },
+            "plan": {
+              "type": "object",
+              "required": [
+                "chainId",
+                "verifyingContract",
+                "domainName",
+                "domainVersion",
+                "payer",
+                "recipient",
+                "valueAtomic",
+                "lifetimeSeconds",
+                "validAfterSeconds",
+                "notBeforeEpochSeconds",
+                "notAfterEpochSeconds",
+                "balanceOfCallData"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "chainId": { "type": "integer", "minimum": 1 },
+                "verifyingContract": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+                "domainName": { "type": "string", "minLength": 1 },
+                "domainVersion": { "type": "string", "minLength": 1 },
+                "payer": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+                "recipient": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+                "valueAtomic": {
+                  "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/positiveAtomicAmount"
+                },
+                "lifetimeSeconds": { "type": "integer", "minimum": 1, "maximum": 60 },
+                "validAfterSeconds": { "const": 0 },
+                "notBeforeEpochSeconds": { "type": "integer", "minimum": 0 },
+                "notAfterEpochSeconds": { "type": "integer", "minimum": 0 },
+                "balanceOfCallData": {
+                  "type": "string",
+                  "pattern": "^0x70a08231[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["outcome", "errorCode", "reason"],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": { "const": "invalid" },
+            "errorCode": {
+              "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/errorCode"
+            },
+            "reason": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 }
+          }
+        }
+      ]
     },
 
     "expectedSpendLedger": {

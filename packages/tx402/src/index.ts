@@ -116,11 +116,47 @@ export type {
   Tx402Logger,
   Tx402RequestInfo,
   Tx402RequestInit,
+  Tx402Timeouts,
 } from "./core/client.js";
+
+/**
+ * Signer contracts (SPEC §7.1/§7.2, SEC-001).
+ *
+ * Declarations only. The implementations live behind `tx402/evm` and `tx402/solana`, and the
+ * private-key convenience adapters behind `tx402/signers`.
+ */
+export { isEvmSigner, isSolanaSigner } from "./core/signers.js";
+export type {
+  EvmSigner,
+  EvmSignerPresentation,
+  EvmTypedDataDomain,
+  EvmTypedDataField,
+  EvmTypedDataRequest,
+  SolanaSigner,
+  Tx402Signers,
+} from "./core/signers.js";
+
+/** The core-to-adapter seam (SPEC §3). Chain adapters are loaded lazily; see `core/chain.ts`. */
+export {
+  BALANCE_TIMEOUT_MS,
+  CIRCUIT_OPEN_MS,
+  MAX_AUTHORIZATION_SECONDS,
+  MAX_PROVIDERS_PER_NETWORK,
+  chainFamily,
+} from "./core/chain.js";
+export type {
+  ChainAdapter,
+  ChainAdapterLoader,
+  ChainAuthorization,
+  ChainAuthorizationRequest,
+  ChainRoute,
+  ChainRouteRequest,
+} from "./core/chain.js";
 
 export {
   parseMoneyAtomic,
   parsePositiveMoneyAtomic,
+  formatMoneyDecimal,
   MoneyParseError,
 } from "./core/money.js";
 export type { MoneyAssetMetadata, MoneyParseFailureReason } from "./core/money.js";

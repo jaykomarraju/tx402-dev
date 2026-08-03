@@ -88,3 +88,39 @@ The total ceiling is therefore amended to **28 KiB gzipped (28,672 bytes)**. Thi
 M2 core 2.21 KiB (8.6 %) of build and implementation headroom while continuing to fail material
 growth. The independent tx402-own-code blocking limit remains unchanged at 25 KiB; no runtime
 dependency was added and no optional chain adapter entered the core path.
+
+## M3 amendment — lazy adapter boundary and the re-baseline policy (2026-08-03)
+
+Two changes, one mechanical and one numeric.
+
+**The lazy adapter targets are now external to the core measurement.** `src/core/chain.ts` reaches a
+chain adapter through `await import("../evm/adapter.js")`. Every real bundler code-splits a dynamic
+import, so a caller who never pays on EVM never downloads the EVM adapter — but esbuild, run with a
+single entry point and no splitting, inlines it and reported 3.6 KiB of adapter bytes as core bytes.
+`tools/size-gate` therefore treats those two relative paths as external alongside `@x402/evm`,
+`@x402/svm`, `viem`, and `@solana/kit`. This is the same carve-out SPEC §12.3 already makes for
+"optional chain adapters", applied to the module that actually holds them; it is a correction to the
+measurement, not a relaxation of the budget. The adapters remain measured and reported separately —
+`tx402/evm` is 5.51 KiB gzipped at M3.
+
+**The total ceiling moves to 30 KiB gzipped (30,720 bytes).** M3 adds the signer contract, the
+core-to-adapter seam, and the SPEC §6 payment path — reserve, sign, retry, commit — to the same
+core module `createTx402Client` returns. None of it can move behind an optional entry point without
+putting SEC-002's ordering guarantee outside the code that has to enforce it. With no dependency
+change, the measured total is **28.39 KiB gzipped** and tx402's own portion is **13.67 KiB gzipped**,
+still comfortably inside the unchanged 25 KiB blocking limit.
+
+**The re-baseline is now a stated policy rather than a repeated exception.** The total core-path
+figure has been re-baselined at M1, M2, and M3, each time because a milestone added core code that
+SPEC requires to be reachable from the client constructor. That will happen again at M5 (route
+planner and health index) and M6 (completion semantics). The rule, stated once:
+
+- The **blocking gate is tx402's own emitted core code at 25 KiB** and does not move. It is the
+  measurement that actually protects the "zero bloat" intent, because it is the only one tx402
+  wholly controls.
+- The **total core-path ceiling is a tracking number**, re-baselined only by an amendment to this
+  ADR that records the measurement, the milestone, and what was added. A re-baseline is never
+  permitted to absorb a new runtime dependency, an optional chain adapter entering the core path, or
+  growth in own code that would breach the blocking gate — any of those is a design change and needs
+  its own decision.
+- At M8 the ceiling is frozen against the finished implementation and stops moving.

@@ -82,6 +82,32 @@ export function parseMoneyAtomic(value: unknown, asset: MoneyAssetMetadata): big
   return BigInt(atomicText || "0");
 }
 
+/**
+ * Render atomic units back to a canonical decimal string, for human presentation only.
+ *
+ * SPEC §6.6 requires the request handed to an external signer to carry a decimal amount
+ * beside the atomic one, so a hardware wallet can show a person what they are approving.
+ * The conversion is pure string arithmetic — a `bigint` never becomes a `number` — and the
+ * result round-trips through {@link parseMoneyAtomic} for the same asset.
+ */
+export function formatMoneyDecimal(atomic: bigint | string, decimals: number): string {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new MoneyParseError("invalid-format", "Asset decimals are invalid");
+  }
+  const value = typeof atomic === "bigint" ? atomic : BigInt(atomic);
+  if (value < 0n) {
+    throw new MoneyParseError(
+      "amount-must-be-positive",
+      "Money amount must not be negative",
+    );
+  }
+  const digits = value.toString().padStart(decimals + 1, "0");
+  if (decimals === 0) return digits;
+  const whole = digits.slice(0, digits.length - decimals);
+  const fraction = digits.slice(digits.length - decimals).replace(/0+$/u, "");
+  return fraction.length === 0 ? whole : `${whole}.${fraction}`;
+}
+
 /** Parse a policy cap and require it to be strictly positive. */
 export function parsePositiveMoneyAtomic(
   value: unknown,

@@ -46,6 +46,34 @@ describe("package contract", () => {
   });
 });
 
+describe("subpath export surface", () => {
+  it("exposes the Base adapter and its signer contract from tx402/evm", async () => {
+    const evm = await import("../src/evm/index.js");
+
+    // The entry point a caller actually imports. Asserting on it keeps a re-export from
+    // being dropped silently, which a test importing submodules directly would never catch.
+    expect(Object.keys(evm).sort()).toEqual([
+      "BALANCE_OF_SELECTOR",
+      "EvmRpcError",
+      "EvmRpcPool",
+      "SUPPORTED_ASSET_TRANSFER_METHOD",
+      "createEvmChainAdapter",
+      "encodeBalanceOfCallData",
+      "isEvmSigner",
+      "planExactEvmAuthorization",
+      "resolveEvmAddress",
+      "toClientEvmSigner",
+    ]);
+    expect(evm.createEvmChainAdapter()).toMatchObject({ family: "eip155" });
+  });
+
+  it("exposes only the private-key convenience adapter from tx402/signers", async () => {
+    const signers = await import("../src/signers/index.js");
+    // SEC-001: the raw-key path is opt-in and lives nowhere else.
+    expect(Object.keys(signers)).toEqual(["privateKeyToEvmSigner"]);
+  });
+});
+
 describe("protocol constants", () => {
   it("targets x402 protocol v2 only (ADR-004)", () => {
     expect(X402_PROTOCOL_VERSION).toBe(2);

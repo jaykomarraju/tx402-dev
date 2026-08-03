@@ -39,6 +39,9 @@ importers:
       '@solana/kit':
         specifier: ^5.1.0
         version: 5.5.1(typescript@5.9.3)
+      '@tx402-dev/evm-rpc-stub':
+        specifier: workspace:*
+        version: link:../../tools/evm-rpc-stub
       '@tx402-dev/test-merchant':
         specifier: workspace:*
         version: link:../../tools/test-merchant
@@ -69,6 +72,8 @@ importers:
       ajv-formats:
         specifier: ^3.0.1
         version: 3.0.1(ajv@8.20.0)
+
+  tools/evm-rpc-stub: {}
 
   tools/manifest-signer: {}
 

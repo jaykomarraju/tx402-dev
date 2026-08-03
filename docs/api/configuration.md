@@ -101,9 +101,63 @@ Two consequences worth knowing before S3:
 
 ---
 
+## `signers` — abstractions only (SEC-001)
+
+`signers.evm` takes anything satisfying SPEC §7.1's `EvmSigner`: a `kind`, an async
+`getAddress()`, and `signTypedData(request)`. The core client never accepts a private key, and
+there is no environment-variable fallback — SPEC §15 forbids silently substituting an
+environment key for a configured signer.
+
+The address is resolved on **first use** and cached per signer object, not at construction:
+`createTx402Client` validates synchronously (SPEC §4.1) and cannot await an async lookup. A failed
+lookup is not cached, so a transient KMS outage does not disable a signer for the life of the
+process. ADR-010 decision 5a records this.
+
+Chain adapters load lazily. `signers.evm` alone is enough — importing `tx402/evm` by hand is only
+necessary to build a signer or inspect a plan. A configured signer for a family whose adapter does
+not exist yet (Solana, until M4) produces `UnsupportedSchemeError` listing the networks that were
+offered, never a silent skip.
+
+The convenience adapter for a raw key lives behind its own import:
+
+```ts
+import { privateKeyToEvmSigner } from "tx402/signers";
+```
+
+It exists for development and for dedicated low-balance wallets. Prefer a KMS, a hardware wallet,
+or a remote signing service — SPEC §9.1 lists prompt injection extracting a wallet key as a live
+threat for the agent runtimes this SDK targets, and a key in process memory is a key an in-process
+compromise can read.
+
+---
+
+## `timeouts` — the caller's own deadline is never shortened
+
+| Field                       | Default                 | Behaviour                                                                                                                                            |
+| :-------------------------- | :---------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `timeouts.initialRequestMs` | absent                  | No SDK deadline. The caller's transport or `AbortSignal` governs. Supplying one adds a deadline **alongside** any caller signal, never replacing it. |
+| `timeouts.paymentRetryMs`   | `10000`, minimum `1000` | Covers the signature-bearing attempt.                                                                                                                |
+
+A paid retry that hits its deadline is **ambiguous**, not failed: the signature was already
+transmitted, so `AmbiguousPaymentError` is raised and the reservation is retained until its
+120-second TTL (SPEC §6.7). Setting this very low does not make failures cleaner — it makes
+ambiguous outcomes more likely.
+
+---
+
+## `disableRequestIdHeader`
+
+Omits `X-TX402-REQUEST-ID` from the paid retry. The header carries a UUIDv7 and no payment meaning
+(SPEC §6.7); turn it off for merchants that reject unknown headers. The caller's own
+`Idempotency-Key` is always preserved and is never synthesized — merchant semantics are unknown, so
+inventing one would be guessing.
+
+---
+
 ## Not yet frozen
 
 Everything else in SPEC §4.3 — `policy.maxPerRequest`, `policy.maxPerHour`,
-`policy.allowedDomains`, `policy.maxPaidAttempts`, the timeouts, `spendStore`, `logger`,
-`clock` — is implemented at M1/M2 with the semantics SPEC §4.3 already states. Nothing about
-them changed at M0.
+`policy.allowedDomains`, `policy.maxPaidAttempts`, `spendStore`, `logger`, `clock` — is
+implemented at M1/M2 with the semantics SPEC §4.3 already states. Nothing about them changed at M0.
+`routing.preferNetworks` is not implemented yet: M3 selects the first viable requirement in the
+merchant's own order, and the deterministic planner that consumes a preference lands at M5.

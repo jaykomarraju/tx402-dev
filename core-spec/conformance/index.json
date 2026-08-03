@@ -58,6 +58,55 @@
       "sha256": "sha256:48a81e3abdf4f3d99a9e0ed37cd30db3f3e9ecdb66393ff9f90be3171102d882"
     },
     {
+      "id": "evm.authorization-plan.asset-not-manifest-asset",
+      "kind": "evm.authorization-plan",
+      "milestone": "M3",
+      "file": "vectors/evm/asset-not-manifest-asset.json",
+      "sha256": "sha256:051b99743cdb67a7c9f3551fe995f44db1ebe7a5ace20244df1404c7448effb5"
+    },
+    {
+      "id": "evm.authorization-plan.base-usdc-valid",
+      "kind": "evm.authorization-plan",
+      "milestone": "M3",
+      "file": "vectors/evm/base-usdc-valid.json",
+      "sha256": "sha256:82c07188c3311f59586d4bd8efe7a7d712e696d1eec8b9d900be698b6782581a"
+    },
+    {
+      "id": "evm.authorization-plan.eip712-domain-missing",
+      "kind": "evm.authorization-plan",
+      "milestone": "M3",
+      "file": "vectors/evm/eip712-domain-missing.json",
+      "sha256": "sha256:2542215dca1dd1245848017e8fef01a2bb4497fd448c7a7d6ced8fb034622a4d"
+    },
+    {
+      "id": "evm.authorization-plan.eip712-version-mismatch",
+      "kind": "evm.authorization-plan",
+      "milestone": "M3",
+      "file": "vectors/evm/eip712-version-mismatch.json",
+      "sha256": "sha256:7f76e3680a600a78ffdcbc4937bcef7e60fb2427d4e4d4a173d20886c1942a63"
+    },
+    {
+      "id": "evm.authorization-plan.lifetime-below-default",
+      "kind": "evm.authorization-plan",
+      "milestone": "M3",
+      "file": "vectors/evm/lifetime-below-default.json",
+      "sha256": "sha256:3b47598e6b332f43bbb6bf5e14da8fea2b8567d69405018618eb171bc1fbb3d0"
+    },
+    {
+      "id": "evm.authorization-plan.lifetime-clamped",
+      "kind": "evm.authorization-plan",
+      "milestone": "M3",
+      "file": "vectors/evm/lifetime-clamped.json",
+      "sha256": "sha256:58c4a093175f2c743f334187c90773f02164b6c2a33aa293955e341e8015db07"
+    },
+    {
+      "id": "evm.authorization-plan.permit2-unsupported",
+      "kind": "evm.authorization-plan",
+      "milestone": "M3",
+      "file": "vectors/evm/permit2-unsupported.json",
+      "sha256": "sha256:193e0ec6cc27ca8edbd638dc76865979e20bd4c14beb7d88b0b30445e1a372bb"
+    },
+    {
       "id": "manifest.network-resolution.alias",
       "kind": "manifest.network-resolution",
       "milestone": "M0",

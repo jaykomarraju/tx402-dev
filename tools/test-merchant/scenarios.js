@@ -57,6 +57,7 @@ export const DEFAULT_REQUIREMENTS = {
  * @property {number} [status]
  * @property {string} [location]
  * @property {boolean} [omitPaymentResponse]
+ * @property {"corrupt"|"unsuccessful"} [paymentResponse] how to spoil PAYMENT-RESPONSE
  * @property {string} [reason]
  */
 
@@ -115,6 +116,29 @@ export const SCENARIOS = {
         : { type: "challenge" },
   },
 
+  "corrupt-payment-response": {
+    description:
+      "Accepts payment and delivers, but the PAYMENT-RESPONSE header does not decode. The " +
+      "buyer cannot read it as evidence in either direction, so the resource is delivered " +
+      "with a diagnostic warning rather than being treated as a failure.",
+    covers: ["SPEC §6.7"],
+    next: ({ hasSignature }) =>
+      hasSignature
+        ? { type: "deliver", status: 200, paymentResponse: "corrupt" }
+        : { type: "challenge" },
+  },
+
+  "unsuccessful-settlement": {
+    description:
+      "Delivers a 200 whose PAYMENT-RESPONSE reports success:false. A merchant contradicting " +
+      "itself is not a payment; the buyer must not commit the spend.",
+    covers: ["SPEC §6.7", "SPEC §5.3"],
+    next: ({ hasSignature }) =>
+      hasSignature
+        ? { type: "deliver", status: 200, paymentResponse: "unsuccessful" }
+        : { type: "challenge" },
+  },
+
   "error-after-signature": {
     description:
       "Challenges, then returns 503 to the paid retry. The signature was transmitted, so the " +
@@ -122,6 +146,16 @@ export const SCENARIOS = {
     covers: ["T-011", "SPEC §6.7"],
     next: ({ hasSignature }) =>
       hasSignature ? { type: "status", status: 503 } : { type: "challenge" },
+  },
+
+  "refused-after-signature": {
+    description:
+      "Challenges, then answers the paid retry with 403. The merchant refused the request " +
+      "outright rather than failing to complete it, so no settlement exists and the buyer's " +
+      "reservation must be released rather than retained.",
+    covers: ["SPEC §6.7", "SPEC §5.3"],
+    next: ({ hasSignature }) =>
+      hasSignature ? { type: "status", status: 403 } : { type: "challenge" },
   },
 
   "hang-after-signature": {

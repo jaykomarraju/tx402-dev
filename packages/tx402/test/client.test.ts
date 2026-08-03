@@ -161,7 +161,13 @@ describe("M1 client transport", () => {
     );
     const signTypedData = vi.fn();
     const client = createTx402Client({
-      signers: { evm: { signTypedData } },
+      signers: {
+        evm: {
+          kind: "evm",
+          getAddress: () => Promise.resolve("0x0000000000000000000000000000000000000001"),
+          signTypedData,
+        },
+      },
       policy: { maxPerRequest: "0.000001 USDC", maxPerHour: "1 USDC" },
     });
     await expect(client.fetch("https://api.example.com/resource")).rejects.toHaveProperty(
@@ -238,7 +244,7 @@ describe("M1 client transport", () => {
     expect(transport).toHaveBeenCalledOnce();
   });
 
-  it("returns a validated supported 402 at the M1 milestone boundary", async () => {
+  it("refuses to plan a route when no signer is configured for the offered network", async () => {
     const response = new Response(null, {
       status: 402,
       headers: { "payment-required": challenge() },
@@ -247,9 +253,14 @@ describe("M1 client transport", () => {
       "fetch",
       vi.fn(() => Promise.resolve(response)),
     );
-    expect(await createTx402Client().fetch("https://api.example.com/resource")).toBe(
-      response,
-    );
+    // A policy-approved challenge with no way to pay it is a typed refusal, never a
+    // silently returned 402 the caller might mistake for a delivered resource.
+    await expect(
+      createTx402Client().fetch("https://api.example.com/resource"),
+    ).rejects.toMatchObject({
+      code: "TX402_SCHEME_UNSUPPORTED",
+      details: { offeredNetworks: ["eip155:8453"] },
+    });
   });
 
   it("isolates logger failures and validates the localhost flag synchronously", async () => {
@@ -336,6 +347,93 @@ describe("M1 client transport", () => {
         }),
     });
     expect(body).toBe("streamed");
+  });
+
+  it("validates timeout configuration synchronously", () => {
+    // SPEC §4.3: the SDK does not silently shorten a caller's own timeout, and the paid
+    // retry deadline has a floor so a merchant cannot be given an unusable window.
+    expect(() => createTx402Client({ timeouts: { initialRequestMs: 0 } })).toThrowError(
+      /initialRequestMs/u,
+    );
+    expect(() => createTx402Client({ timeouts: { paymentRetryMs: 999 } })).toThrowError(
+      /paymentRetryMs/u,
+    );
+    expect(() =>
+      createTx402Client({ timeouts: { initialRequestMs: 5_000, paymentRetryMs: 10_000 } }),
+    ).not.toThrow();
+    expect(() =>
+      createTx402Client({ spendStore: { kind: "broken" } as never }),
+    ).toThrowError(/spendStore/u);
+  });
+
+  it("applies a configured initial-request deadline", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (request: Request) =>
+          new Promise<Response>((_resolve, reject) => {
+            request.signal.addEventListener("abort", () =>
+              reject(new Error("aborted by deadline")),
+            );
+          }),
+      ),
+    );
+
+    await expect(
+      createTx402Client({ timeouts: { initialRequestMs: 50 } }).fetch(
+        "https://api.example.com/resource",
+      ),
+    ).rejects.toMatchObject({ code: "TX402_TRANSPORT" });
+  });
+
+  it("refuses a network whose chain family has no adapter yet", async () => {
+    const solana = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(null, {
+            status: 402,
+            headers: {
+              "payment-required": encodePaymentRequiredHeader({
+                x402Version: 2,
+                resource: { url: "https://api.example.com/resource" },
+                accepts: [
+                  {
+                    scheme: "exact",
+                    network: solana,
+                    asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    amount: "1",
+                    payTo: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+                    maxTimeoutSeconds: 60,
+                    extra: {},
+                  },
+                ],
+              }),
+            },
+          }),
+        ),
+      ),
+    );
+
+    // A configured Solana signer is not enough: the SVM adapter lands at M4, so the offer
+    // is refused with the networks it was given rather than silently skipped.
+    await expect(
+      createTx402Client({
+        signers: {
+          solana: {
+            kind: "solana",
+            getPublicKey: () =>
+              Promise.resolve("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"),
+            signTransaction: () => Promise.resolve(new Uint8Array()),
+          },
+        },
+        policy: { allowedNetworks: [solana] },
+      }).fetch("https://api.example.com/resource"),
+    ).rejects.toMatchObject({
+      code: "TX402_SCHEME_UNSUPPORTED",
+      details: { offeredNetworks: [solana] },
+    });
   });
 
   it("extracts only a typed invalid-payment reason", () => {
