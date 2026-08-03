@@ -44,6 +44,11 @@ export interface EvmAuthorizationPlan {
    * produces, which would reject a perfectly valid authorization whenever the two reads
    * straddle a second boundary. Reading the clock after upstream has written the message
    * makes `validBefore <= now + lifetime` true by construction rather than by luck.
+   *
+   * That reading uses `Date.now()` rather than the client's injectable `Tx402Clock`, which is
+   * the one place in the SDK where the real clock is deliberate: the value being checked was
+   * produced by upstream from `Date.now()`, so comparing it against an injected clock would
+   * compare two unrelated timelines and reintroduce exactly the failure this avoids.
    */
   readonly lifetimeSeconds: number;
 }
