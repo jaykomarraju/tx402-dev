@@ -343,6 +343,34 @@
       "milestone": "M2",
       "file": "vectors/ledger/ttl-window.json",
       "sha256": "sha256:59014c7478cee38286b933540d01187946e77fed86e1c20aa6f3d063a8ed8ba3"
+    },
+    {
+      "id": "svm.authorization-plan.devnet-usdc-valid",
+      "kind": "svm.authorization-plan",
+      "milestone": "M4",
+      "file": "vectors/svm/devnet-usdc-valid.json",
+      "sha256": "sha256:0290744415b1d7567884eea0dec281e0f21639dd8bad4941762765bb41b9f27f"
+    },
+    {
+      "id": "svm.authorization-plan.fee-payer-missing",
+      "kind": "svm.authorization-plan",
+      "milestone": "M4",
+      "file": "vectors/svm/fee-payer-missing.json",
+      "sha256": "sha256:783d828739746c428cc73af6e3fdc3b19885458e9bc460573275526a50d97b12"
+    },
+    {
+      "id": "svm.authorization-plan.mainnet-lifetime-clamped",
+      "kind": "svm.authorization-plan",
+      "milestone": "M4",
+      "file": "vectors/svm/mainnet-lifetime-clamped.json",
+      "sha256": "sha256:c1e1ad4c80671007ef9ed6f0a0c0eb0c6a58fade4ded1095b0a39e3c07a68785"
+    },
+    {
+      "id": "svm.authorization-plan.token-2022-excluded",
+      "kind": "svm.authorization-plan",
+      "milestone": "M4",
+      "file": "vectors/svm/token-2022-excluded.json",
+      "sha256": "sha256:68d53b494fb727c73f512ffe1588c86efc54fda316f764a0a2d92bb822fa3453"
     }
   ]
 }

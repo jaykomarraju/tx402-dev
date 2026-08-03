@@ -27,7 +27,8 @@
         "protocol.decode-payment-required",
         "request.fingerprint",
         "spend-ledger.behavior",
-        "evm.authorization-plan"
+        "evm.authorization-plan",
+        "svm.authorization-plan"
       ]
     },
 

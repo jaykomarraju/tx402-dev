@@ -22,7 +22,7 @@
  * const response = await client.fetch(url, init);
  * ```
  *
- * Status: transport and strict protocol decoding are implemented through M1.
+ * Status: paid calls through the EVM and SVM adapters are implemented through M4.
  */
 
 export {
@@ -133,6 +133,8 @@ export type {
   EvmTypedDataField,
   EvmTypedDataRequest,
   SolanaSigner,
+  SolanaSignerPresentation,
+  SolanaSignRequest,
   Tx402Signers,
 } from "./core/signers.js";
 

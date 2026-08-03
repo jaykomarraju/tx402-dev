@@ -386,7 +386,7 @@ describe("M1 client transport", () => {
     ).rejects.toMatchObject({ code: "TX402_TRANSPORT" });
   });
 
-  it("refuses a network whose chain family has no adapter yet", async () => {
+  it("reaches the Solana adapter and validates its scheme-specific requirement", async () => {
     const solana = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
     vi.stubGlobal(
       "fetch",
@@ -416,8 +416,8 @@ describe("M1 client transport", () => {
       ),
     );
 
-    // A configured Solana signer is not enough: the SVM adapter lands at M4, so the offer
-    // is refused with the networks it was given rather than silently skipped.
+    // The M4 adapter is loaded and rejects the missing upstream-required fee payer before
+    // any balance, reservation, or signer call.
     await expect(
       createTx402Client({
         signers: {
@@ -431,8 +431,8 @@ describe("M1 client transport", () => {
         policy: { allowedNetworks: [solana] },
       }).fetch("https://api.example.com/resource"),
     ).rejects.toMatchObject({
-      code: "TX402_SCHEME_UNSUPPORTED",
-      details: { offeredNetworks: [solana] },
+      code: "TX402_PAYMENT_REQUIRED_INVALID",
+      details: { reason: "svm-feePayer-missing" },
     });
   });
 

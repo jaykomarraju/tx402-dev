@@ -56,12 +56,16 @@
     "@x402/core": "~2.20.0"
   },
   "peerDependencies": {
+    "@solana-program/token": "^0.9.0",
     "@solana/kit": ">=5.1.0",
     "@x402/evm": "~2.20.0",
     "@x402/svm": "~2.20.0",
     "viem": "^2.48.11"
   },
   "peerDependenciesMeta": {
+    "@solana-program/token": {
+      "optional": true
+    },
     "@x402/evm": {
       "optional": true
     },
@@ -76,8 +80,10 @@
     }
   },
   "devDependencies": {
+    "@solana-program/token": "^0.9.0",
     "@solana/kit": "^5.1.0",
     "@tx402-dev/evm-rpc-stub": "workspace:*",
+    "@tx402-dev/svm-rpc-stub": "workspace:*",
     "@tx402-dev/test-merchant": "workspace:*",
     "@vitest/coverage-v8": "^2.1.9",
     "@x402/evm": "~2.20.0",

@@ -36,12 +36,18 @@ importers:
         specifier: ~2.20.0
         version: 2.20.0
     devDependencies:
+      '@solana-program/token':
+        specifier: ^0.9.0
+        version: 0.9.0(@solana/kit@5.5.1(typescript@5.9.3))
       '@solana/kit':
         specifier: ^5.1.0
         version: 5.5.1(typescript@5.9.3)
       '@tx402-dev/evm-rpc-stub':
         specifier: workspace:*
         version: link:../../tools/evm-rpc-stub
+      '@tx402-dev/svm-rpc-stub':
+        specifier: workspace:*
+        version: link:../../tools/svm-rpc-stub
       '@tx402-dev/test-merchant':
         specifier: workspace:*
         version: link:../../tools/test-merchant
@@ -82,6 +88,8 @@ importers:
       esbuild:
         specifier: ^0.24.0
         version: 0.24.2
+
+  tools/svm-rpc-stub: {}
 
   tools/test-merchant:
     dependencies:

@@ -351,11 +351,10 @@ describe("signer contract guards (SPEC §7.1/§7.2)", () => {
     }
   });
 
-  it("loads an adapter only for a chain family tx402 implements", async () => {
+  it("loads only implemented chain-family adapters", async () => {
     expect(chainFamily("eip155:8453")).toBe("eip155");
     expect(chainFamily("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")).toBe("solana");
-    // Solana's adapter lands at M4; until then the loader answers honestly.
-    await expect(loadChainAdapter("solana")).resolves.toBeUndefined();
+    await expect(loadChainAdapter("solana")).resolves.toMatchObject({ family: "solana" });
     await expect(loadChainAdapter("cosmos")).resolves.toBeUndefined();
     await expect(loadChainAdapter("eip155")).resolves.toMatchObject({ family: "eip155" });
   });

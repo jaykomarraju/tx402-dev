@@ -785,7 +785,7 @@ async function executePayment(
     emit(runtime.logger, "debug", {
       event: "sign.completed",
       requestId,
-      signerKind: "evm",
+      signerKind: chainFamily(selected.route.networkId) === "eip155" ? "evm" : "solana",
       durationMs: Math.max(0, runtime.clock.monotonic() - signStartedAt),
     });
   } catch (error) {

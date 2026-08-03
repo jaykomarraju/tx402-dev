@@ -129,5 +129,9 @@ export const loadChainAdapter: ChainAdapterLoader = async (family) => {
     const evm = await import("../evm/adapter.js");
     return evm.createEvmChainAdapter();
   }
+  if (family === "solana") {
+    const svm = await import("../solana/adapter.js");
+    return svm.createSvmChainAdapter();
+  }
   return undefined;
 };

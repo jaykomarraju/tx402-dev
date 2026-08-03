@@ -82,11 +82,42 @@ export interface EvmSigner {
   signTypedData(request: EvmTypedDataRequest): Promise<`0x${string}`>;
 }
 
-/** The Solana signer contract (SPEC §7.2). Implemented at M4. */
+/** Human-readable summary accompanying an SVM signing request (SPEC §6.6). */
+export interface SolanaSignerPresentation {
+  readonly network: string;
+  readonly assetId: string;
+  readonly assetSymbol: string;
+  readonly amountAtomic: string;
+  readonly amountDecimal: string;
+  readonly recipient: string;
+  readonly resourceHost: string;
+  readonly feePayer: string;
+  readonly sourceTokenAccount: string;
+  readonly destinationTokenAccount: string;
+  /** Transaction lifetime as the last block height at which it may land. */
+  readonly lastValidBlockHeight: string;
+  readonly requestHash: string;
+}
+
+/**
+ * The exact bytes an external Solana signer is asked to authorize.
+ *
+ * `messageBytes` are the bytes Ed25519 signs. `transactionBytes` are the complete unsigned
+ * wire transaction and exist so a hardware/KMS adapter can display or independently decode
+ * the same transaction. Both are Sensitive authorization material and must never be logged.
+ */
+export interface SolanaSignRequest {
+  readonly messageBytes: Uint8Array;
+  readonly transactionBytes: Uint8Array;
+  readonly presentation: SolanaSignerPresentation;
+}
+
+/** The Solana signer contract (SPEC §7.2). */
 export interface SolanaSigner {
   readonly kind: "solana";
   getPublicKey(): Promise<string>;
-  signTransaction(request: Readonly<Record<string, unknown>>): Promise<Uint8Array>;
+  /** Returns the 64-byte Ed25519 signature over `request.messageBytes`. */
+  signTransaction(request: SolanaSignRequest): Promise<Uint8Array>;
 }
 
 /** Signers a client may be configured with (SPEC §4.1). */
@@ -111,7 +142,7 @@ export function isEvmSigner(candidate: unknown): candidate is EvmSigner {
   );
 }
 
-/** Structural check for the Solana contract. Its adapter lands at M4. */
+/** Structural check for the Solana contract. */
 export function isSolanaSigner(candidate: unknown): candidate is SolanaSigner {
   if (typeof candidate !== "object" || candidate === null) return false;
   const signer = candidate as Partial<SolanaSigner>;

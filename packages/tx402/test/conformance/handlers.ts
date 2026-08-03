@@ -26,12 +26,18 @@ import {
   verifyReleaseManifest,
   type EvmManifestNetwork,
   type ReleaseManifest,
+  type SvmManifestAsset,
+  type SvmManifestNetwork,
 } from "../../src/core/manifest.js";
 import { decodePaymentRequired } from "../../src/core/protocol.js";
 import {
   planExactEvmAuthorization,
   type ExactEvmRequirementInput,
 } from "../../src/evm/plan.js";
+import {
+  planExactSvmAuthorization,
+  type ExactSvmRequirementInput,
+} from "../../src/solana/plan.js";
 import { registerHandler, type ConformanceVector } from "./runner.js";
 
 /** Manifest failures all surface to callers as ConfigurationError (SPEC §5.4). */
@@ -293,6 +299,57 @@ registerHandler("evm.authorization-plan", (vector: ConformanceVector) => {
   }
   try {
     run();
+    expect.unreachable(`${vector.id} should have been rejected`);
+  } catch (error) {
+    if (!isTx402Error(error)) throw error;
+    expect({ errorCode: error.code, reason: error.details.reason }).toEqual({
+      errorCode: expected.errorCode,
+      reason: expected.reason,
+    });
+  }
+});
+
+registerHandler("svm.authorization-plan", async (vector: ConformanceVector) => {
+  const input = vector.input as {
+    networkId: string;
+    requirement: ExactSvmRequirementInput;
+    payer: string;
+    assetTokenProgram?: string;
+  };
+  const expected = vector.expected as {
+    outcome: "valid" | "invalid";
+    plan?: Record<string, unknown>;
+    errorCode?: string;
+    reason?: string;
+  };
+  const network = BUNDLED_MANIFEST.networks[input.networkId] as SvmManifestNetwork;
+  const manifestAsset =
+    network.assets.find((candidate) => candidate.mint === input.requirement.asset) ??
+    network.assets[0];
+  if (manifestAsset === undefined) throw new Error(`${input.networkId} declares no assets`);
+  const asset = {
+    ...manifestAsset,
+    ...(input.assetTokenProgram === undefined
+      ? {}
+      : { tokenProgram: input.assetTokenProgram }),
+  } as unknown as SvmManifestAsset;
+  const run = () =>
+    planExactSvmAuthorization({
+      requirement: input.requirement,
+      networkId: input.networkId,
+      network,
+      asset,
+      payer: input.payer,
+      maxAuthorizationSeconds: 60,
+      context: { requestId: vector.id, phase: "route" },
+    });
+
+  if (expected.outcome === "valid") {
+    expect({ ...(await run()) }).toEqual(expected.plan);
+    return;
+  }
+  try {
+    await run();
     expect.unreachable(`${vector.id} should have been rejected`);
   } catch (error) {
     if (!isTx402Error(error)) throw error;

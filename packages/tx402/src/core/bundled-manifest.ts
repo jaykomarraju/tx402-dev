@@ -77,6 +77,7 @@ export const BUNDLED_MANIFEST: ReleaseManifest = {
       "genesisHash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
       "rpcUrls": [
         "https://api.devnet.solana.com",
+        "https://solana-devnet.api.onfinality.io/public",
       ],
       "assets": [
         {
@@ -98,6 +99,6 @@ export const BUNDLED_MANIFEST: ReleaseManifest = {
   "signature": {
     "algorithm": "ed25519",
     "keyId": "tx402-release-1",
-    "value": "3TY2tdDenebc3lvdeeW9guFPZGPmbRSDE9uy0wWBp7v9k81mcH1qGKg8WXD6R1o7aVrzqvSvHdG8JRenPxE7CQ==",
+    "value": "hnLn7HmXRjiBc/VfyvZZibx93O/4+3hZdQrgNy4hYyao4fd2xoXRMDM+IRumKB7xBvmIfs5+oK0/U2Hlu45RAA==",
   },
 } as const;
