@@ -319,11 +319,22 @@
           "type": "string",
           "maxLength": 131072
         },
+        "generatedHeader": {
+          "description": "A deterministic header recipe used when committing the literal base64 would make the fixture needlessly huge. Runners in both languages must materialize exactly the requested decoded byte count before Stage B.",
+          "type": "object",
+          "required": ["kind", "decodedBytes"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "repeated-ascii" },
+            "decodedBytes": { "type": "integer", "minimum": 65537, "maximum": 98304 }
+          }
+        },
         "clockEpochMs": {
           "description": "Injected clock, so `receivedAt` is deterministic.",
           "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/epochMs"
         }
-      }
+      },
+      "not": { "required": ["header", "generatedHeader"] }
     },
 
     "expectedDecodePaymentRequired": {

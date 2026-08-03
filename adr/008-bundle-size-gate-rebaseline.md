@@ -63,3 +63,15 @@ both figures above, consistent with the original §12.3 carve-out.
   still visible because it is tracked as its own reported number.
 - Open item **O4** in `PLAN.md` §9 tracks fixing the reported-metric ceiling at S3. This ADR must be
   amended — not silently updated — when that number is frozen.
+
+## M1 amendment — total core-path ceiling frozen (2026-08-02)
+
+The first real M1 implementation measured **22.28 KiB gzipped** for the `tx402` core import path
+with `@x402/core` and zod bundled (82.04 KiB raw). tx402's own emitted portion measured 7.68 KiB
+gzipped and remained well below the separate 25 KiB blocking limit.
+
+The total core-path ceiling is frozen at **24 KiB gzipped (24,576 bytes)** and is now enforced by
+`tools/size-gate`. The rounded ceiling leaves modest variance for compiler and minifier patch
+releases without permitting a new runtime dependency or a material upstream expansion to pass
+silently. Any increase above 24 KiB requires an explicit amendment to this ADR with a new measured
+baseline and rationale.

@@ -226,6 +226,13 @@
       "sha256": "sha256:5aff34c9cef1e58905b84a5f693b282f1c184c20ae5bc54a20b36358a43c15c3"
     },
     {
+      "id": "protocol.decode-payment-required.oversized-header",
+      "kind": "protocol.decode-payment-required",
+      "milestone": "M1",
+      "file": "vectors/protocol/decode-oversized-header.json",
+      "sha256": "sha256:af354050610280412f5a01fa53d842bdfac252c10f8fd81dfc62ae6e552bd7f9"
+    },
+    {
       "id": "protocol.decode-payment-required.too-many-requirements",
       "kind": "protocol.decode-payment-required",
       "milestone": "M1",

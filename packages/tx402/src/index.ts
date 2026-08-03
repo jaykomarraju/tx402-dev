@@ -22,8 +22,7 @@
  * const response = await client.fetch(url, init);
  * ```
  *
- * Status: the error taxonomy, release manifest, and canonical serialization landed at M0.
- * `createTx402Client` itself lands in M1 (see PLAN.md §6, session S3).
+ * Status: transport and strict protocol decoding are implemented through M1.
  */
 
 export {
@@ -106,3 +105,27 @@ export type {
 
 export { BUNDLED_MANIFEST } from "./core/bundled-manifest.js";
 export { TRUSTED_MANIFEST_KEYS, MANIFEST_SIGNING_DOMAIN } from "./core/trusted-keys.js";
+
+export { createTx402Client } from "./core/client.js";
+export type {
+  BudgetState,
+  PaymentInspection,
+  Tx402Client,
+  Tx402ClientConfig,
+  Tx402Clock,
+  Tx402Logger,
+  Tx402RequestInfo,
+  Tx402RequestInit,
+} from "./core/client.js";
+
+export {
+  decodePaymentRequired,
+  MAX_PAYMENT_REQUIRED_BYTES,
+  MAX_PAYMENT_REQUIRED_DEPTH,
+  MAX_PAYMENT_REQUIREMENTS,
+} from "./core/protocol.js";
+export type {
+  DecodePaymentRequiredOptions,
+  NormalizedPaymentRequired,
+  NormalizedPaymentRequirement,
+} from "./core/protocol.js";

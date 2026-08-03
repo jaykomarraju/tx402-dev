@@ -124,11 +124,15 @@ outright and the canonicalizer rejects them anyway. It is called out here so tha
 adds a fixture containing `X.0` and spends an afternoon on the resulting cross-language
 disagreement.
 
-## Known gaps at M0
+## Generated boundary vectors
 
-- **No oversized-header vector.** SEC-006 caps the decoded challenge at 64 KiB, which needs
-  roughly 87 KB of base64 in a fixture file. It lands at M1 alongside the decoder's fuzz
-  corpus, generated rather than committed inline.
+The oversized-header vector stores a compact `generatedHeader` recipe instead of roughly
+87 KiB of base64. Both runners materialize `decodedBytes` ASCII `x` bytes and standard-base64
+encode them before invoking the decoder. This pins the 64 KiB SEC-006 boundary without making a
+machine-generated blob part of code review.
+
+## Known gaps after M1
+
 - **No `route-candidate` or spend-ledger vectors.** Those schemas are frozen, but route
   ordering (M5) and ledger arithmetic (M2) have no implementation to run against yet.
 - **No request-fingerprint golden vectors.** SEC-009 requires them for TS/Python parity;

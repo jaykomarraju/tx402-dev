@@ -58,6 +58,7 @@ export const BUNDLED_MANIFEST: ReleaseManifest = {
       "genesisHash": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
       "rpcUrls": [
         "https://api.mainnet-beta.solana.com",
+        "https://rpc.solanatracker.io/public",
       ],
       "assets": [
         {
@@ -97,6 +98,6 @@ export const BUNDLED_MANIFEST: ReleaseManifest = {
   "signature": {
     "algorithm": "ed25519",
     "keyId": "tx402-release-1",
-    "value": "5XDeqs74lnuSVoRzpxmqOI+29zKLj25eIDfK/qAhXtU+IxfZ27uEGCJnR0WAOIycQ3VOUHV9W3S2tdx9kX7pAQ==",
+    "value": "3TY2tdDenebc3lvdeeW9guFPZGPmbRSDE9uy0wWBp7v9k81mcH1qGKg8WXD6R1o7aVrzqvSvHdG8JRenPxE7CQ==",
   },
 } as const;

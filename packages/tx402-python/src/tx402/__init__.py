@@ -20,9 +20,10 @@ Example::
 
     response = client.post(url, json={"prompt": "Hello"})
 
-Status: the error taxonomy, release manifest, and canonical serialization landed at M0.
-``Tx402Client`` and ``AsyncTx402Client`` land in session S9, built against the conformance
-fixtures frozen by the TypeScript reference implementation (ADR-005).
+Status: the error taxonomy, release manifest, and canonical serialization landed at M0. The
+strict decoder executes the shared M1 conformance boundary; ``Tx402Client`` and
+``AsyncTx402Client`` still land in session S9, built against the TypeScript reference
+implementation (ADR-005).
 """
 
 from __future__ import annotations

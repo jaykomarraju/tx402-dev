@@ -10,6 +10,7 @@ genuinely useful part of a conformance failure.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 from typing import Any, Final
 
@@ -17,8 +18,9 @@ import pytest
 
 from tests.conformance.runner import register_handler
 from tx402.canonical_json import CanonicalJsonError, canonicalize_json
-from tx402.errors import TX402_ERROR_TAXONOMY
+from tx402.errors import TX402_ERROR_TAXONOMY, Tx402Error
 from tx402.manifest import resolve_network, verify_release_manifest
+from tx402.protocol import decode_payment_required
 
 #: Manifest failures all surface to callers as ConfigurationError (SPEC §5.4).
 MANIFEST_ERROR_CODE: Final = "TX402_CONFIG_INVALID"
@@ -65,7 +67,6 @@ def _canonical_json(vector: dict[str, Any]) -> None:
 def _manifest_verify(vector: dict[str, Any]) -> None:
     payload = vector["input"]
     expected = vector["expected"]
-
     result = verify_release_manifest(
         payload["manifest"],
         now_epoch_ms=payload["nowEpochMs"],
@@ -113,7 +114,35 @@ register_handler("canonical-json", _canonical_json)
 register_handler("manifest.verify", _manifest_verify)
 register_handler("manifest.network-resolution", _manifest_network_resolution)
 
-# `protocol.decode-payment-required` has no handler yet — the decoder lands in session S9
-# for Python, against the fixtures the TypeScript reference implementation freezes at M6.
-# Its vectors are Stage A only until IMPLEMENTED_THROUGH is raised, at which point the
-# runner will refuse to pass without one.
+
+def _protocol_decode_payment_required(vector: dict[str, Any]) -> None:
+    payload = vector["input"]
+    expected = vector["expected"]
+    header = payload.get("header")
+    if "generatedHeader" in payload:
+        header = base64.b64encode(
+            b"x" * int(payload["generatedHeader"]["decodedBytes"])
+        ).decode("ascii")
+    arguments: dict[str, Any] = {
+        "request_url": payload["requestUrl"],
+        "request_method": payload["requestMethod"],
+        "request_id": vector["id"],
+        "clock_epoch_ms": payload["clockEpochMs"],
+    }
+    if expected["outcome"] == "invalid":
+        with pytest.raises(Tx402Error) as raised:
+            decode_payment_required(header, **arguments)
+        assert raised.value.code == expected["errorCode"]
+        assert raised.value.details.get("reason") == expected["reason"]
+        return
+
+    normalized = decode_payment_required(
+        header,
+        **arguments,
+    )
+
+    assert expected["outcome"] == "valid"
+    assert normalized == expected["normalized"]
+
+
+register_handler("protocol.decode-payment-required", _protocol_decode_payment_required)

@@ -13,11 +13,13 @@ import { expect } from "vitest";
 
 import { canonicalizeJson, CanonicalJsonError } from "../../src/core/canonical-json.js";
 import { TX402_ERROR_TAXONOMY } from "../../src/core/errors.js";
+import { isTx402Error } from "../../src/core/errors.js";
 import {
   resolveNetwork,
   verifyReleaseManifest,
   type ReleaseManifest,
 } from "../../src/core/manifest.js";
+import { decodePaymentRequired } from "../../src/core/protocol.js";
 import { registerHandler, type ConformanceVector } from "./runner.js";
 
 /** Manifest failures all surface to callers as ConfigurationError (SPEC §5.4). */
@@ -128,8 +130,36 @@ registerHandler("manifest.network-resolution", (vector: ConformanceVector) => {
   expect(MANIFEST_ERROR_CODE).toBe(expected.errorCode);
 });
 
-/*
- * `protocol.decode-payment-required` has no handler yet — the decoder lands at M1
- * (session S3). Its vectors are Stage A only until IMPLEMENTED_THROUGH is raised to "M1",
- * at which point the runner will refuse to pass without one.
- */
+registerHandler("protocol.decode-payment-required", (vector: ConformanceVector) => {
+  const input = vector.input as {
+    requestUrl: string;
+    requestMethod: string;
+    header?: string;
+    generatedHeader?: { kind: "repeated-ascii"; decodedBytes: number };
+    clockEpochMs: number;
+  };
+  const expected = vector.expected as
+    | { outcome: "valid"; normalized: unknown }
+    | { outcome: "invalid"; errorCode: string; reason: string };
+
+  try {
+    const header = input.generatedHeader
+      ? Buffer.alloc(input.generatedHeader.decodedBytes, 0x78).toString("base64")
+      : input.header;
+    const normalized = decodePaymentRequired(header, {
+      requestUrl: input.requestUrl,
+      requestMethod: input.requestMethod,
+      requestId: vector.id,
+      clockEpochMs: input.clockEpochMs,
+    });
+    if (expected.outcome === "invalid") {
+      throw new Error(`Expected decode to fail with ${expected.reason}, but it succeeded`);
+    }
+    expect(normalized).toEqual(expected.normalized);
+  } catch (error) {
+    if (expected.outcome === "valid") throw error;
+    if (!isTx402Error(error)) throw error;
+    expect(error.code).toBe(expected.errorCode);
+    expect(error.details.reason).toBe(expected.reason);
+  }
+});
