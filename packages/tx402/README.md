@@ -3,8 +3,8 @@
 **Resilient x402 buyer SDK for TypeScript.** Deterministic multi-chain payment routing, local spend
 guardrails, and a drop-in `fetch` wrapper for autonomous agents.
 
-[Documentation](https://tx402.dev/docs) · [Quickstart](https://tx402.dev/docs/start/quickstart/) ·
-[Errors](https://tx402.dev/docs/reference/errors/) ·
+[Documentation](https://docs.tx402.io) · [Quickstart](https://docs.tx402.io/start/quickstart/) ·
+[Errors](https://docs.tx402.io/reference/errors/) ·
 [Source](https://github.com/neogeeks/tx402) ·
 [Python SDK](https://pypi.org/project/tx402/)
 

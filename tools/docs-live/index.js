@@ -9,7 +9,9 @@
  * **The failure this exists to stop.** SPEC §12.4 lists "API docs, migration notes,
  * examples, and the error reference published" as a release-blocking gate, and on
  * 2026-08-04 the S15 audit found `http://tx402.dev/docs/` redirecting to
- * `http://www.tx402.dev/docs`, which returned 404, while HTTPS timed out. Nothing noticed,
+ * `http://www.tx402.dev/docs`, which returned 404, while HTTPS timed out. (The site has
+ * since moved to `docs.tx402.io`, which is where `DEFAULT_BASE` points; `tx402.dev` was
+ * never on Cloudflare and is not the project's domain.) Nothing noticed,
  * because the docs workflow deliberately *succeeded* when its deploy token was absent and
  * the release workflow neither depended on it nor probed the site. A tag could therefore
  * publish both packages while the Documentation URL printed by `tx402 --help` — and
@@ -27,8 +29,8 @@
 
 import { createServer } from "node:http";
 
-/** The site root. Matches `PROJECT_URLS.documentation` minus the `/docs` base path. */
-const DEFAULT_BASE = "https://tx402.dev";
+/** The site root. Matches `PROJECT_URLS.documentation` in both packages exactly. */
+const DEFAULT_BASE = "https://docs.tx402.io";
 
 /**
  * The pages SPEC §12.4 names, mapped onto this site's routes.
@@ -37,14 +39,14 @@ const DEFAULT_BASE = "https://tx402.dev";
  * list without someone answering "then what covers that requirement?".
  */
 const REQUIRED = [
-  { path: "/docs", covers: "documentation root — the URL both packages publish" },
-  { path: "/docs/start/quickstart", covers: "SPEC §12.4 examples" },
-  { path: "/docs/reference/api-typescript", covers: "SPEC §12.4 API docs" },
-  { path: "/docs/reference/configuration", covers: "SPEC §12.4 API docs" },
-  { path: "/docs/reference/errors", covers: "SPEC §12.4 error reference" },
-  { path: "/docs/guides/lifecycle", covers: "SPEC §12.4 migration notes / semantics" },
-  { path: "/docs/guides/policy", covers: "SPEC §12.4 API docs" },
-  { path: "/docs/security", covers: "SPEC §9 threat model" },
+  { path: "/", covers: "documentation root — the URL both packages publish" },
+  { path: "/start/quickstart", covers: "SPEC §12.4 examples" },
+  { path: "/reference/api-typescript", covers: "SPEC §12.4 API docs" },
+  { path: "/reference/configuration", covers: "SPEC §12.4 API docs" },
+  { path: "/reference/errors", covers: "SPEC §12.4 error reference" },
+  { path: "/guides/lifecycle", covers: "SPEC §12.4 migration notes / semantics" },
+  { path: "/guides/policy", covers: "SPEC §12.4 API docs" },
+  { path: "/security", covers: "SPEC §9 threat model" },
 ];
 
 /** Anything shorter than this is an error page, not a documentation page. */

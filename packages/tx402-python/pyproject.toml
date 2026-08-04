@@ -50,8 +50,8 @@ all = ["tx402[evm,svm]"]
 tx402 = "tx402.cli:run"
 
 [project.urls]
-Homepage = "https://tx402.dev"
-Documentation = "https://tx402.dev/docs"
+Homepage = "https://tx402.io"
+Documentation = "https://docs.tx402.io"
 Repository = "https://github.com/neogeeks/tx402"
 Issues = "https://github.com/neogeeks/tx402/issues"
 Security = "https://github.com/neogeeks/tx402/security/advisories/new"

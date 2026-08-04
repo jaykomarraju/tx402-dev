@@ -11,13 +11,17 @@ import { defineConfig } from "astro/config";
  * taxonomy and the SPEC §11 exit-code map in the shipped source, so a documented code and
  * a real one cannot drift. `pnpm docs:check` fails if they do.
  *
- * `base: "/docs"` matches `PROJECT_URLS.documentation` (https://tx402.dev/docs). It is
- * declared here rather than in a deploy script so a local preview has the same URLs as
- * production and a relative link cannot work in one and 404 in the other.
+ * `site` matches `PROJECT_URLS.documentation` (https://docs.tx402.io) and there is
+ * deliberately **no `base`**: the docs live at the root of their own subdomain, so every
+ * emitted link is `/guides/…` rather than `/docs/guides/…`. Until S15b the site was served
+ * from `tx402.dev/docs` and carried `base: "/docs"`; keeping that after the move would
+ * produce `docs.tx402.io/docs/…`, a duplicated path segment in every URL.
+ *
+ * It is declared here rather than in a deploy script so a local preview has the same URLs
+ * as production and a relative link cannot work in one and 404 in the other.
  */
 export default defineConfig({
-  site: "https://tx402.dev",
-  base: "/docs",
+  site: "https://docs.tx402.io",
   trailingSlash: "ignore",
   integrations: [
     starlight({

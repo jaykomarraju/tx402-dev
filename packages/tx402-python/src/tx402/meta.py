@@ -33,10 +33,10 @@ X402_PROTOCOL_VERSION: Final = 2
 #: These must stay identical to ``PROJECT_URLS`` in ``packages/tx402/src/meta.ts``;
 #: ``TestCrossLanguageParity`` reads that file as text and fails if they drift (ADR-005).
 PROJECT_URLS: Final[dict[str, str]] = {
-    "homepage": "https://tx402.dev",
+    "homepage": "https://tx402.io",
     "repository": "https://github.com/neogeeks/tx402",
     "issues": "https://github.com/neogeeks/tx402/issues",
-    "documentation": "https://tx402.dev/docs",
+    "documentation": "https://docs.tx402.io",
     "security": "https://github.com/neogeeks/tx402/security/advisories/new",
 }
 

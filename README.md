@@ -12,8 +12,8 @@ payment routing across whatever chains the merchant offered, and one signature p
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![x402](https://img.shields.io/badge/x402-v2-6d28d9)](https://github.com/coinbase/x402)
 
-[Documentation](https://tx402.dev/docs) · [Quickstart](https://tx402.dev/docs/start/quickstart/) ·
-[Error reference](https://tx402.dev/docs/reference/errors/) · [Security policy](SECURITY.md) ·
+[Documentation](https://docs.tx402.io) · [Quickstart](https://docs.tx402.io/start/quickstart/) ·
+[Error reference](https://docs.tx402.io/reference/errors/) · [Security policy](SECURITY.md) ·
 [Contributing](CONTRIBUTING.md)
 
 </div>
@@ -166,16 +166,16 @@ compiled into both packages; construction fails if the signature does not verify
 
 ## Documentation
 
-|                                                                  |                                                    |
-| ---------------------------------------------------------------- | -------------------------------------------------- |
-| [Quickstart](https://tx402.dev/docs/start/quickstart/)           | Real settled testnet payment, no source reading    |
-| [Request lifecycle](https://tx402.dev/docs/guides/lifecycle/)    | The state machine, end to end                      |
-| [Spend policy](https://tx402.dev/docs/guides/policy/)            | Caps, allowlists, the ledger                       |
-| [Routing & health](https://tx402.dev/docs/guides/routing/)       | How a route is chosen, and why it is deterministic |
-| [CLI](https://tx402.dev/docs/guides/cli/)                        | Flags and exit codes                               |
-| [Error reference](https://tx402.dev/docs/reference/errors/)      | All fifteen codes — generated from shipped source  |
-| [Configuration](https://tx402.dev/docs/reference/configuration/) | Every option in both languages                     |
-| [Key management](https://tx402.dev/docs/security/keys/)          | What to do instead of an environment variable      |
+|                                                                 |                                                    |
+| --------------------------------------------------------------- | -------------------------------------------------- |
+| [Quickstart](https://docs.tx402.io/start/quickstart/)           | Real settled testnet payment, no source reading    |
+| [Request lifecycle](https://docs.tx402.io/guides/lifecycle/)    | The state machine, end to end                      |
+| [Spend policy](https://docs.tx402.io/guides/policy/)            | Caps, allowlists, the ledger                       |
+| [Routing & health](https://docs.tx402.io/guides/routing/)       | How a route is chosen, and why it is deterministic |
+| [CLI](https://docs.tx402.io/guides/cli/)                        | Flags and exit codes                               |
+| [Error reference](https://docs.tx402.io/reference/errors/)      | All fifteen codes — generated from shipped source  |
+| [Configuration](https://docs.tx402.io/reference/configuration/) | Every option in both languages                     |
+| [Key management](https://docs.tx402.io/security/keys/)          | What to do instead of an environment variable      |
 
 ## Repository layout
 

@@ -33,10 +33,10 @@ export const X402_PROTOCOL_VERSION = 2;
  * Changing a URL here without changing it there fails that test.
  */
 export const PROJECT_URLS = {
-  homepage: "https://tx402.dev",
+  homepage: "https://tx402.io",
   repository: "https://github.com/neogeeks/tx402",
   issues: "https://github.com/neogeeks/tx402/issues",
-  documentation: "https://tx402.dev/docs",
+  documentation: "https://docs.tx402.io",
   security: "https://github.com/neogeeks/tx402/security/advisories/new",
 } as const;
 
