@@ -110,9 +110,10 @@ addopts = "--cov --cov-report=term-missing"
 [tool.coverage.run]
 branch = true
 source = ["src/tx402"]
-# The CLI is not a core module: SPEC §12.1 scopes the threshold to core, and the command
-# surface itself does not exist until M7 (session S11). It joins the gate then.
-omit = ["src/tx402/cli.py"]
+# Nothing is omitted. `src/tx402/cli.py` was exempt until M7 because the command surface
+# did not exist; it landed at S12 and joined the gate in the same change, so the exit-code
+# table and the `--dry-run` signer guarantee are held to the same 90 % threshold as the
+# core modules they front.
 
 [tool.coverage.report]
 fail_under = 90

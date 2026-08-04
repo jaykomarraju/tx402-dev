@@ -324,15 +324,31 @@ class TestMultiNetworkRouting:
         assert len(evm.requests) == 1
 
     def test_selection_is_identical_across_repeated_runs(self) -> None:
-        """SPEC §6.4 step 19: identical inputs and health state, identical output."""
-        selected = []
-        for _ in range(5):
-            merchant = Merchant(offers=[challenge(svm_requirement(), evm_requirement())])
-            evm, svm = EvmSigner(), SolanaSigner()
-            with client(merchant, evm_signer=evm, solana_signer=svm) as sdk:
-                sdk.get(URL)
-            selected.append("evm" if evm.requests else "solana")
-        assert len(set(selected)) == 1
+        """SPEC §6.4 step 19: identical inputs and health state, identical output.
+
+        The preference matters to the *test*, not just to the scenario, and PLAN.md open
+        item O34 is why. Step 19 conditions determinism on health state, and both keys
+        below preference — ``health_score`` and ``observed_latency_ms`` — are derived from
+        a fresh wall-clock measurement of the balance probe. Two candidates that tie on
+        viability, circuit, preference and fee therefore get separated by microseconds of
+        scheduler noise, which is a different health state each pass rather than a
+        violation of step 19. Pinning a preference holds every key above the measured ones
+        fixed, so this asserts the ordering rules instead of the machine's timing. The
+        pure-function half of step 19 is asserted directly in ``test_routing.py``.
+        """
+        merchant = Merchant(offers=[challenge(svm_requirement(), evm_requirement())])
+        evm, svm = EvmSigner(), SolanaSigner()
+        with client(
+            merchant,
+            evm_signer=evm,
+            solana_signer=svm,
+            routing=RoutingPolicy(prefer_networks=[SOLANA]),
+        ) as sdk:
+            for _ in range(5):
+                assert sdk.get(URL).status_code == 200
+        # Five passes, same challenge, same health state: the same chain every time.
+        assert len(svm.requests) == 5
+        assert evm.requests == []
 
 
 class TestRpcFailover:

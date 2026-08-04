@@ -90,6 +90,7 @@ from tx402.policy import (
 from tx402.protocol import decode_payment_required
 from tx402.routing import (
     BalanceProbeCache,
+    RouteCandidate,
     RoutePlan,
     RouteProbeOutcome,
     plan_routes,
@@ -112,6 +113,31 @@ class PaymentInspection:
     request_id: str
     response: httpx.Response
     payment_required: Mapping[str, Any] | None
+
+
+@dataclass(frozen=True, slots=True)
+class PaymentPlan:
+    """What a real call would have done, decided by the code that would decide it.
+
+    Port of ``PaymentPlan`` in ``packages/tx402/src/core/client.ts``. Everything after
+    :attr:`payment_required` is ``None`` when the resource answered something other than
+    402 — there was nothing to plan.
+
+    This exists on the client rather than in the CLI so that ``--dry-run`` exercises *the
+    shipped decision path*. Rebuilding policy evaluation and route planning inside the CLI
+    would make ``--dry-run`` report what a second implementation thought would happen,
+    which is worth less than nothing: the point of a dry run is to predict the real one.
+    """
+
+    request_id: str
+    response: httpx.Response
+    payment_required: Mapping[str, Any] | None = None
+    #: Every requirement considered, ranked. Non-viable candidates are retained.
+    candidates: tuple[RouteCandidate, ...] | None = None
+    #: The candidate that would have been paid.
+    selected: RouteCandidate | None = None
+    amount_atomic: str | None = None
+    asset_id: str | None = None
 
 
 def _system_clock() -> int:
@@ -1031,6 +1057,28 @@ class _Core:
         return _Delivered(response)
 
 
+def _plan_from(
+    request_id: str,
+    response: httpx.Response,
+    challenge: Mapping[str, Any],
+    selection: _Selection,
+) -> PaymentPlan:
+    """Projects the internal selection onto the public :class:`PaymentPlan`.
+
+    Written once and shared by both transports so the sync and async dry runs cannot
+    report different shapes for the same decision.
+    """
+    return PaymentPlan(
+        request_id=request_id,
+        response=response,
+        payment_required=challenge,
+        candidates=selection.plan.candidates,
+        selected=selection.plan.selected,
+        amount_atomic=selection.requirement.requirement["amountAtomic"],
+        asset_id=selection.requirement.asset_id,
+    )
+
+
 def _validate_retry_timeout(value: object) -> int:
     if (
         isinstance(value, bool)
@@ -1108,6 +1156,37 @@ class Tx402Transport(httpx.BaseTransport):
             challenge = core.decode(response, request, request_id)
             core.log_payment_required(request_id, challenge, started_at=started_at)
             return PaymentInspection(request_id, response, challenge)
+        except Tx402Error as error:
+            core.log_request_failed(error)
+            raise
+
+    def plan(self, request: httpx.Request) -> PaymentPlan:
+        """Everything :meth:`handle_request` would do up to — but not including — reserving.
+
+        **No signature is produced and no budget is reserved.** Route planning does read
+        the payer's address and balance, because a route cannot be scored without knowing
+        whether it is fundable — SPEC §11's "MUST NOT invoke a signer" is about producing a
+        signature, and the CLI suite pins that ``sign_typed_data`` and ``sign_transaction``
+        are never reached on this path.
+        """
+        core = self._core
+        started_at = core.monotonic()
+        request_id = _request_id(core.clock())
+        try:
+            _body, host = core.prepare(request, request_id)
+            core.log_request_started(request_id, request)
+            try:
+                response = self._inner.handle_request(request)
+            except httpx.HTTPError as error:
+                raise _transport_error(error, request_id, "initial") from error
+            if response.status_code != 402:
+                return PaymentPlan(request_id, response)
+            response.read()
+            challenge = core.decode(response, request, request_id)
+            core.log_payment_required(request_id, challenge, started_at=started_at)
+            decision = core.decide(challenge, request_id, host)
+            selection = core.plan(decision, request_id, core.clock())
+            return _plan_from(request_id, response, challenge, selection)
         except Tx402Error as error:
             core.log_request_failed(error)
             raise
@@ -1244,6 +1323,30 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
             challenge = core.decode(response, request, request_id)
             core.log_payment_required(request_id, challenge, started_at=started_at)
             return PaymentInspection(request_id, response, challenge)
+        except Tx402Error as error:
+            core.log_request_failed(error)
+            raise
+
+    async def plan(self, request: httpx.Request) -> PaymentPlan:
+        """Asynchronous counterpart to :meth:`Tx402Transport.plan`."""
+        core = self._core
+        started_at = core.monotonic()
+        request_id = _request_id(core.clock())
+        try:
+            _body, host = await core.prepare_async(request, request_id)
+            core.log_request_started(request_id, request)
+            try:
+                response = await self._inner.handle_async_request(request)
+            except httpx.HTTPError as error:
+                raise _transport_error(error, request_id, "initial") from error
+            if response.status_code != 402:
+                return PaymentPlan(request_id, response)
+            await response.aread()
+            challenge = core.decode(response, request, request_id)
+            core.log_payment_required(request_id, challenge, started_at=started_at)
+            decision = core.decide(challenge, request_id, host)
+            selection = await core.plan_async(decision, request_id, core.clock())
+            return _plan_from(request_id, response, challenge, selection)
         except Tx402Error as error:
             core.log_request_failed(error)
             raise
@@ -1401,6 +1504,10 @@ class Tx402Client:
     def inspect(self, method: str, url: str, **kwargs: Any) -> PaymentInspection:
         return self._transport.inspect(self._client.build_request(method, url, **kwargs))
 
+    def plan(self, method: str, url: str, **kwargs: Any) -> PaymentPlan:
+        """Plans a payment without reserving budget or producing a signature (SPEC §11)."""
+        return self._transport.plan(self._client.build_request(method, url, **kwargs))
+
     def get_budget_state(
         self, *, policy_scope: str, asset_id: str, now_epoch_ms: int | None = None
     ) -> BudgetState:
@@ -1489,6 +1596,10 @@ class AsyncTx402Client:
             self._client.build_request(method, url, **kwargs)
         )
 
+    async def plan(self, method: str, url: str, **kwargs: Any) -> PaymentPlan:
+        """Plans a payment without reserving budget or producing a signature (SPEC §11)."""
+        return await self._transport.plan(self._client.build_request(method, url, **kwargs))
+
     def get_budget_state(
         self, *, policy_scope: str, asset_id: str, now_epoch_ms: int | None = None
     ) -> BudgetState:
@@ -1545,6 +1656,7 @@ __all__: Sequence[str] = [
     "AsyncTx402Transport",
     "BodyFactory",
     "PaymentInspection",
+    "PaymentPlan",
     "Tx402Client",
     "Tx402Transport",
 ]

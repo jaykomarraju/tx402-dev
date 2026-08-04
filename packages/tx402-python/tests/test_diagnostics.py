@@ -311,7 +311,7 @@ class TestSpecSection10EventContract:
         paid_call(Capturing())
         assert captured
         with pytest.raises(TypeError):
-            captured[0]["event"] = "tampered"  # type: ignore[index]
+            captured[0]["event"] = "tampered"
 
 
 class TestLoggerIsolation:
@@ -369,7 +369,7 @@ class TestLoggerIsolation:
 
     def test_the_default_logger_discards_silently(self) -> None:
         for level in ("debug", "info", "warn", "error"):
-            emit(NOOP_LOGGER, level, {"event": "request.started"})  # type: ignore[arg-type]
+            emit(NOOP_LOGGER, level, {"event": "request.started"})
 
 
 class TestDurationHelpers:

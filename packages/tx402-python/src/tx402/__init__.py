@@ -47,6 +47,7 @@ from tx402.client import (
     AsyncTx402Client,
     AsyncTx402Transport,
     PaymentInspection,
+    PaymentPlan,
     Tx402Client,
     Tx402Transport,
 )
@@ -208,6 +209,7 @@ __all__ = [
     "PaidAttemptResult",
     "PaidRedirectBlockedError",
     "PaymentInspection",
+    "PaymentPlan",
     "Policy",
     "PolicyDecision",
     "PolicyEngine",

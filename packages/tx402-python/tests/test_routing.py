@@ -26,8 +26,10 @@ from tx402.health import HealthIndex
 from tx402.policy import PolicyRequirement
 from tx402.routing import (
     BalanceProbeCache,
+    RouteCandidate,
     RoutePlan,
     RouteProbeOutcome,
+    order_route_candidates,
     plan_routes,
     plan_routes_async,
 )
@@ -267,3 +269,57 @@ class TestCandidateRetention:
         )
         assert result.selected.health_score == health.score(endpoint, 1_785_715_200_000)
         assert result.selected.observed_latency_ms == 60
+
+
+class TestOrderingIsAPureFunction:
+    """SPEC §6.4 step 19, stated as the property it actually is (PLAN.md O34).
+
+    Step 19 requires identical output for identical inputs *and health state*. That is a
+    property of :func:`order_route_candidates` alone, so it is asserted here on fixed
+    inputs rather than through a live client whose probes re-measure the wall clock on
+    every pass. The mirror of these two assertions lives in
+    ``packages/tx402/test/routing.test.ts``.
+    """
+
+    @staticmethod
+    def candidate(index: int, network: str = BASE, **overrides: Any) -> RouteCandidate:
+        fields: dict[str, Any] = {
+            "requirement_index": index,
+            "network": network,
+            "scheme": "exact",
+            "asset_id": f"{network}/erc20:0xasset",
+            "amount_atomic": "50000",
+            "estimated_fee_atomic": "0",
+            "health_score": 0.8,
+            "circuit_state": "closed",
+            "viable": True,
+        }
+        fields.update(overrides)
+        return RouteCandidate(**fields)
+
+    def test_an_exact_tie_on_every_key_above_it_is_decided_by_requirement_index(
+        self,
+    ) -> None:
+        """The one deterministic guarantee a caller gets when nothing else separates two
+        candidates: the merchant's own ordering wins, not whichever RPC answered first."""
+        ordered = order_route_candidates(
+            [
+                self.candidate(1, SOLANA, observed_latency_ms=41.0),
+                self.candidate(0, BASE, observed_latency_ms=41.0),
+            ],
+            [],
+        )
+        assert [item.requirement_index for item in ordered] == [0, 1]
+
+    def test_output_does_not_depend_on_the_order_the_probes_finished_in(self) -> None:
+        candidates = [
+            self.candidate(0, BASE, health_score=0.70, observed_latency_ms=30.0),
+            self.candidate(1, SOLANA, health_score=0.90, observed_latency_ms=300.0),
+            self.candidate(2, BASE, health_score=0.90, observed_latency_ms=20.0),
+        ]
+        forward = [c.requirement_index for c in order_route_candidates(candidates, [])]
+        reverse = [
+            c.requirement_index for c in order_route_candidates(candidates[::-1], [])
+        ]
+        assert forward == [2, 1, 0]
+        assert reverse == forward

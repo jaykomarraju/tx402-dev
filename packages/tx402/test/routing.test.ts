@@ -125,6 +125,30 @@ describe("route ordering", () => {
     expect(ordered.map((entry) => entry.requirementIndex)).toEqual([1, 0]);
   });
 
+  /**
+   * SPEC §6.4 step 19 requires identical output for identical inputs *and health state*.
+   * That is a property of `orderRouteCandidates` alone, so it is asserted here on fixed
+   * inputs — not through a live client, whose probes re-measure the wall clock on every
+   * pass and so present a different health state each time (PLAN.md open item O34). The
+   * mirror of this assertion lives in `packages/tx402-python/tests/test_routing.py`.
+   */
+  it("decides an exact tie on every key above it by requirement index", () => {
+    const ordered = orderRouteCandidates(
+      [
+        candidate({
+          requirementIndex: 1,
+          network: SOLANA,
+          assetId: SOLANA_ASSET,
+          observedLatencyMs: 41,
+        }),
+        candidate({ requirementIndex: 0, observedLatencyMs: 41 }),
+      ],
+      [],
+    );
+    // The merchant's own ordering wins, not whichever RPC happened to answer first.
+    expect(ordered.map((entry) => entry.requirementIndex)).toEqual([0, 1]);
+  });
+
   it("produces identical output for identical input regardless of array order", () => {
     const set = [
       candidate({ requirementIndex: 0, healthScore: 0.7, observedLatencyMs: 30 }),
