@@ -1,4 +1,9 @@
-# Publishing & Name Reservation Runbook
+---
+title: Publishing
+description: Runbook for publishing tx402 to npm and PyPI.
+sidebar:
+  order: 3
+---
 
 Covers reserving the `tx402` name on both registries and, later, cutting real releases.
 
@@ -26,9 +31,9 @@ distribution were published without rebuilding later development code into versi
 
 ### 1. Create the account and token — _you_
 
-1. Register at <https://pypi.org/account/register/> if you do not already have an account.
+1. Register at [https://pypi.org/account/register/](https://pypi.org/account/register/) if you do not already have an account.
 2. Enable 2FA (PyPI requires it for publishing).
-3. Create an API token at <https://pypi.org/manage/account/token/>.
+3. Create an API token at [https://pypi.org/manage/account/token/](https://pypi.org/manage/account/token/).
    - Scope: **"Entire account"**. A project-scoped token cannot be created before the project
      exists, and this publish is what creates it.
    - Immediately after the first publish, replace it with a project-scoped token for `tx402`.
@@ -97,7 +102,7 @@ long-lived token exists anywhere:
   why the local placeholder publish used `--no-provenance`. The release workflow must **not**
   pass that flag.
 - **PyPI** — configure a trusted publisher at
-  <https://pypi.org/manage/project/tx402/settings/publishing/> pointing at this repository and the
+  [https://pypi.org/manage/project/tx402/settings/publishing/](https://pypi.org/manage/project/tx402/settings/publishing/) pointing at this repository and the
   release workflow. Then `uv publish` needs no token at all.
 
 ### Version and compatibility rules (SPEC §15)

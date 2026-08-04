@@ -12,6 +12,10 @@ export default tseslint.config(
       // Hand-written declarations for the JS tools. They belong to no tsconfig project, so
       // the type-aware linter cannot parse them; `tsc` still checks them at every import.
       "tools/**/*.d.ts",
+      // The documentation site is an Astro project with its own toolchain and its own
+      // tsconfig. `astro check` is its linter and type-checker; pointing this one at it
+      // would only mean maintaining a second, worse configuration for the same files.
+      "docs/**",
     ],
   },
   js.configs.recommended,
@@ -46,8 +50,15 @@ export default tseslint.config(
     },
   },
   {
-    // The CLI is the one place allowed to write to stdout/stderr (SPEC §11).
+    // The CLI is the one place in the *SDK* allowed to write to stdout/stderr (SPEC §11).
     files: ["packages/tx402/src/cli/**/*.ts"],
+    rules: { "no-console": "off" },
+  },
+  {
+    // Examples are programs a reader runs and watches. Printing is the point of them, and
+    // routing their output through a logger abstraction would obscure the very thing they
+    // exist to demonstrate. They are not part of the published package.
+    files: ["examples/**/*.ts"],
     rules: { "no-console": "off" },
   },
   {

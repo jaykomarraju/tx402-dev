@@ -1,0 +1,148 @@
+---
+title: The request lifecycle
+description: What tx402 does between your call and the response, and why the order is the way it is.
+sidebar:
+  order: 1
+---
+
+One `fetch` call can involve two HTTP requests, a policy evaluation, several balance reads, a
+budget reservation, and exactly one signature. This page is the whole sequence, in order.
+
+The order is the design. Almost every safety property tx402 offers is "X happens before Y", so
+reading this page is the fastest way to understand what the SDK actually guarantees.
+
+## The happy path
+
+```
+your call
+  │
+  ├─ 1. capture the body            replayable, or you supply a bodyFactory
+  ├─ 2. send the request            unmodified — tx402 adds nothing yet
+  │
+  │   ← 402 Payment Required, with a PAYMENT-REQUIRED header
+  │
+  ├─ 3. decode strictly             size, depth, duplicate keys, ≤32 requirements
+  ├─ 4. normalize                   merchant's shape → tx402's, amounts to integers
+  ├─ 5. POLICY                      domain → network → scheme/asset → per-request → per-hour
+  ├─ 6. plan routes                 balances read concurrently, candidates ranked
+  ├─ 7. RESERVE                     atomic, from your local budget
+  ├─ 8. sign                        exactly one authorization, fresh nonce
+  ├─ 9. retry once                  carrying PAYMENT-SIGNATURE
+  │
+  │   ← 200, with a PAYMENT-RESPONSE header
+  │
+  ├─ 10. read settlement
+  └─ 11. COMMIT                     the reservation becomes spend
+```
+
+If the resource does not answer `402`, steps 3 onward never happen. A non-paying request costs
+you nothing but the request itself.
+
+## The three orderings that matter
+
+### Policy and reservation both precede signing
+
+Steps 5 and 7 complete before step 8, always, on **every** attempt — not just the first. This
+is SEC-002 and SPEC §6.6, and it is what makes the guarantees below true rather than usually
+true:
+
+- A request your policy refuses costs **zero signatures**. Not "a signature that is discarded"
+  — the signer is never called, so a hardware wallet never prompts and a KMS never logs a use.
+- A budget cap cannot be exceeded by a race. The reservation is atomic and the store owns the
+  comparison, so two concurrent requests cannot both see room for the last dollar.
+- `--dry-run` stops between 6 and 7. It is not a separate code path pretending to be the real
+  one; it is the real one, halted.
+
+### Every attempt re-plans from scratch
+
+If the merchant answers the paid retry with **another** `402`, tx402 does not reuse anything.
+It re-runs policy, re-plans routes, takes a **new** reservation, and produces a **new**
+signature with a fresh nonce. Nothing carries over — not the challenge, not the route, not the
+authorization.
+
+That costs a little work and buys the property that matters: a re-priced offer is honoured as a
+new offer, and no authorization is ever transmitted twice. `maxPaidAttempts` (default `2`)
+bounds the loop, and exhausting it is a typed terminal error rather than a bare `402`.
+
+### Release before transmission, retain after
+
+This is the asymmetry that protects your money, and it is SPEC §6.7.
+
+**Before** the signature reaches the network, any failure releases the reservation. Nothing was
+sent, so nothing can have settled, and holding budget would be wrong.
+
+**After** the signature is on the wire, a failure means tx402 **cannot know** whether the
+merchant settled. A timeout, a connection reset, a 5xx, and a redirect it declined to follow all
+say the same thing: the outcome is unknown. So the reservation is **retained** until its TTL and
+you get `AmbiguousPaymentError`.
+
+Retaining is the conservative choice. Releasing would hand budget back for money that may have
+moved, and the same dollar could then be spent again inside the same hour.
+
+## Failure modes, by where they happen
+
+| Where                     | Example                                | Reservation  | You get                                         |
+| ------------------------- | -------------------------------------- | ------------ | ----------------------------------------------- |
+| Before policy             | Reserved header, unreplayable body     | none taken   | `TX402_RESERVED_HEADER`, `TX402_NON_REPLAYABLE` |
+| Policy                    | Over your cap, disallowed domain       | none taken   | `TX402_POLICY_BUDGET`, `TX402_POLICY_DOMAIN`    |
+| Planning                  | No viable route                        | none taken   | `TX402_LIQUIDITY` with per-network deficits     |
+| Planning                  | No signer for any offered chain        | none taken   | `TX402_SCHEME_UNSUPPORTED`                      |
+| Signing                   | Signer refused or returned garbage     | **released** | `TX402_SIGNER`                                  |
+| After transmission        | Timeout, reset, 5xx, 3xx               | **retained** | `TX402_PAYMENT_AMBIGUOUS`                       |
+| Delivered, not settled    | `success: false` in `PAYMENT-RESPONSE` | **released** | `TX402_RESOURCE_DELIVERY`                       |
+| Settled, resource refused | 403 after payment                      | **released** | `TX402_RESOURCE_DELIVERY`                       |
+
+`TX402_LIQUIDITY` and `TX402_SCHEME_UNSUPPORTED` are deliberately different errors. "Everything
+was attempted and fell short" and "nothing was even attempted" send an operator to two
+different places, and reporting the second as the first sends them to fund a wallet that was
+never the problem.
+
+## Replayable bodies
+
+tx402 may need to send your body twice: once on the unpaid request, once on the paid retry. For
+a `string`, a `Uint8Array`, or a plain object, it captures the bytes and replays them.
+
+A **stream** cannot be replayed. Rather than consume it and fail confusingly on the retry, tx402
+refuses upfront with `TX402_NON_REPLAYABLE` — unless you supply a `bodyFactory` that can produce
+the body again:
+
+```ts
+await tx402.fetch(url, {
+  method: "POST",
+  bodyFactory: () => createReadStream("large.bin"),
+});
+```
+
+With a factory, you own replay semantics; tx402 calls it once per transmission.
+
+## Deadlines
+
+Every deadline in tx402 — per-RPC-provider, and the paid retry — is enforced by **racing** the
+work against a timer in tx402's own control flow. Cancellation is requested as a courtesy but
+never trusted.
+
+That sounds like an implementation detail and is not. An earlier version composed
+`AbortSignal`s, and the composition could be garbage-collected before it fired: a paid retry to
+a merchant that accepted the connection and never answered would hang **forever** instead of
+raising the `AmbiguousPaymentError` it owes you. Silence in exactly the case where money may have
+moved. The current design cannot fail that way, because nothing that could be collected is
+load-bearing.
+
+## Diagnostics
+
+tx402 never writes to the console. It emits a structured event stream you route wherever you
+like:
+
+```ts
+const tx402 = createTx402Client({
+  signers: { evm },
+  logger: { debug: log, info: log, warn: log, error: log },
+});
+```
+
+Events cover `request.started`, `payment.required`, `policy.checked`, `route.planned`,
+`sign.started`, `request.retried`, `payment.completed`, and `request.failed`. Every event is
+**redaction-safe by construction**: identifiers, hashes, atomic amounts, and categories only.
+Signatures, keys, authorization payloads, and RPC URLs with credentials never enter the stream,
+and the test suite proves it by seeding real secrets into every input and searching the whole
+serialised output for each one.

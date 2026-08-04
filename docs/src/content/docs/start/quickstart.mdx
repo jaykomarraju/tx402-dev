@@ -1,0 +1,170 @@
+---
+title: Quickstart
+description: Make a real paid call on a public testnet in under five minutes, without reading any source.
+sidebar:
+  order: 1
+---
+
+import { Steps, Tabs, TabItem } from "@astrojs/starlight/components";
+
+This page is the one tx402 is measured against: **a fresh user gets to a real settled payment
+in under five minutes without reading source code** (SPEC §16). If it takes longer than that,
+that is a bug in this page.
+
+Everything here happens on **testnets** with valueless tokens. Nothing on this page can spend
+real money.
+
+## Before you start
+
+You need one funded testnet wallet. Pick either chain — you do not need both.
+
+- **Base Sepolia** — a little Sepolia ETH for gas, and some testnet USDC.
+  Faucets: [Coinbase](https://portal.cdp.coinbase.com/products/faucet) for ETH,
+  [Circle](https://faucet.circle.com/) for USDC.
+- **Solana Devnet** — some Devnet SOL and Devnet USDC.
+  `solana airdrop 1 <address> --url devnet`, then Circle's faucet for USDC.
+
+:::caution[Use a dedicated wallet]
+Make a **new** wallet for this and keep the balance small. The quickstart puts a private key
+in an environment variable, which is convenient and is not how you should run anything that
+matters. See [Key management](../../security/keys/) for the real answer.
+:::
+
+<Steps>
+
+1.  ### Install
+
+    <Tabs syncKey="lang">
+      <TabItem label="TypeScript">
+        ```bash npm install tx402 ``` Node 20 or newer. The `evm` and `solana` adapters ship
+        in the same package behind subpath exports, so there is nothing else to install.
+      </TabItem>
+      <TabItem label="Python">
+        ```bash pip install "tx402[evm]" # or tx402[svm], or tx402[all] ``` Python 3.10 or
+        newer. The bare `tx402` install has no chain library; the extra adds one.
+      </TabItem>
+    </Tabs>
+
+2.  ### See what a merchant is asking, without paying
+
+    No key, no signature, no money — just the challenge and what tx402 would do with it:
+
+    ```bash
+    npx tx402 call https://x402.org/protected --max-spend "0.10 USDC" --dry-run
+    ```
+
+    You will see the requirement count, the route tx402 would take, the atomic amount, and the
+    candidate ranking. `--dry-run` **never invokes a signer** and **never reserves budget**, so
+    you can run it as many times as you like.
+
+    Add `--json` to get one machine-readable object on stdout instead.
+
+3.  ### Point tx402 at your key
+
+    ```bash
+    # Base Sepolia — 0x-prefixed 32-byte hex
+    export TX402_DEV_PRIVATE_KEY=0x...
+    ```
+
+    tx402 prints a warning to stderr **every time** it reads this variable. That is deliberate,
+    not noise: anything that can read this process's environment can read the key.
+
+    The CLI accepts **no flag that carries a key**, and never will — a flag lands in shell
+    history, in `ps` output, and in CI logs.
+
+4.  ### Make the paid call
+
+    ```bash
+    npx tx402 call <merchant-url> --max-spend "0.10 USDC"
+    ```
+
+    The response body goes to stdout and nothing else does, so `> out.json` gives you a clean
+    file. Diagnostics go to stderr.
+
+    Exit `0` means the resource was delivered. Any other code is classified — see the
+    [error reference](../../reference/errors/).
+
+5.  ### Do the same from code
+
+        <Tabs syncKey="lang">
+
+    <TabItem label="TypeScript">
+
+```ts title="quickstart.ts"
+import { createTx402Client } from "tx402";
+import { privateKeyToEvmSigner } from "tx402/signers";
+
+const tx402 = createTx402Client({
+  signers: {
+    evm: privateKeyToEvmSigner(process.env.TX402_DEV_PRIVATE_KEY as `0x${string}`),
+  },
+  policy: {
+    maxPerRequest: "0.10 USDC",
+    maxPerHour: "1.00 USDC",
+    allowedNetworks: ["eip155:84532"],
+  },
+});
+
+const response = await tx402.fetch("<merchant-url>");
+console.log(response.status, await response.text());
+```
+
+   </TabItem>
+   <TabItem label="Python">
+   ```python title="quickstart.py"
+   import os
+
+from tx402 import Policy, Tx402Client
+from tx402.signers import private_key_to_evm_signer
+
+with Tx402Client(
+evm_signer=private_key_to_evm_signer(os.environ["TX402_DEV_PRIVATE_KEY"]),
+policy=Policy(
+max_per_request="0.10 USDC",
+max_per_hour="1.00 USDC",
+allowed_networks=["eip155:84532"],
+),
+) as tx402:
+response = tx402.get("<merchant-url>")
+print(response.status_code, response.text)
+
+```
+
+  </TabItem>
+</Tabs>
+
+Runnable versions of both are in
+[`examples/`](https://github.com/neogeeks/tx402/tree/main/examples).
+
+</Steps>
+
+## What just happened
+
+1. tx402 sent your request normally. The merchant answered `402` with a `PAYMENT-REQUIRED`
+header listing what it accepts.
+2. tx402 decoded and validated that challenge strictly — size, depth, duplicate keys, the
+resource origin against the URL you asked for.
+3. **Your policy ran**, in a fixed order: domain, network, scheme and asset, per-request cap,
+rolling hourly cap. Nothing had touched a key yet.
+4. tx402 read your balance on each offered chain, concurrently, and ranked the routes.
+5. It **reserved** the amount from your local budget — atomically, before signing.
+6. Your signer produced exactly one authorization, with a fresh nonce.
+7. tx402 retried the request once, carrying `PAYMENT-SIGNATURE`.
+8. The merchant settled and answered. tx402 read `PAYMENT-RESPONSE` and **committed** the
+reservation.
+
+Steps 3 and 5 happening before step 6 is the property the whole design is built around. See
+[the request lifecycle](../../guides/lifecycle/) for the full picture.
+
+## If it did not work
+
+| Exit | What it means                      | Try                                                                              |
+| ---- | ---------------------------------- | -------------------------------------------------------------------------------- |
+| `3`  | Your own cap refused it            | Raise `--max-spend`, or accept the refusal — this is the guardrail working       |
+| `4`  | Wallet cannot cover it             | Fund the wallet, and check you funded the network the merchant offered           |
+| `5`  | No usable route or a bad challenge | Check you installed the right extra and configured a signer for an offered chain |
+| `7`  | Network failure                    | Transient; retry is safe here                                                    |
+| `8`  | **Ambiguous**                      | Money may have moved. Do not retry — reconcile with the merchant first           |
+
+Full detail for every code is in the [error reference](../../reference/errors/).
+```

@@ -1,0 +1,33 @@
+/* tx402 documentation theme.
+ *
+ * Deliberately small: Starlight's defaults are already accessible in both colour schemes,
+ * so this file only sets the brand accent and the few things the content needs — a
+ * readable money/atomic-unit table and a callout style for the rules that involve real
+ * funds. Anything more would be a second design system to keep in sync with the first.
+ */
+
+:root {
+  --sl-color-accent-low: #10233a;
+  --sl-color-accent: #2563eb;
+  --sl-color-accent-high: #bfd4ff;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #d3e0ff;
+  --sl-color-accent: #1d4ed8;
+  --sl-color-accent-high: #16305c;
+}
+
+/* Atomic-unit figures are compared column-wise far more often than they are read as
+ * prose, so they get tabular figures: `50000` and `1000000` must line up. */
+.money td:last-child,
+.money code {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Exit codes are scanned, not read. */
+.exit-codes td:first-child {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}

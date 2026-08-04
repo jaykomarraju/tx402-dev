@@ -1,0 +1,134 @@
+---
+title: Spend policy
+description: The guardrails that run before any key is touched, the order they run in, and how money is represented.
+sidebar:
+  order: 2
+---
+
+Policy is the reason to use tx402 rather than a fetch wrapper. It is a set of local rules that
+run **before** a signer is reachable, so a refused payment is a payment that was never
+authorized — not one that was authorized and then discarded.
+
+## Configuring it
+
+```ts title="TypeScript"
+const tx402 = createTx402Client({
+  signers: { evm },
+  policy: {
+    maxPerRequest: "0.10 USDC",
+    maxPerHour: "5.00 USDC",
+    allowedDomains: ["api.example.com", "*.trusted.dev"],
+    allowedNetworks: ["eip155:8453", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"],
+    maxPaidAttempts: 2,
+  },
+  routing: { preferNetworks: ["eip155:8453"] },
+});
+```
+
+```python title="Python"
+tx402 = Tx402Client(
+    evm_signer=evm,
+    policy=Policy(
+        max_per_request="0.10 USDC",
+        max_per_hour="5.00 USDC",
+        allowed_domains=["api.example.com", "*.trusted.dev"],
+        allowed_networks=["eip155:8453"],
+        max_paid_attempts=2,
+    ),
+    routing=RoutingPolicy(prefer_networks=["eip155:8453"]),
+)
+```
+
+Every field is optional and every default is conservative. The full table is in the
+[configuration reference](../../reference/configuration/).
+
+## Evaluation order is fixed
+
+SPEC §6.3 fixes the order, and both SDKs implement exactly it:
+
+1. **Domain** — the normalized host against `allowedDomains`.
+2. **Network** — the CAIP-2 network against `allowedNetworks` and the signed release manifest.
+3. **Scheme and asset** — the payment scheme and token against what tx402 supports and what the
+   manifest declares for that network.
+4. **Per-request cap** — the amount against `maxPerRequest`.
+5. **Rolling hourly cap** — the amount against `maxPerHour`, over committed spend **plus active
+   reservations** in the last 3 600 000 ms.
+6. **Challenge freshness** — a timestamp in the challenge's `extra`, if one is present.
+
+The order is observable, and it is chosen so the cheapest and most specific refusals come first.
+A request to a domain you never allowed is refused without a network round trip, without a
+balance read, and without consulting the ledger.
+
+Only after all six pass may route planning read a balance. That matters more than it sounds: a
+balance query against a merchant-named chain is already an observable side effect of a request
+your policy would have refused.
+
+:::note[The hourly window counts reservations]
+`maxPerHour` is evaluated over committed spend **and** reservations that are still active. An
+in-flight payment counts against your cap while it is in flight. Without that, two concurrent
+requests could each see room for the last dollar and both proceed.
+:::
+
+## Money is always an integer
+
+Every amount in tx402 is an integer count of the token's smallest unit. `"0.10 USDC"` is parsed
+once, at the edge, into `100000` atomic units (USDC has six decimals) and stays an integer from
+there to the signature.
+
+**Floating point is rejected, not tolerated.**
+
+```ts
+policy: {
+  maxPerRequest: 0.1;
+} // ✗ throws TX402_CONFIG_INVALID
+policy: {
+  maxPerRequest: "0.10 USDC";
+} // ✓
+policy: {
+  maxPerRequest: "100000";
+} // ✓ atomic units, if you prefer
+```
+
+Passing a JavaScript `number` or a Python `float` is a configuration error rather than a
+best-effort conversion. `0.1 + 0.2 !== 0.3` is a curiosity in most code and a discrepancy
+between the quote and the signature here — and a discrepancy in a signed authorization is not
+recoverable after the fact.
+
+This is ADR-006, and it is not negotiable anywhere in either SDK.
+
+## Domain patterns
+
+Patterns match against the **normalized** host: lowercased, IDN-decoded, trailing dot removed,
+and the port dropped.
+
+| Pattern           | Matches                              | Does not match         |
+| ----------------- | ------------------------------------ | ---------------------- |
+| `api.example.com` | exactly that host                    | `evil-api.example.com` |
+| `*.example.com`   | `api.example.com`, `a.b.example.com` | `example.com`          |
+| `*`               | everything                           | —                      |
+
+The default is `["*"]`, because a domain allowlist that is subtly wrong is worse than no
+allowlist — it fails closed on the wrong things and teaches people to disable it. Set it
+explicitly once you know your merchants.
+
+## What policy does not do
+
+- **It is not a rate limiter.** `maxPerHour` bounds spend, not request count.
+- **It is not shared across processes.** The default ledger is in-memory and per-client. Two
+  processes have two budgets. Supply your own spend store if you need one budget across several.
+- **It does not survive a restart.** A fresh client starts with a fresh hourly window. This is a
+  deliberate v0.1 scope decision (ADR-007), not an oversight.
+- **It cannot stop a merchant from asking.** It stops tx402 from paying.
+
+## Checking your budget
+
+```ts
+const state = tx402.getBudgetState({
+  policyScope: "api.example.com",
+  assetId: "eip155:8453/erc20:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+});
+// { storeKind, committedAtomic, reservedAtomic, entries, reservations }
+```
+
+Budgets are scoped **per host and per asset**, so spending against one merchant does not consume
+another's allowance, and USDC on Base is a different budget from USDC on Solana.
