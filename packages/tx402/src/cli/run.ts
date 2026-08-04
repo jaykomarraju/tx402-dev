@@ -1,0 +1,331 @@
+/**
+ * `tx402 call` — the CLI's testable core (SPEC §11).
+ *
+ * Every effect is injected through {@link CliIo}, so the whole command surface — exit codes,
+ * the stdout/stderr split, `--json` shape, the dry-run signer guarantee — is exercised in
+ * process by the test suite rather than by spawning a shell and matching on text.
+ *
+ * **The stdout/stderr contract is load-bearing** (SPEC §11). stdout carries the response
+ * body, or exactly one JSON object under `--json`, and nothing else ever. Every diagnostic,
+ * warning and error goes to stderr. That is what makes `tx402 call … > out.json` produce a
+ * usable file even when the call emitted warnings, and it is why the SDK itself is forbidden
+ * from writing to the console at all (SPEC §10) — the CLI renders from the structured event
+ * stream instead.
+ */
+
+import { createTx402Client, type PaymentPlan, type Tx402Logger } from "../core/client.js";
+import { isTx402Error, type Tx402Error } from "../core/errors.js";
+import type { Tx402Signers } from "../core/signers.js";
+import { formatMoneyDecimal } from "../core/money.js";
+import { PACKAGE_NAME, PROJECT_URLS } from "../meta.js";
+import { parseArgs, type CallOptions } from "./args.js";
+import { EXIT_CODES, UsageError, exitCodeFor, type ExitCode } from "./exit-codes.js";
+
+/** Schema version of the `--json` document. Bumped only on a breaking shape change. */
+export const JSON_SCHEMA_VERSION = 1;
+
+/** Documented development-key variables (SPEC §11). Never flags. */
+export const DEV_KEY_ENV = {
+  evm: "TX402_DEV_PRIVATE_KEY",
+  solana: "TX402_DEV_SOLANA_KEYPAIR",
+} as const;
+
+/**
+ * Every effect the CLI has, in one injectable object.
+ *
+ * Declared as function-typed properties rather than method shorthand so they can be passed
+ * around detached — `parseArgs(io.argv, io.readFile)` — without `this` binding surprises.
+ */
+export interface CliIo {
+  readonly argv: readonly string[];
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly stdout: (text: string) => void;
+  readonly stderr: (text: string) => void;
+  readonly readFile: (path: string) => string;
+  /** Injected so tests can supply signers without touching a real key. */
+  readonly createClient?: typeof createTx402Client;
+}
+
+const USAGE = `${PACKAGE_NAME} — resilient x402 buyer client
+
+Usage:
+  tx402 call <URL> [options]
+
+Options:
+  --method <METHOD>     HTTP method (default: GET)
+  --body @<file>        Request body, read from a file
+  --max-spend <MONEY>   Per-request cap, e.g. "0.10 USDC"
+  --network <CAIP2>     Restrict payment to one network
+  --dry-run             Parse, evaluate policy, and plan routes. Never signs.
+  --json                Emit one JSON object on stdout
+  --timeout <MS>        Paid-retry timeout in whole milliseconds
+  -h, --help            Show this message
+  -v, --version         Show version
+
+Exit codes:
+  0 success   2 usage/config   3 policy    4 liquidity   5 protocol
+  6 signer    7 transport      8 ambiguous payment       9 resource failure
+
+Signing keys are never accepted as flags. For development only, tx402 reads
+${DEV_KEY_ENV.evm} and ${DEV_KEY_ENV.solana}; prefer an external signer.
+
+Docs: ${PROJECT_URLS.documentation}`;
+
+/** Collects the structured event stream so `--json` can report real timings. */
+function collectingLogger(events: Record<string, unknown>[]): Tx402Logger {
+  const push = (event: Readonly<Record<string, unknown>>) => {
+    events.push({ ...event });
+  };
+  return { debug: push, info: push, warn: push, error: push };
+}
+
+/**
+ * Builds signers from the documented environment variables, warning first.
+ *
+ * The warning is unconditional and goes to stderr on every run that uses one of these, not
+ * once per session and not behind a verbosity flag. A key in an environment variable is a
+ * key any child process and any crash reporter can read, and the operator should be told
+ * every single time — SPEC §11 requires the warning, and habituation is the failure mode
+ * that a once-per-session warning would introduce.
+ */
+async function resolveSigners(io: CliIo, dryRun: boolean): Promise<Tx402Signers> {
+  const evmKey = io.env[DEV_KEY_ENV.evm];
+  if (evmKey === undefined) return {};
+
+  io.stderr(
+    `warning: using a development signing key from ${DEV_KEY_ENV.evm}. ` +
+      `Anything that can read this process's environment can read the key. ` +
+      `Use an external signer for anything but a low-balance test wallet.\n`,
+  );
+
+  // Loaded lazily so the CLI's help and usage paths never pull in a chain library, and so a
+  // dry run against a machine without `viem` installed still works.
+  const { privateKeyToEvmSigner } = await import("../signers/index.js");
+  let signer;
+  try {
+    signer = privateKeyToEvmSigner(evmKey as `0x${string}`);
+  } catch {
+    // The thrown message is not forwarded — a key-validation error tends to quote its input.
+    throw new UsageError(`${DEV_KEY_ENV.evm} is not a 0x-prefixed 32-byte hex private key`);
+  }
+
+  if (!dryRun) return { evm: signer };
+
+  // SPEC §11: --dry-run MUST NOT invoke a signer. Enforced structurally rather than by
+  // trusting the code path, so that any future edit which reaches signing on this path
+  // fails loudly instead of quietly producing a signature during a "dry" run.
+  return {
+    evm: {
+      kind: "evm",
+      getAddress: () => signer.getAddress(),
+      signTypedData: () => {
+        throw new Error("tx402: --dry-run must never produce a signature");
+      },
+    },
+  };
+}
+
+function renderPlanHuman(io: CliIo, plan: PaymentPlan): void {
+  if (plan.paymentRequired === undefined) {
+    io.stderr(`no payment required — resource answered ${plan.response.status}\n`);
+    return;
+  }
+  const selected = plan.selected;
+  io.stderr(`request-id      ${plan.requestId}\n`);
+  io.stderr(`requirements    ${plan.paymentRequired.requirements.length}\n`);
+  if (selected === undefined) {
+    io.stderr("no viable route\n");
+    return;
+  }
+  io.stderr(`would pay       ${selected.amountAtomic} atomic on ${selected.network}\n`);
+  io.stderr(`scheme          ${selected.scheme}\n`);
+  io.stderr(`asset           ${selected.assetId}\n`);
+  io.stderr(`health/rank     ${selected.healthScore.toFixed(2)} / ${selected.rank}\n`);
+  io.stderr(`candidates      ${plan.candidates?.length ?? 0}\n`);
+  io.stderr("dry run — nothing was signed and no budget was reserved\n");
+}
+
+/** The `--json` document (SPEC §11: schema version, inspection, route, timings, error). */
+function jsonDocument(fields: {
+  ok: boolean;
+  exitCode: ExitCode;
+  requestId?: string;
+  status?: number;
+  dryRun: boolean;
+  plan?: PaymentPlan;
+  body?: string;
+  error?: Tx402Error | UsageError;
+  elapsedMs: number;
+  events: Record<string, unknown>[];
+}): string {
+  const { plan, error } = fields;
+  return `${JSON.stringify(
+    {
+      schemaVersion: JSON_SCHEMA_VERSION,
+      ok: fields.ok,
+      exitCode: fields.exitCode,
+      dryRun: fields.dryRun,
+      ...(fields.requestId === undefined ? {} : { requestId: fields.requestId }),
+      inspection:
+        plan?.paymentRequired === undefined
+          ? null
+          : {
+              status: plan.response.status,
+              requirementCount: plan.paymentRequired.requirements.length,
+              headerHash: plan.paymentRequired.headerHash,
+            },
+      route:
+        plan?.selected === undefined
+          ? null
+          : {
+              network: plan.selected.network,
+              scheme: plan.selected.scheme,
+              assetId: plan.selected.assetId,
+              amountAtomic: plan.selected.amountAtomic,
+              healthScore: plan.selected.healthScore,
+              rank: plan.selected.rank,
+              candidateCount: plan.candidates?.length ?? 0,
+            },
+      ...(fields.status === undefined ? {} : { status: fields.status }),
+      ...(fields.body === undefined ? {} : { body: fields.body }),
+      timings: { elapsedMs: fields.elapsedMs, events: fields.events.length },
+      // `toJSON` on Tx402Error deliberately omits `cause` (SEC-003), so this cannot carry a
+      // signer payload or a URL with credentials into a log aggregator.
+      error:
+        error === undefined
+          ? null
+          : isTx402Error(error)
+            ? error.toJSON()
+            : { code: "TX402_CLI_USAGE", message: error.message },
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+/**
+ * Runs one CLI invocation and returns its exit code.
+ *
+ * Never throws and never calls `process.exit`: the caller owns the process. That is what
+ * lets the test suite assert on exit codes directly.
+ */
+export async function run(io: CliIo): Promise<ExitCode> {
+  const startedAt = Date.now();
+  const events: Record<string, unknown>[] = [];
+  let options: CallOptions | undefined;
+
+  try {
+    const parsed = parseArgs(io.argv, io.readFile);
+    if (parsed.kind === "help") {
+      io.stdout(`${USAGE}\n`);
+      return EXIT_CODES.success;
+    }
+    if (parsed.kind === "version") {
+      io.stdout(`${PACKAGE_NAME} 0.0.0\n`);
+      return EXIT_CODES.success;
+    }
+    options = parsed.options;
+
+    // One policy object, built once. Spreading `{ policy: … }` per flag would make the last
+    // flag win and silently drop the other — `--max-spend` quietly ignored because
+    // `--network` was also given is exactly the kind of guardrail failure that only shows up
+    // as an unexpectedly large payment.
+    const policy = {
+      ...(options.maxSpend === undefined ? {} : { maxPerRequest: options.maxSpend }),
+      ...(options.network === undefined ? {} : { allowedNetworks: [options.network] }),
+    };
+
+    const create = io.createClient ?? createTx402Client;
+    const client = create({
+      signers: await resolveSigners(io, options.dryRun),
+      logger: collectingLogger(events),
+      ...(Object.keys(policy).length === 0 ? {} : { policy }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeouts: { paymentRetryMs: options.timeoutMs } }),
+      // Localhost over plain HTTP is allowed so the documented local-merchant walkthrough
+      // works; every other host is still required to be HTTPS by the SDK.
+      allowInsecureLocalhost: true,
+    });
+
+    const init = {
+      method: options.method,
+      ...(options.body === undefined ? {} : { body: options.body }),
+    };
+
+    if (options.dryRun) {
+      const plan = await client.plan(options.url, init);
+      const elapsedMs = Date.now() - startedAt;
+      if (options.json) {
+        io.stdout(
+          jsonDocument({
+            ok: true,
+            exitCode: EXIT_CODES.success,
+            requestId: plan.requestId,
+            dryRun: true,
+            plan,
+            elapsedMs,
+            events,
+          }),
+        );
+      } else {
+        renderPlanHuman(io, plan);
+      }
+      return EXIT_CODES.success;
+    }
+
+    const response = await client.fetch(options.url, init);
+    const body = await response.text();
+    const elapsedMs = Date.now() - startedAt;
+
+    if (options.json) {
+      io.stdout(
+        jsonDocument({
+          ok: response.ok,
+          exitCode: EXIT_CODES.success,
+          dryRun: false,
+          status: response.status,
+          body,
+          elapsedMs,
+          events,
+        }),
+      );
+    } else {
+      // The body, and only the body. A caller redirecting stdout gets a clean artifact.
+      io.stdout(body);
+    }
+    return EXIT_CODES.success;
+  } catch (error) {
+    const code = exitCodeFor(error);
+    const elapsedMs = Date.now() - startedAt;
+
+    if (options?.json === true) {
+      io.stdout(
+        jsonDocument({
+          ok: false,
+          exitCode: code,
+          dryRun: options.dryRun,
+          elapsedMs,
+          events,
+          ...(isTx402Error(error) || error instanceof UsageError ? { error } : {}),
+        }),
+      );
+    } else if (isTx402Error(error)) {
+      io.stderr(`${error.code}: ${error.message}\n`);
+      if (error.code === "TX402_PAYMENT_AMBIGUOUS") {
+        // Worth spelling out: this is the one exit code where retrying may pay twice.
+        io.stderr(
+          "the payment may have settled — do not retry without checking the merchant\n",
+        );
+      }
+    } else if (error instanceof UsageError) {
+      io.stderr(`tx402: ${error.message}\n\n${USAGE}\n`);
+    } else {
+      io.stderr(`tx402: ${String(error)}\n`);
+    }
+    return code;
+  }
+}
+
+/** Re-exported so the error reference and tests share one source. */
+export { EXIT_CODES, formatMoneyDecimal };

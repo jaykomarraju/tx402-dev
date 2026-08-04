@@ -67,6 +67,7 @@ import {
 import { decodePaymentRequired, type NormalizedPaymentRequired } from "./protocol.js";
 import {
   planRoutes,
+  type RouteCandidate,
   type RouteProbeOutcome,
   type RouteRejectionReason,
   type RoutePlan,
@@ -123,9 +124,30 @@ export interface PaymentInspection {
   readonly paymentRequired?: NormalizedPaymentRequired;
 }
 
+/**
+ * The outcome of {@link Tx402Client.plan}: what a real call would have done, decided by the
+ * same code that would decide it, stopping before the reservation.
+ *
+ * Everything after `paymentRequired` is absent when the resource answered something other
+ * than 402 — there was nothing to plan.
+ */
+export interface PaymentPlan {
+  readonly requestId: string;
+  readonly response: Response;
+  readonly paymentRequired?: NormalizedPaymentRequired;
+  /** Every requirement considered, ranked. Non-viable candidates are retained. */
+  readonly candidates?: readonly RouteCandidate[];
+  /** The candidate that would have been paid. */
+  readonly selected?: RouteCandidate;
+  readonly amountAtomic?: string;
+  readonly assetId?: string;
+}
+
 export interface Tx402Client {
   fetch(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<Response>;
   inspect(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<PaymentInspection>;
+  /** Plans a payment without reserving budget or producing a signature (SPEC §11). */
+  plan(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<PaymentPlan>;
   getBudgetState(): BudgetState;
   resetHealth(): void;
 }
@@ -1223,6 +1245,94 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
     return typed;
   };
 
+  /**
+   * Everything `fetch` would do up to — but not including — taking a reservation.
+   *
+   * This is what backs the CLI's `--dry-run` (SPEC §11), and it exists on the client rather
+   * than in the CLI so that the dry run exercises *the shipped decision path*. Rebuilding
+   * policy evaluation and route planning inside the CLI would mean `--dry-run` reported
+   * what a second implementation thought would happen, which is worth less than nothing:
+   * the whole point of a dry run is to predict the real one.
+   *
+   * **No signature is produced and no budget is reserved.** Route planning does read the
+   * payer's address and balance, because a route cannot be scored without knowing whether
+   * it is fundable — SPEC §11's "MUST NOT invoke a signer" is about producing a signature,
+   * and `diagnostics`/`cli` tests pin that `signTypedData` and `signTransaction` are never
+   * reached on this path.
+   */
+  const plan = async (
+    input: Tx402RequestInfo,
+    init?: Tx402RequestInit,
+  ): Promise<PaymentPlan> => {
+    const requestId = uuidV7(clock.now());
+    let phase: Tx402ErrorContext["phase"] = "initial";
+    try {
+      const { response } = await begin(input, init, requestId);
+      if (response.status !== 402) return Object.freeze({ requestId, response });
+
+      phase = "parse";
+      const paymentRequired = decodePaymentRequired(
+        response.headers.get(PROTOCOL_HEADERS.paymentRequired),
+        {
+          requestUrl: requestUrl(input).toString(),
+          requestMethod: init?.method ?? (input instanceof Request ? input.method : "GET"),
+          requestId,
+          clockEpochMs: clock.now(),
+          allowInsecureLocalhost,
+        },
+      );
+      emit(logger, "info", {
+        event: "payment.required",
+        requestId,
+        requirementCount: paymentRequired.requirements.length,
+        headerHash: paymentRequired.headerHash,
+      });
+
+      phase = "policy";
+      const decision = await policyEngine.evaluate(paymentRequired, {
+        requestId,
+        policyScope: runtime.policyScope,
+        nowEpochMs: clock.now(),
+        spendStore,
+      });
+      emit(logger, "info", {
+        event: "policy.checked",
+        requestId,
+        outcome: "allowed",
+        policyCode: "allowed",
+      });
+
+      phase = "route";
+      const selected = await planSelectedRoute(
+        runtime,
+        decision.requirements,
+        requestId,
+        clock.now(),
+      );
+      emit(logger, "info", {
+        event: "route.planned",
+        requestId,
+        candidateCount: selected.plan.candidates.length,
+        selectedNetwork: selected.route.networkId,
+        selectedScheme: selected.route.scheme,
+        selectedHealthScore: selected.plan.selected.healthScore,
+        selectedRank: selected.plan.selected.rank,
+      });
+
+      return Object.freeze({
+        requestId,
+        response,
+        paymentRequired,
+        candidates: selected.plan.candidates,
+        selected: selected.plan.selected,
+        amountAtomic: selected.requirement.amountAtomic,
+        assetId: selected.requirement.assetId,
+      });
+    } catch (error) {
+      throw failure(error, requestId, phase);
+    }
+  };
+
   const inspect = async (
     input: Tx402RequestInfo,
     init?: Tx402RequestInit,
@@ -1260,6 +1370,7 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
 
   const client: Tx402Client = {
     inspect,
+    plan,
     async fetch(input, init) {
       const started = clock.monotonic();
       const requestId = uuidV7(clock.now());
