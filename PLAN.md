@@ -392,6 +392,12 @@ complete 402 is handed back to tx402 to the moment before the signer is invoked,
 the property under test here, not a convenience: sustained loss costs the primary's deadline five
 times and then never again, because its circuit is open.
 
+One test-harness defect is worth carrying forward, because it is the S5 lesson in a new place. The
+first failover harness rebuilt the outbound RPC request as `new Request(input, init)` before
+forwarding it, which dropped the pool's per-provider deadline signal, and the suite hung until it was
+killed. Against a stub that never answers, a broken abort-follow chain is not a slow test — it is no
+deadline at all. Test transports must forward `init` by identity.
+
 A second defect was caught after the first commit, by reading the diff rather than by a test.
 Two **raw NUL bytes** had landed in `src/evm/adapter.ts` and two more in `src/solana/adapter.ts` —
 the separator in the balance-cache key was written as a literal `\x00` instead of the escape
@@ -401,12 +407,6 @@ refused to search it. A source file that cannot be diffed cannot be reviewed. Th
 `BALANCE_KEY_SEPARATOR` in `core/routing.ts`, declared once as an escape, and both adapters build
 their key with `join`. A repository-wide scan confirms no tracked source or fixture file contains a
 NUL byte.
-
-One test-harness defect is worth carrying forward, because it is the S5 lesson in a new place. The
-first failover harness rebuilt the outbound RPC request as `new Request(input, init)` before
-forwarding it, which dropped the pool's per-provider deadline signal, and the suite hung until it was
-killed. Against a stub that never answers, a broken abort-follow chain is not a slow test — it is no
-deadline at all. Test transports must forward `init` by identity.
 
 ### S8 — M6: TS Completion Semantics
 
@@ -467,7 +467,7 @@ _Exit:_ **T-016 — 100 % fixture parity** with TS on selected route, error code
 Legend: ⬜ not started · 🟨 in progress · ✅ complete · 🟥 blocked
 
 **Normative test status (SPEC §12.2):** T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008,
-T-009, T-013, T-018, and T-020 are ✅ green. T-010…T-012 and T-014…T-017 and T-019 remain ⬜ because
+T-009, T-013, T-018, and T-020 are ✅ green. T-010…T-012, T-014…T-017, and T-019 remain ⬜ because
 their completion, Python-parity, or release milestones have not landed. T-011 and T-012 have partial S5 coverage — the
 ambiguous-outcome and blocked-redirect behaviours are implemented and tested — but neither is
 claimed until M6 exercises them through the full re-challenge loop. The test merchant now carries
@@ -749,8 +749,11 @@ TypeScript on Node 20 and 22, Python on CPython 3.10/3.11/3.12/3.13, and TS↔Py
 parity. The run also passed frozen-lockfile install, lint, format, typecheck, conformance-index,
 manifest-signature, coverage, build, and the re-baselined size gate.
 
-The follow-up commit `25abb21` — the NUL-byte fix recorded as O25 — is
-[run #20](https://github.com/jaykomarraju/tx402-dev/actions/runs/30869582982), also 7/7 green.
+Two follow-up commits are also verified 7/7 green: `25abb21`, the NUL-byte fix recorded as O25, is
+[run #20](https://github.com/jaykomarraju/tx402-dev/actions/runs/30869582982), and `99f3715`, which
+moves the separator declaration above the interface it documents and exports it, is
+[run #21](https://github.com/jaykomarraju/tx402-dev/actions/runs/30869715349). Every row in the S7
+table above was written after the run it describes had reported, per the S5 process note.
 
 ## 8. Session Protocol (how this stays a living document)
 
