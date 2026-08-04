@@ -20,15 +20,19 @@ Example::
 
     response = client.post(url, json={"prompt": "Hello"})
 
-Status: the error taxonomy, release manifest, and canonical serialization landed at M0. The
-strict decoder executes the shared M1 conformance boundary; ``Tx402Client`` and
-``AsyncTx402Client`` still land in session S9, built against the TypeScript reference
-implementation (ADR-005).
+Status: implemented through M3 against the frozen cross-language conformance fixtures.
 """
 
 from __future__ import annotations
 
 from tx402.bundled_manifest import BUNDLED_MANIFEST
+from tx402.client import (
+    AsyncTx402Client,
+    AsyncTx402Transport,
+    PaymentInspection,
+    Tx402Client,
+    Tx402Transport,
+)
 from tx402.errors import (
     TX402_ERROR_CODES,
     TX402_ERROR_DESCRIPTORS,
@@ -42,6 +46,7 @@ from tx402.errors import (
     InvalidPaymentRequiredError,
     NonReplayableRequestError,
     PaidRedirectBlockedError,
+    ReservedHeaderError,
     ResourceDeliveryError,
     SignerError,
     TransportError,
@@ -51,6 +56,26 @@ from tx402.errors import (
     UnsupportedProtocolError,
     UnsupportedSchemeError,
     is_tx402_error,
+)
+from tx402.evm import (
+    EvmRpcError,
+    EvmRpcPool,
+    EvmSigner,
+    EvmSignerPresentation,
+    EvmTypedDataRequest,
+    ExactEvmPlan,
+    create_evm_authorization,
+    encode_balance_of_call_data,
+    plan_exact_evm_authorization,
+    resolve_evm_address,
+)
+from tx402.ledger import (
+    RESERVATION_TTL_MS,
+    ROLLING_WINDOW_MS,
+    BudgetState,
+    MemorySpendStore,
+    SpendEntry,
+    SpendReservation,
 )
 from tx402.manifest import (
     assert_valid_release_manifest,
@@ -66,6 +91,20 @@ from tx402.meta import (
     RESERVED_REQUEST_HEADERS,
     X402_PROTOCOL_VERSION,
 )
+from tx402.money import (
+    MoneyAssetMetadata,
+    MoneyParseError,
+    format_money_decimal,
+    parse_money_atomic,
+    parse_positive_money_atomic,
+)
+from tx402.policy import (
+    Policy,
+    PolicyDecision,
+    PolicyEngine,
+    PolicyRequirement,
+    RoutingPolicy,
+)
 from tx402.trusted_keys import MANIFEST_SIGNING_DOMAIN, TRUSTED_MANIFEST_KEYS
 
 __all__ = [
@@ -75,32 +114,64 @@ __all__ = [
     "PROJECT_URLS",
     "PROTOCOL_HEADERS",
     "REQUEST_ID_HEADER",
+    "RESERVATION_TTL_MS",
     "RESERVED_REQUEST_HEADERS",
+    "ROLLING_WINDOW_MS",
     "TRUSTED_MANIFEST_KEYS",
     "TX402_ERROR_CODES",
     "TX402_ERROR_DESCRIPTORS",
     "TX402_ERROR_TAXONOMY",
     "X402_PROTOCOL_VERSION",
     "AmbiguousPaymentError",
+    "AsyncTx402Client",
+    "AsyncTx402Transport",
     "BudgetExceededError",
+    "BudgetState",
     "ClockSkewError",
     "ConfigurationError",
     "DomainNotAllowedError",
+    "EvmRpcError",
+    "EvmRpcPool",
+    "EvmSigner",
+    "EvmSignerPresentation",
+    "EvmTypedDataRequest",
+    "ExactEvmPlan",
     "InsufficientLiquidityError",
     "InvalidPaymentRequiredError",
+    "MemorySpendStore",
+    "MoneyAssetMetadata",
+    "MoneyParseError",
     "NonReplayableRequestError",
     "PaidRedirectBlockedError",
+    "PaymentInspection",
+    "Policy",
+    "PolicyDecision",
+    "PolicyEngine",
+    "PolicyRequirement",
+    "ReservedHeaderError",
     "ResourceDeliveryError",
+    "RoutingPolicy",
     "SignerError",
+    "SpendEntry",
+    "SpendReservation",
     "TransportError",
+    "Tx402Client",
     "Tx402Error",
     "Tx402ErrorContext",
     "Tx402ErrorDescriptor",
+    "Tx402Transport",
     "UnsupportedProtocolError",
     "UnsupportedSchemeError",
     "assert_valid_release_manifest",
+    "create_evm_authorization",
+    "encode_balance_of_call_data",
+    "format_money_decimal",
     "is_tx402_error",
+    "parse_money_atomic",
+    "parse_positive_money_atomic",
+    "plan_exact_evm_authorization",
     "require_network",
+    "resolve_evm_address",
     "resolve_network",
     "verify_release_manifest",
 ]

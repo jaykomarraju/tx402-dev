@@ -3,9 +3,9 @@
 **Resilient x402 buyer SDK for Python.** Deterministic multi-chain payment routing, local spend
 guardrails, and a drop-in `httpx` wrapper for autonomous agents.
 
-> ⚠️ **This is a placeholder release (`0.0.0`). The package name is reserved; the SDK is under
-> active development and nothing is implemented yet.** Do not depend on this version. The first
-> functional release will be `0.1.0`.
+> ⚠️ **This is a pre-release (`0.0.0`).** Python is implemented through M3: strict protocol
+> decoding, policy and ledger enforcement, sync/async HTTPX transports, and Base EIP-3009.
+> Solana, multi-route health scoring, and completion semantics land before `0.1.0`.
 
 ## What it will do
 
@@ -18,21 +18,19 @@ from tx402 import Policy, Tx402Client
 
 client = Tx402Client(
     evm_signer=evm_signer,
-    solana_signer=solana_signer,
     policy=Policy(
         max_per_request="0.50 USDC",
         max_per_hour="10.00 USDC",
-        allowed_networks=["eip155:8453", "solana:mainnet"],
+        allowed_networks=["eip155:8453"],
     ),
 )
 
 response = client.post(url, json={"prompt": "Hello"})
 ```
 
-Under the hood, on a `402`, it will: decode the challenge, enforce your spend policy **before any
-key is touched**, deterministically pick a route across the networks the merchant actually offered
-(scored by balance, fee, and local endpoint health), reserve the spend, sign one authorization, and
-retry exactly once with it.
+Under the hood, on a `402`, it decodes the challenge, enforces your spend policy **before any key
+is touched**, verifies the Base chain ID on the RPC endpoint that serves the balance, reserves the
+spend, asks your signer for one bounded EIP-3009 authorization, and retries once with it.
 
 Both `Tx402Client` and `AsyncTx402Client` are provided.
 
@@ -62,7 +60,7 @@ Requires Python 3.10+.
 
 ## Status
 
-Pre-alpha. Targeting Base and Solana for the first release, with a TypeScript SDK
+Pre-alpha, implemented through M3. Targeting Base and Solana for the first release, with a TypeScript SDK
 ([`tx402` on npm](https://www.npmjs.com/package/tx402)) at behavioral parity — both are
 validated against the same language-neutral conformance fixtures.
 

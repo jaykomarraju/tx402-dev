@@ -462,8 +462,17 @@ same-origin redirects, which SPEC §6.1 does allow, is **not** implemented and i
 
 ### S9 — Python M1–M3
 
-Transport (`httpx.BaseTransport` sync + async), protocol decode, policy, ledger, EVM adapter — all
-validated against the S8-frozen fixtures. `Tx402Client`, `AsyncTx402Client`, `Policy`, `Tx402Error`.
+Complete 2026-08-03. Python now owns synchronous and asynchronous HTTPX transports and the M1–M3
+request path: replay-safe body capture, reserved-header and URL enforcement, strict v2 decode,
+integer-only policy arithmetic in SPEC §6.3 order, an `RLock`-atomic 120-second reservation ledger,
+and the Base exact adapter. `EvmRpcPool` proves `eth_chainId` on the same endpoint before its
+`balanceOf` read, tx402 races both RPC and paid-retry deadlines in its own control flow, and the
+signer boundary validates the complete EIP-712 authorization before delegating to PyPI `x402`
+2.17.*. Policy evaluation and reservation precede every signer call.
+
+`Tx402Client`, `AsyncTx402Client`, `Tx402Transport`, `AsyncTx402Transport`, `PolicyEngine`,
+`MemorySpendStore`, and `EvmSigner` are public. The Python runner advances to M3 and executes all
+49 M0–M3 vectors at Stage B. No fixture or normative specification changed.
 
 ### S10 — Python M4–M6
 
@@ -501,17 +510,18 @@ _Exit:_ **T-016 — 100 % fixture parity** with TS on selected route, error code
 | S6      | M4 TS Solana adapter     | ✅ Complete    | 2026-08-03. SolanaSigner→TransactionSigner, genesis/ATA balance, exact SPL USDC, pre-sign transaction validation. T-003 local green; Devnet live skipped for O2.            |
 | S7      | M5 TS routing/health     | ✅ Complete    | 2026-08-03. Deterministic RoutePlanner, one shared HealthIndex subsuming both RPC circuits, concurrent deduped balances. T-004/T-005/T-008/T-020 green; 59 vectors.         |
 | S8      | M6 TS completion         | ✅ Complete    | 2026-08-03. Re-challenge loop under `maxPaidAttempts` over one pure SPEC §6.7 disposition table. T-010/T-011/T-012 green; 65 vectors, fixtures frozen. TS feature-complete. |
-| S9      | Python M1–M3             | ⬜ Not started |                                                                                                                                                                             |
+| S9      | Python M1–M3             | ✅ Complete    | 2026-08-03. Sync/async HTTPX transports, strict protocol, integer policy, atomic ledger, and Base adapter. Python executes all 49 M0–M3 vectors at Stage B.                 |
 | S10     | Python M4–M6             | ⬜ Not started |                                                                                                                                                                             |
 | S11     | M7 CLI + docs            | ⬜ Not started |                                                                                                                                                                             |
 | S12     | M8 hardening + release   | ⬜ Not started |                                                                                                                                                                             |
 
 Legend: ⬜ not started · 🟨 in progress · ✅ complete · 🟥 blocked
 
-**Normative test status (SPEC §12.2):** T-001 through T-013, T-018, and T-020 are ✅ green —
+**Normative test status (SPEC §12.2):** T-001 through T-014, T-017, T-018, and T-020 are ✅ green —
 T-010, T-011, and T-012 were claimed at S8 through the full re-challenge loop, not through S5's
-partial coverage. T-014…T-017 and T-019 remain ⬜ because their Python-parity and release
-milestones have not landed. The test merchant carries scenarios for every claimed test plus
+partial coverage. T-014 and T-017 now also run through Python's real client construction and
+transport boundaries. T-015, T-016, and T-019 remain ⬜ because their Python logging, full M6
+parity, and release milestones have not landed. The test merchant carries scenarios for every claimed test plus
 `rechallenge-malformed` (added at S8), refused-retry, corrupt-response, and
 unsuccessful-settlement.
 
@@ -837,6 +847,43 @@ conformance parity. The run also passed frozen-lockfile install, lint, format, t
 conformance-index, manifest-signature, coverage, build, and size gates. This row was written after
 the run reported, per the S5 process note.
 
+---
+
+**Session 9 verification results (all local gates green):**
+
+| Check                        | Result                                                                      |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| `pnpm lint` / format / types | clean; strict TypeScript remains green                                      |
+| `pnpm conformance:check`     | frozen 65-vector index unchanged                                            |
+| `pnpm manifest:verify`       | signed manifest valid; 4 networks; expires 2027-08-02 (362 days)            |
+| TypeScript tests             | 419 passed / 419, 3 skipped (Base Sepolia + Solana Devnet opt-in live legs) |
+| TS coverage                  | 94.09 % statements / 90.61 % branch — 90 % gate enforced                    |
+| Python lint / format / mypy  | clean; strict mypy over 27 source/test files                                |
+| Python tests + coverage      | 269 passed / 269; 93.27 % branch-inclusive coverage                         |
+| Python package               | lock check clean; source distribution and wheel build clean                 |
+| `pnpm build`                 | clean                                                                       |
+| `pnpm size`                  | own 16.34 / 25 KiB; total 31.03 / 32 KiB — unchanged                        |
+| T-002 / SEC-002              | policy + reservation precede one EVM signer call; one paid retry            |
+| T-007                        | concurrent reservations enforce the atomic rolling-hour cap                 |
+| T-014 / T-017                | invalid manifest fails construction; initial merchant failure stays typed   |
+
+Conformance suite composition remains 24 M0 + 12 M1 + 6 M2 + 7 M3 + 4 M4 + 6 M5 + 6 M6.
+**Python now executes all 49 M0–M3 vectors at Stage B and validates the remaining sixteen at
+Stage A.** TypeScript still executes all 65 at Stage B. The S8 fixture freeze was respected: no
+fixture, schema, or conformance index file changed.
+
+PyPI `x402` is now constrained to `>=2.17,<2.18`, matching the 2.17.0 API inspected and exercised
+by the adapter while npm remains on `@x402/core` 2.20.0. Their v2 envelope fields agree at the
+tx402 boundary: Python's upstream scheme receives the normalized accepted requirement and returns
+the same `PaymentPayload` shape the frozen M3 plan and client tests require. O6 remains ongoing for
+every future dependency move.
+
+S9 explicitly re-defers the external or later-milestone work: O2 testnet wallets and O10 trusted
+publishing remain due S12; O12 still needs the user's backup; O17 and O26 remain due S11; O21's CI
+failure annotations are preserved; O24's request/deadline forwarding rule was followed; O25's NUL
+guard remains due S12; and O27 remains the governing fixture rule. CI results are intentionally
+not recorded here until the S9 commit's workflow reports.
+
 ## 8. Session Protocol (how this stays a living document)
 
 **At the start of every session,** the agent MUST:
@@ -935,6 +982,7 @@ with the code, and emit the next handoff prompt.
 | O25 | Two raw NUL bytes reached `src/evm/adapter.ts` and two more `src/solana/adapter.ts` at S7 — a cache-key separator written as a literal control character rather than as `\u0000`. Every gate passed; git classified both files as binary, so `git diff` showed only a byte count and `grep` refused to search them. Fixed by declaring `BALANCE_KEY_SEPARATOR` once in `core/routing.ts`. A tracked-file scan is clean. Worth a cheap CI guard at S12: fail if any tracked source or fixture file contains a NUL byte.                                                                                                                                                                                                                                                                                                | Agent            | 🟨 Guard due S12                             |
 | O26 | **SPEC §6.1 permits following a same-origin redirect on a paid retry; v0.1 does not follow one.** S8 fixed the money half — a 3xx is no longer treated as a definitive refusal, so the reservation is retained rather than released (`causeCategory: "redirect-not-followed"`) — but the call still fails where SPEC allows it to succeed. Implementing the follow means re-transmitting one authorization to a second URL, plus the per-status method/body rewrite rules and a hop bound, which is a new replay surface deserving its own design and tests. Note SEC-005's acceptance wording ("fail **before transmitting** PAYMENT-SIGNATURE") reads as though the block guards that second transmission, which supports following. Decide at S11 with the CLI's redirect behaviour, or defer to v0.2 with an ADR. | Agent            | 🟨 Deferred S11                              |
 | O27 | The conformance fixture set is **frozen at 65 vectors** as of S8 (2026-08-03) and Python is written against it at S9/S10. Adding a vector remains ordinary work; changing or removing one is a contract change. When a Python run disagrees with a frozen vector, establish whether the defect is in Python, in TypeScript, or in the vector's reading of SPEC **before** editing any file — editing the fixture first is how a cross-language contract quietly becomes a record of whatever the two implementations happen to do. Rules and rationale: `core-spec/conformance/README.md`.                                                                                                                                                                                                                            | Agent            | ⬜ Standing rule from S8                     |
+| O28 | **S9 open-item audit.** The frozen fixtures passed unchanged, and no new specification deviation was found. PyPI `x402` is pinned to the inspected 2.17.* line and agrees with npm's 2.20.0 v2 envelope at the tx402 boundary (O6 remains ongoing). Python owns deadlines explicitly and its test transports preserve the original HTTPX request, satisfying O21/O24. O2, O10, O12, O17, O25, and O26 retain their existing owners and dates: wallets/trusted publishing/NUL guard at S12, security/contribution docs and redirect decision at S11, and the manifest-key backup needed from the user now. O27 continues to govern S10.                                                                                                                                                                                | Agent / **User** | 🟨 Re-deferred to recorded milestones        |
 
 ---
 

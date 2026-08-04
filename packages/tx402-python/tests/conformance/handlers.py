@@ -17,8 +17,10 @@ from typing import Any, Final
 import pytest
 
 from tests.conformance.runner import register_handler
+from tx402.bundled_manifest import BUNDLED_MANIFEST
 from tx402.canonical_json import CanonicalJsonError, canonicalize_json
-from tx402.errors import TX402_ERROR_TAXONOMY, Tx402Error
+from tx402.errors import TX402_ERROR_TAXONOMY, Tx402Error, Tx402ErrorContext
+from tx402.evm import plan_exact_evm_authorization
 from tx402.fingerprint import (
     digest_request_body,
     fingerprint_request,
@@ -227,3 +229,40 @@ def _spend_ledger_behavior(vector: dict[str, Any]) -> None:
 
 register_handler("request.fingerprint", _request_fingerprint)
 register_handler("spend-ledger.behavior", _spend_ledger_behavior)
+
+
+def _evm_authorization_plan(vector: dict[str, Any]) -> None:
+    payload = vector["input"]
+    expected = vector["expected"]
+    network = BUNDLED_MANIFEST["networks"][payload["networkId"]]
+    asset = next(
+        (
+            candidate
+            for candidate in network["assets"]
+            if candidate["address"].lower() == payload["requirement"]["asset"].lower()
+        ),
+        network["assets"][0],
+    )
+
+    def run() -> dict[str, Any]:
+        return plan_exact_evm_authorization(
+            requirement=payload["requirement"],
+            network_id=payload["networkId"],
+            network=network,
+            asset=asset,
+            payer=payload["payer"],
+            now_epoch_ms=payload["nowEpochMs"],
+            max_authorization_seconds=payload.get("maxAuthorizationSeconds", 60),
+            context=Tx402ErrorContext(request_id=vector["id"], phase="route"),
+        ).to_dict()
+
+    if expected["outcome"] == "valid":
+        assert run() == expected["plan"]
+        return
+    with pytest.raises(Tx402Error) as raised:
+        run()
+    assert raised.value.code == expected["errorCode"]
+    assert raised.value.details["reason"] == expected["reason"]
+
+
+register_handler("evm.authorization-plan", _evm_authorization_plan)
