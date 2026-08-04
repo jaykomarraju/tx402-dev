@@ -1,6 +1,7 @@
 # ADR-014 — A paid retry does not follow redirects in v0.1
 
 **Status:** Accepted · **narrows `SPEC.md` §6.1 for v0.1; revisit at v0.2**
+**Amended S15b** — see "Amendment (S15b)" below, which closes O52.
 
 Closes PLAN.md open item **O26**.
 
@@ -96,11 +97,53 @@ in the SPEC §10 diagnostics, and is documented in the error reference. A mercha
 depends on a post-payment redirect can be identified from the buyer's logs without reading tx402's
 source.
 
+## Amendment (S15b) — the cross-origin error the SPEC names is now the one raised
+
+Closes PLAN.md open item **O52**, filed by the S15 pre-publication audit.
+
+This ADR said "cross-origin raises `PaidRedirectBlockedError`, as required", and "T-012 is
+unaffected. It asserts the cross-origin block, which is unchanged." Both statements were
+true of `issuePaidRetry`, which does create that error — and false of the client a caller
+actually uses. `attemptPayment` caught it and replaced it with `AmbiguousPaymentError`
+carrying `causeCategory: "redirect-blocked"`; Python mirrored the same substitution. The
+class SPEC §6.1, the error taxonomy, the error reference, and this ADR all promise was
+therefore unreachable from `client.fetch`, and the frozen vector and both integration tests
+asserted the substitute — cross-language parity on the wrong public error.
+
+**What changes:** the error identity, and nothing else.
+
+- A cross-origin redirect on a paid retry raises **`PaidRedirectBlockedError`**
+  (`TX402_REDIRECT_BLOCKED`, `retryability: "no"`, so `retryable` is `false`), carrying the
+  `fromOrigin` / `toOrigin` SPEC §8 requires of that code, plus
+  `reservationExpiresAtEpochMs` and `causeCategory: "redirect-blocked"`.
+- `context.paid` stays `"unknown"` and the **reservation stays retained to its TTL**. That
+  disposition was always right and is untouched: SEC-005 stopped the follow-up, not the
+  original transmission, so the merchant has the signature and may have settled.
+- The disposition table now carries `kind` and `errorCode` as separate fields (ADR-016), so
+  a disposition can keep its money semantics while naming a different public error.
+- **The CLI exit code moves from 9 to 8.** This ADR always described it as 8 — "the CLI
+  reports it under exit code 8, alongside every other ambiguous outcome" — while
+  `EXIT_CODE_BY_ERROR` mapped it to 9 in both languages. 8 is the "money may have moved, do
+  not retry blindly" code, and this error is reachable only after transmission, so 8 is
+  what the sentence above always meant. Exit 8 is now shared by exactly the two codes that
+  can only arise post-transmission.
+
+**A same-origin 3xx is unaffected**, in every respect: still not followed, still
+`AmbiguousPaymentError` with `causeCategory: "redirect-not-followed"`, still retained. The
+v0.2 design sketch below stands unchanged.
+
+**The frozen vector `completion.paid-attempt.ambiguous-after-transmission` changes** — its
+redirect row gains `errorCode: TX402_REDIRECT_BLOCKED` — which is why this is an amendment
+to an accepted ADR rather than a bug fix. The 3xx vectors this ADR was written to protect
+are not touched.
+
 ## Consequences
 
-- **No code changes.** This ADR records a decision the implementation already embodies. It
-  exists so that a future reader finds a decision rather than an omission, and so the SPEC §6.1
-  divergence is declared rather than silent.
+- **No code changes** _as originally accepted at S12_. The S15b amendment above changes the
+  error class, the vector's `errorCode`, and one exit-code row. This ADR otherwise records a
+  decision the implementation already embodies. It exists so that a future reader finds a
+  decision rather than an omission, and so the SPEC §6.1 divergence is declared rather than
+  silent.
 - **SPEC §6.1's same-origin clause is narrowed for v0.1.** tx402 implements the MUST NOT half
   (cross-origin is blocked) and declines the permitted half (same-origin is not followed).
   Nothing in SPEC requires the follow, so this narrows a permission, not a requirement.
@@ -108,9 +151,11 @@ source.
   would move the decision to a caller who has strictly less information about the merchant's
   trust boundary than tx402 does, and it would do so at the exact moment money may already have
   moved.
-- **T-012 is unaffected.** It asserts the cross-origin block, which is unchanged.
-- **The frozen vectors are unaffected.** The three `completion.paid-attempt` vectors covering
-  3xx already encode this behaviour; the decision is to keep them, not to change them.
+- **T-012 asserts the cross-origin block, which is unchanged in substance.** Its expected
+  error class changed at S15b — see the amendment above.
+- **The 3xx frozen vectors are unaffected.** The `completion.paid-attempt` vectors covering
+  a same-origin 3xx already encode this behaviour; the decision is to keep them, not to
+  change them. The cross-origin row of `ambiguous-after-transmission` changed at S15b.
 
 ## Design sketch for v0.2
 

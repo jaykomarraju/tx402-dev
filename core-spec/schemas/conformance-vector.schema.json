@@ -787,9 +787,10 @@
           "maximum": 3
         },
         "attempts": {
+          "description": "Each entry is one independent classification, not necessarily a step in one call: a vector may put several unrelated attempt-1 cases side by side so they cannot be collapsed into a single branch.",
           "type": "array",
           "minItems": 1,
-          "maxItems": 3,
+          "maxItems": 8,
           "items": {
             "type": "object",
             "required": ["attempt", "result"],
@@ -807,8 +808,8 @@
                   },
                   "status": { "type": "integer", "minimum": 100, "maximum": 599 },
                   "settlement": {
-                    "description": "What PAYMENT-RESPONSE proved. `unknown` covers both an absent header and one that does not decode — neither is evidence in either direction.",
-                    "enum": ["success", "unsuccessful", "unknown"]
+                    "description": "What PAYMENT-RESPONSE proved. Four values, not three: `absent` (no header — permitted, because the pinned upstream protocol marks it optional) and `malformed` (present and undecodable — a protocol violation, and evidence in no direction) were one value until ADR-016, which is what let a corrupt header be read as a paid success.",
+                    "enum": ["success", "unsuccessful", "absent", "malformed"]
                   }
                 }
               }
@@ -819,7 +820,7 @@
     },
 
     "expectedPaidAttempt": {
-      "description": "One disposition per attempt, in order. `reservation` is the money-critical field: `released` requires evidence that no settlement occurred, `retained` holds the reservation to its TTL because the outcome is unknown.",
+      "description": "One disposition per attempt, in order. `reservation` is the money-critical field: `released` requires evidence that no settlement occurred, `retained` holds the reservation to its TTL because the outcome is unknown, and `committed` requires evidence that it did.",
       "type": "object",
       "required": ["dispositions"],
       "additionalProperties": false,
@@ -827,13 +828,16 @@
         "dispositions": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 3,
+          "maxItems": 8,
           "items": {
             "type": "object",
             "required": ["kind", "reservation"],
             "additionalProperties": false,
             "properties": {
-              "kind": { "enum": ["commit", "rechallenge", "failed", "ambiguous"] },
+              "kind": {
+                "description": "The money disposition. `paid-undelivered` is SPEC §5.3's case — the settlement stands and the resource does not — and is the only kind that both commits and raises. `errorCode` is a separate field because the public error identity does not always follow the disposition: a cross-origin redirect is `ambiguous`/`retained` and reports TX402_REDIRECT_BLOCKED (SPEC §6.1).",
+                "enum": ["commit", "rechallenge", "failed", "paid-undelivered", "ambiguous"]
+              },
               "reservation": { "enum": ["committed", "released", "retained"] },
               "errorCode": {
                 "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/errorCode"

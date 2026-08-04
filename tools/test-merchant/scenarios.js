@@ -167,6 +167,30 @@ export const SCENARIOS = {
       hasSignature ? { type: "status", status: 403 } : { type: "challenge" },
   },
 
+  "settled-but-refused": {
+    description:
+      "Challenges, then answers the paid retry with 403 *and* a successful PAYMENT-RESPONSE. " +
+      "The merchant took the money and could not hand over the resource. SPEC §5.3 requires " +
+      "the spend to stay committed and ResourceDeliveryError with paid=true; releasing here " +
+      "hands back budget for money that moved. Deliberately the twin of " +
+      "refused-after-signature, which sends the same 403 with no settlement claim and must " +
+      "release — the pair is what stops either behaviour being restated as the other.",
+    covers: ["SPEC §5.3", "SPEC §6.7"],
+    next: ({ hasSignature }) =>
+      hasSignature ? { type: "deliver", status: 403 } : { type: "challenge" },
+  },
+
+  "settled-but-rechallenged": {
+    description:
+      "Challenges, then answers the paid retry with 402 *and* a successful PAYMENT-RESPONSE. " +
+      "A merchant contradicting itself, and the most expensive case to get wrong: a bare 402 " +
+      "is the one outcome strong enough to release and re-sign, so obeying the status line " +
+      "here pays twice for one resource.",
+    covers: ["SPEC §5.3", "SPEC §6.7"],
+    next: ({ hasSignature }) =>
+      hasSignature ? { type: "deliver", status: 402 } : { type: "challenge" },
+  },
+
   "hang-after-signature": {
     description:
       "Challenges, then never responds to the paid retry. Same ambiguity as a 5xx, reached " +

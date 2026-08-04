@@ -82,6 +82,7 @@ export default tseslint.config(
         TextEncoder: "readonly",
         TextDecoder: "readonly",
         fetch: "readonly",
+        AbortSignal: "readonly",
         performance: "readonly",
         __dirname: "readonly",
       },

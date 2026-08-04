@@ -55,42 +55,56 @@
       "kind": "completion.paid-attempt",
       "milestone": "M6",
       "file": "vectors/completion/absent-settlement-evidence-commits.json",
-      "sha256": "sha256:b1aec303513e522718194b725fd3168fd6e77786c7d596519100f10ec6aadd44"
+      "sha256": "sha256:0b4cb5b3a6ad3fc2c54b98a60d9a586c5fa110702de9caff8b4bd345492639c0"
     },
     {
       "id": "completion.paid-attempt.ambiguous-after-transmission",
       "kind": "completion.paid-attempt",
       "milestone": "M6",
       "file": "vectors/completion/ambiguous-after-transmission.json",
-      "sha256": "sha256:99b053e4dea5718f7fedd934c660bae8a9c9e25a39ded3bb0d87b9d4b599470d"
+      "sha256": "sha256:439ca345e45c7b6a0cce8b8db168af279d482e9bad7b5b37378c59d7d6db9d3c"
     },
     {
       "id": "completion.paid-attempt.attempts-exhausted",
       "kind": "completion.paid-attempt",
       "milestone": "M6",
       "file": "vectors/completion/attempts-exhausted.json",
-      "sha256": "sha256:31f0e3e8ff8b5b01eb1ef9ccd34c3f86e0dfe959e6e5c0e5d9d9af4b5439694f"
+      "sha256": "sha256:c56efcbbfad1817049239bc979b56e135749dd88cd8a687bf765a978015b40f4"
+    },
+    {
+      "id": "completion.paid-attempt.malformed-settlement-metadata-is-never-evidence",
+      "kind": "completion.paid-attempt",
+      "milestone": "M6",
+      "file": "vectors/completion/malformed-settlement-metadata-is-never-evidence.json",
+      "sha256": "sha256:b44657ee23912b5fcfec48956f76bcfb93ff18b7b7d6e2dbfea9834a62d44be4"
     },
     {
       "id": "completion.paid-attempt.rechallenge-then-delivered",
       "kind": "completion.paid-attempt",
       "milestone": "M6",
       "file": "vectors/completion/rechallenge-then-delivered.json",
-      "sha256": "sha256:e30d5042745f24e95dc5db93844df976245ad0debb6bdd6613c70e2bdcb58356"
+      "sha256": "sha256:b8d43b73ad49fd63b1209a8bde90889c34b6e4a26e429c2c31ff7a091d199b79"
     },
     {
       "id": "completion.paid-attempt.refusal-releases-redirect-does-not",
       "kind": "completion.paid-attempt",
       "milestone": "M6",
       "file": "vectors/completion/refusal-releases-redirect-does-not.json",
-      "sha256": "sha256:5d86b284d55f748939ea1640d64a3efb8d4d20a75296b585d53b55d6be24b347"
+      "sha256": "sha256:415b39180319f6b0f84cc635f0e54fd4ba4a3343448bed8e9ce932b4e1d5133d"
+    },
+    {
+      "id": "completion.paid-attempt.settlement-outranks-the-status-line",
+      "kind": "completion.paid-attempt",
+      "milestone": "M6",
+      "file": "vectors/completion/settlement-outranks-the-status-line.json",
+      "sha256": "sha256:b1693d444d2afb12102f176d9dd6fc33626c08d54083497f6273da84c0f45ec3"
     },
     {
       "id": "completion.paid-attempt.single-attempt-exhausted",
       "kind": "completion.paid-attempt",
       "milestone": "M6",
       "file": "vectors/completion/single-attempt-exhausted.json",
-      "sha256": "sha256:7ce3df096e55b9c972d1583193c7508ef22a0e2ca0e246b289d63b8640f3d141"
+      "sha256": "sha256:eee079540dc60ad467a6966783baf4e86735c156ef84b352203e956519670d2a"
     },
     {
       "id": "errors.taxonomy.frozen",

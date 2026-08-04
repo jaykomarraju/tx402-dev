@@ -48,6 +48,7 @@ from tx402.chain import (
 )
 from tx402.completion import (
     MAX_PAID_ATTEMPTS_REASON,
+    PaidAttemptDisposition,
     PaidAttemptResult,
     SettlementEvidence,
     classify_paid_attempt,
@@ -63,6 +64,7 @@ from tx402.diagnostics import (
     settlement_id_hash,
 )
 from tx402.errors import (
+    TX402_ERROR_CODES,
     AmbiguousPaymentError,
     ConfigurationError,
     NonReplayableRequestError,
@@ -76,7 +78,13 @@ from tx402.errors import (
 )
 from tx402.fingerprint import fingerprint_request
 from tx402.health import HealthIndex
-from tx402.ledger import BudgetState, MemorySpendStore, SpendReservation
+from tx402.ledger import (
+    BudgetState,
+    MemorySpendStore,
+    SpendReservation,
+    SpendStore,
+    assert_spend_store,
+)
 from tx402.manifest import assert_valid_release_manifest
 from tx402.meta import PROTOCOL_HEADERS, REQUEST_ID_HEADER, RESERVED_REQUEST_HEADERS
 from tx402.policy import (
@@ -103,6 +111,14 @@ _BODY_FACTORY_EXTENSION: Final = "tx402.body_factory"
 _PAYMENT_RETRY_TIMEOUT_MS: Final = 10_000
 _MIN_PAYMENT_RETRY_TIMEOUT_MS: Final = 1_000
 _REDIRECT_STATUSES: Final = frozenset({301, 302, 303, 307, 308})
+
+#: ``details["reason"]`` when settlement succeeded and the store could not record it.
+#:
+#: Exported so a caller can branch on it without matching a message string (ADR-017).
+SPEND_STORE_COMMIT_FAILED_REASON: Final = "spend-store-commit-failed"
+
+#: ``details["causeCategory"]`` when the store failed before anything was signed.
+SPEND_STORE_UNAVAILABLE_CAUSE: Final = "spend-store-unavailable"
 
 ClientT = TypeVar("ClientT", bound="Tx402Client")
 AsyncClientT = TypeVar("AsyncClientT", bound="AsyncTx402Client")
@@ -318,16 +334,21 @@ def _read_payment_response(
     logger: Tx402Logger,
     request_id: str,
 ) -> tuple[SettlementEvidence, str | None]:
-    """Reads PAYMENT-RESPONSE, which upstream marks optional on a delivered resource.
+    """Reads PAYMENT-RESPONSE, on **every** status (SPEC §5.3, ADR-016).
 
-    Absent and undecodable both report ``"unknown"`` rather than a failure: neither is
-    evidence in either direction, and treating either as ``"unsuccessful"`` would refuse a
-    resource the merchant did deliver and did settle.
+    Two things about this function are load-bearing and were both wrong before S15b:
 
-    Both cases are logged at ``warn`` anyway, and with distinct reasons: the resource is
-    delivered either way, but "the merchant sent no settlement metadata" and "the merchant
-    sent metadata I could not parse" point at different bugs on the merchant's side, and an
-    operator reconciling against a merchant ledger needs to know which one happened.
+    - It is called whatever the merchant's status line says. A 403 or a 500 carrying a
+      successful settlement is exactly the case SPEC §5.3 legislates for, and it cannot be
+      handled by a disposition table that never sees the evidence (O44).
+    - Absent and undecodable are **different** evidence values. Upstream marks the header
+      optional, so absent is forgiven; a header that is present and does not decode is a
+      protocol violation and is evidence of nothing (O53).
+
+    Both cases are logged at ``warn``, and with distinct reasons: "the merchant sent no
+    settlement metadata" and "the merchant sent metadata I could not parse" point at
+    different bugs on the merchant's side, and an operator reconciling against a merchant
+    ledger needs to know which one happened.
     """
     header = response.headers.get(PROTOCOL_HEADERS["payment_response"])
     if not header:
@@ -341,7 +362,7 @@ def _read_payment_response(
                 "reason": "payment-response-absent",
             },
         )
-        return "unknown", None
+        return "absent", None
     try:
         settlement = decode_payment_response_header(header)
     except (ValueError, TypeError):
@@ -351,11 +372,11 @@ def _read_payment_response(
             {
                 "event": "payment.completed",
                 "requestId": request_id,
-                "paid": True,
+                "paid": "unknown",
                 "reason": "payment-response-unparseable",
             },
         )
-        return "unknown", None
+        return "malformed", None
     if not settlement.success:
         return "unsuccessful", None
     transaction = settlement.transaction
@@ -403,7 +424,7 @@ class _Core:
         evm_signer: object,
         solana_signer: object,
         policy: PolicyEngine,
-        spend_store: MemorySpendStore,
+        spend_store: SpendStore,
         manifest: Mapping[str, Any],
         clock: Clock,
         evm_rpc_transport: object,
@@ -901,28 +922,159 @@ class _Core:
 
         A reservation expires on its own after 120 s, so a store that cannot release is not
         a reason to replace a precise failure with a vaguer one.
+
+        ``Exception`` rather than ``Tx402Error``: before S15b only tx402's own errors were
+        suppressed, so an adapter raising an ordinary ``KeyError`` or a driver error from
+        its own transport replaced a precise pre-transmission failure with a stack trace
+        from the cleanup path (O46). ``BaseException`` is deliberately *not* caught —
+        cancellation and ``KeyboardInterrupt`` must still propagate.
         """
-        with suppress(Tx402Error):
+        with suppress(Exception):
             self.spend_store.release(
                 reservation_id=reservation_id, now_epoch_ms=self.clock()
             )
 
-    def ambiguous(
+    def reserve_or_fail(
+        self,
+        *,
+        selection: _Selection,
+        prepared: _Prepared,
+        request_id: str,
+        challenge_hash: str,
+    ) -> tuple[SpendReservation, str]:
+        """:meth:`reserve`, with any store outage converted to a typed failure (O46).
+
+        Nothing has been signed here, so a retry is genuinely safe and ``TransportError`` —
+        the one ``caller-policy`` retryable code — is the honest classification.
+        ``BudgetExceededError`` and anything else already typed pass through untouched: a
+        refused budget is not an outage.
+        """
+        try:
+            return self.reserve(
+                selection=selection,
+                prepared=prepared,
+                request_id=request_id,
+                challenge_hash=challenge_hash,
+            )
+        except Tx402Error:
+            raise
+        except Exception as error:
+            raise TransportError(
+                "The spend store could not take a reservation",
+                context=Tx402ErrorContext(
+                    request_id=request_id,
+                    phase="policy",
+                    amount_atomic=selection.requirement.requirement["amountAtomic"],
+                    asset_id=selection.requirement.asset_id,
+                ),
+                details={
+                    "causeCategory": SPEND_STORE_UNAVAILABLE_CAUSE,
+                    "storeKind": getattr(self.spend_store, "kind", "unknown"),
+                },
+                cause=error,
+            ) from error
+
+    def commit_or_fail(
         self,
         *,
         request_id: str,
         reservation: SpendReservation,
-        cause_category: str,
+        settlement_id: str | None,
+        status: int,
+    ) -> None:
+        """Commits, or converts the store's failure into one honest typed outcome (ADR-017).
+
+        The payment has already settled by the time this runs. A store that cannot record
+        it has broken tx402's *accounting*, not the merchant's *settlement*, and the two
+        must not be conflated:
+
+        - It is **not** a transport failure, and it is not an untyped ``RuntimeError``
+          escaping to the caller, which is what the audit reproduced (O46).
+          ``ResourceDeliveryError`` is ``app-dependent``, so ``retryable`` is ``False``.
+        - ``paid`` is **``True``**, not ``"unknown"``. The merchant's own metadata reported
+          a successful settlement; tx402 knows the money moved and says so.
+        - The reservation is deliberately **not** released. It still counts against the
+          hourly cap until its TTL, which is the conservative direction to be wrong in.
+        """
+        try:
+            self.spend_store.commit(
+                reservation_id=reservation.reservation_id,
+                committed_at_epoch_ms=self.clock(),
+                settlement_id=settlement_id,
+            )
+        except Exception as error:
+            emit(
+                self.logger,
+                "error",
+                {
+                    "event": "request.failed",
+                    "requestId": request_id,
+                    "errorCode": TX402_ERROR_CODES["resource_delivery"],
+                    "phase": "complete",
+                    "paid": True,
+                },
+            )
+            raise ResourceDeliveryError(
+                "The payment settled but the spend store could not record it",
+                context=Tx402ErrorContext(
+                    request_id=request_id,
+                    phase="complete",
+                    paid=True,
+                    reservation_id=reservation.reservation_id,
+                ),
+                details={
+                    "status": status,
+                    "reason": SPEND_STORE_COMMIT_FAILED_REASON,
+                    "reservationExpiresAtEpochMs": reservation.expires_at_epoch_ms,
+                    "storeKind": getattr(self.spend_store, "kind", "unknown"),
+                },
+                cause=error,
+            ) from error
+
+    def unresolved(
+        self,
+        *,
+        request_id: str,
+        reservation: SpendReservation,
+        disposition: PaidAttemptDisposition,
         cause: BaseException | None = None,
-    ) -> AmbiguousPaymentError:
+    ) -> Tx402Error:
+        """The typed error for a signature transmitted without a resolved outcome.
+
+        Which class is raised comes from the disposition's ``error_code``, not from this
+        method: SPEC §6.1 requires a cross-origin redirect to raise
+        ``PaidRedirectBlockedError``, and before S15b the high-level client swallowed it and
+        reported ``AmbiguousPaymentError`` instead (O52). The money disposition is identical
+        either way — retained to TTL — so the fix is an identity fix and nothing more.
+        """
+        context = Tx402ErrorContext(
+            request_id=request_id,
+            phase="retry",
+            paid="unknown",
+            reservation_id=reservation.reservation_id,
+        )
+        cause_category = disposition.cause_category or "unknown"
+
+        if disposition.error_code == TX402_ERROR_CODES["redirect_blocked"]:
+            # SPEC §8 requires ``fromOrigin``/``toOrigin`` on this code, and the block site
+            # already computed them — so they are carried over rather than recomputed.
+            origins = cause.details if isinstance(cause, PaidRedirectBlockedError) else {}
+            return PaidRedirectBlockedError(
+                "Paid retry redirect crossed origins after the signature had been "
+                "transmitted",
+                context=context,
+                details={
+                    "fromOrigin": origins.get("fromOrigin"),
+                    "toOrigin": origins.get("toOrigin"),
+                    "reservationExpiresAtEpochMs": reservation.expires_at_epoch_ms,
+                    "causeCategory": cause_category,
+                },
+                cause=cause,
+            )
+
         return AmbiguousPaymentError(
             "The payment was transmitted but its outcome is unknown",
-            context=Tx402ErrorContext(
-                request_id=request_id,
-                phase="retry",
-                paid="unknown",
-                reservation_id=reservation.reservation_id,
-            ),
+            context=context,
             details={
                 "reservationExpiresAtEpochMs": reservation.expires_at_epoch_ms,
                 "causeCategory": cause_category,
@@ -937,7 +1089,7 @@ class _Core:
         reservation: SpendReservation,
         attempt: int,
         cause: BaseException,
-    ) -> AmbiguousPaymentError:
+    ) -> Tx402Error:
         """A signature-bearing request that never completed (SPEC §6.7).
 
         Routed through the disposition table rather than categorized here, so the category
@@ -948,10 +1100,10 @@ class _Core:
             max_paid_attempts=self.policy.max_paid_attempts,
             result=PaidAttemptResult(kind="transport-failure"),
         )
-        return self.ambiguous(
+        return self.unresolved(
             request_id=request_id,
             reservation=reservation,
-            cause_category=disposition.cause_category or "transport-after-signature",
+            disposition=disposition,
             cause=cause,
         )
 
@@ -973,22 +1125,21 @@ class _Core:
                 max_paid_attempts=self.policy.max_paid_attempts,
                 result=PaidAttemptResult(kind="redirect-blocked"),
             )
-            raise self.ambiguous(
+            raise self.unresolved(
                 request_id=request_id,
                 reservation=reservation,
-                cause_category=disposition.cause_category or "redirect-blocked",
+                disposition=disposition,
                 cause=blocked,
             )
 
-        # PAYMENT-RESPONSE is read *before* the disposition is taken: "the merchant's own
-        # metadata says the settlement failed" is one of the table's inputs, not a check
-        # after the fact.
-        settlement: SettlementEvidence = "unknown"
-        settlement_id: str | None = None
-        if 200 <= response.status_code < 300:
-            settlement, settlement_id = _read_payment_response(
-                response, logger=self.logger, request_id=request_id
-            )
+        # PAYMENT-RESPONSE is read *before* the disposition is taken, and on every status:
+        # "the merchant reports a successful settlement" is one of the table's inputs, not a
+        # check after the fact, and gating the read on 2xx is what hid O44.
+        settlement: SettlementEvidence
+        settlement_id: str | None
+        settlement, settlement_id = _read_payment_response(
+            response, logger=self.logger, request_id=request_id
+        )
 
         disposition = classify_paid_attempt(
             attempt=attempt,
@@ -999,10 +1150,46 @@ class _Core:
         )
 
         if disposition.kind == "ambiguous":
-            raise self.ambiguous(
+            raise self.unresolved(
                 request_id=request_id,
                 reservation=reservation,
-                cause_category=disposition.cause_category or "unknown",
+                disposition=disposition,
+            )
+
+        # SPEC §5.3: the settlement stands and the resource does not. Commit first — the
+        # money moved — and only then report the delivery failure, with ``paid=True``.
+        if disposition.kind == "paid-undelivered":
+            self.commit_or_fail(
+                request_id=request_id,
+                reservation=reservation,
+                settlement_id=settlement_id,
+                status=response.status_code,
+            )
+            emit(
+                self.logger,
+                "warn",
+                {
+                    "event": "payment.completed",
+                    "requestId": request_id,
+                    "paid": True,
+                    "reason": disposition.reason,
+                },
+            )
+            raise ResourceDeliveryError(
+                "The merchant reported a successful settlement but did not deliver "
+                "the resource",
+                context=Tx402ErrorContext(
+                    request_id=request_id,
+                    phase="complete",
+                    paid=True,
+                    reservation_id=reservation.reservation_id,
+                ),
+                details={
+                    "status": response.status_code,
+                    "reason": disposition.reason,
+                    "attempt": attempt,
+                    "maxPaidAttempts": self.policy.max_paid_attempts,
+                },
             )
 
         # Both remaining non-commit dispositions release: the merchant either re-challenged
@@ -1038,10 +1225,11 @@ class _Core:
                 },
             )
 
-        self.spend_store.commit(
-            reservation_id=reservation.reservation_id,
-            committed_at_epoch_ms=self.clock(),
+        self.commit_or_fail(
+            request_id=request_id,
+            reservation=reservation,
             settlement_id=settlement_id,
+            status=response.status_code,
         )
         completed: dict[str, object] = {
             "event": "payment.completed",
@@ -1096,7 +1284,7 @@ def _build_core(
     solana_signer: object,
     policy: Policy | None,
     routing: RoutingPolicy | None,
-    spend_store: MemorySpendStore | None,
+    spend_store: SpendStore | None,
     manifest: Mapping[str, Any],
     clock: Clock,
     evm_rpc_transport: object,
@@ -1106,7 +1294,7 @@ def _build_core(
     disable_request_id_header: bool,
     logger: Tx402Logger,
     monotonic: Monotonic,
-) -> tuple[_Core, MemorySpendStore]:
+) -> tuple[_Core, SpendStore]:
     """Validates configuration synchronously and returns an immutable core (SPEC §4.1)."""
     verified = assert_valid_release_manifest(
         manifest,
@@ -1114,7 +1302,13 @@ def _build_core(
         now_epoch_ms=clock(),
     )
     _validate_retry_timeout(payment_retry_timeout_ms)
-    store = spend_store or MemorySpendStore()
+    # `is None`, not `or`: a perfectly valid adapter that defines `__len__` or `__bool__`
+    # — an empty-at-startup database-backed store is the obvious one — is falsey, and `or`
+    # silently replaced it with an in-memory store, so a fleet-wide cap became per-process
+    # without any error (O54). The structural check then rejects a lookalike loudly rather
+    # than letting duck typing discover the missing method mid-payment.
+    store: SpendStore = MemorySpendStore() if spend_store is None else spend_store
+    assert_spend_store(store)
     core = _Core(
         evm_signer=evm_signer,
         solana_signer=solana_signer,
@@ -1244,7 +1438,7 @@ class Tx402Transport(httpx.BaseTransport):
         core = self._core
         decision = core.decide(challenge, request_id, prepared.host)
         selection = core.plan(decision, request_id, core.clock())
-        reservation, request_hash = core.reserve(
+        reservation, request_hash = core.reserve_or_fail(
             selection=selection,
             prepared=prepared,
             request_id=request_id,
@@ -1395,7 +1589,7 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
         core = self._core
         decision = core.decide(challenge, request_id, prepared.host)
         selection = await core.plan_async(decision, request_id, core.clock())
-        reservation, request_hash = core.reserve(
+        reservation, request_hash = core.reserve_or_fail(
             selection=selection,
             prepared=prepared,
             request_id=request_id,
@@ -1456,7 +1650,7 @@ class Tx402Client:
         solana_signer: object = None,
         policy: Policy | None = None,
         routing: RoutingPolicy | None = None,
-        spend_store: MemorySpendStore | None = None,
+        spend_store: SpendStore | None = None,
         transport: httpx.BaseTransport | None = None,
         evm_rpc_transport: httpx.BaseTransport | None = None,
         solana_rpc_transport: httpx.BaseTransport | None = None,
@@ -1548,7 +1742,7 @@ class AsyncTx402Client:
         solana_signer: object = None,
         policy: Policy | None = None,
         routing: RoutingPolicy | None = None,
-        spend_store: MemorySpendStore | None = None,
+        spend_store: SpendStore | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         evm_rpc_transport: httpx.AsyncBaseTransport | None = None,
         solana_rpc_transport: httpx.AsyncBaseTransport | None = None,

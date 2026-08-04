@@ -3,9 +3,9 @@
   "id": "completion.paid-attempt.ambiguous-after-transmission",
   "kind": "completion.paid-attempt",
   "milestone": "M6",
-  "title": "Every unknown outcome retains the reservation, whatever its cause",
-  "description": "T-011 and T-012 in one table. A transmission that never completed, a cross-origin redirect refused after the signature had already reached the merchant, and a 5xx are three different causes with one disposition: the outcome is unknown, so the reservation is held to its TTL. Each reports a distinct causeCategory so a caller can tell them apart without any of them changing what happens to the money. All three are given attempt 1 of 3 deliberately: an ambiguous outcome does not consume the remaining attempts, it ends the loop, because retrying could pay twice.",
-  "spec": ["SPEC \u00a76.7", "SEC-005", "SPEC T-011", "SPEC T-012"],
+  "title": "Every unresolved outcome retains the reservation, whatever its cause",
+  "description": "T-011 and T-012 in one table. A transmission that never completed, a cross-origin redirect refused after the signature had already reached the merchant, and a 5xx are three different causes with one money disposition: the outcome is unknown, so the reservation is held to its TTL. Each reports a distinct causeCategory so a caller can tell them apart without any of them changing what happens to the money. The redirect case is the one that changed at S15b: its money disposition is unchanged, but its public error code is TX402_REDIRECT_BLOCKED, because SPEC \u00a76.1 names that error for a cross-origin redirect and the high-level client was reporting a generic ambiguity instead (O52). Kind and errorCode are separate fields precisely so one can move without the other. All three are given attempt 1 of 3 deliberately: an unresolved outcome does not consume the remaining attempts, it ends the loop, because retrying could pay twice.",
+  "spec": ["SPEC \u00a76.1", "SPEC \u00a76.7", "SEC-005", "SPEC T-011", "SPEC T-012"],
   "input": {
     "maxPaidAttempts": 3,
     "attempts": [
@@ -26,7 +26,7 @@
         "result": {
           "kind": "response",
           "status": 503,
-          "settlement": "unknown"
+          "settlement": "absent"
         }
       }
     ]
@@ -42,7 +42,7 @@
       {
         "kind": "ambiguous",
         "reservation": "retained",
-        "errorCode": "TX402_PAYMENT_AMBIGUOUS",
+        "errorCode": "TX402_REDIRECT_BLOCKED",
         "causeCategory": "redirect-blocked"
       },
       {

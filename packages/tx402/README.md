@@ -42,18 +42,34 @@ wrong — not a bare `402`.
 
 ## Install
 
+Node 20 or newer. Chain support sits behind optional subpath exports, and the chain runtimes are
+**optional peer dependencies** — npm is deliberately told not to install them, which is what keeps
+`import "tx402"` free of any chain library. That also means the install command depends on which
+chain you pay on:
+
 ```bash
-npm install tx402
+npm install tx402                                                   # core + CLI, no chain
+npm install tx402 @x402/evm viem                                    # Base / EVM
+npm install tx402 @solana-program/token @solana/kit @x402/svm viem  # Solana
 ```
 
-Node 20 or newer. Chain support sits behind optional subpath exports, so importing `tx402` loads no
-chain library at all:
+Each row is the exact set its entry points need at import time:
+
+| Import          | Needs                                                 |
+| --------------- | ----------------------------------------------------- |
+| `tx402`         | nothing beyond the package                            |
+| `tx402/evm`     | `@x402/evm`, `viem`                                   |
+| `tx402/solana`  | `@x402/svm`, `@solana/kit`, `@solana-program/token`   |
+| `tx402/signers` | `viem` (its Solana helper loads `@solana/kit` lazily) |
 
 ```ts
 import { privateKeyToEvmSigner } from "tx402/signers"; // dev convenience — warns on stderr
 import { createEvmChainAdapter } from "tx402/evm"; // viem / @x402/evm
 import { createSvmChainAdapter } from "tx402/solana"; // @solana/kit / @x402/svm
 ```
+
+Every row above is smoke-installed from a packed tarball into an empty directory before release, so
+"the README says it works" and "it works" are the same statement.
 
 `EvmSigner` and `SolanaSigner` are two-method interfaces declared in the core path, so a KMS or
 hardware signer is a first-class citizen rather than an escape hatch.

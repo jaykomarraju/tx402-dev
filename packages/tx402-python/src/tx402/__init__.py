@@ -44,6 +44,8 @@ from tx402.chain import (
     load_chain_adapter,
 )
 from tx402.client import (
+    SPEND_STORE_COMMIT_FAILED_REASON,
+    SPEND_STORE_UNAVAILABLE_CAUSE,
     AsyncTx402Client,
     AsyncTx402Transport,
     PaymentInspection,
@@ -52,7 +54,9 @@ from tx402.client import (
     Tx402Transport,
 )
 from tx402.completion import (
+    MALFORMED_SETTLEMENT_CAUSE,
     MAX_PAID_ATTEMPTS_REASON,
+    SETTLED_RESOURCE_UNUSABLE_REASON,
     PaidAttemptDisposition,
     PaidAttemptResult,
     classify_paid_attempt,
@@ -115,6 +119,8 @@ from tx402.ledger import (
     MemorySpendStore,
     SpendEntry,
     SpendReservation,
+    SpendStore,
+    assert_spend_store,
 )
 from tx402.manifest import (
     assert_valid_release_manifest,
@@ -143,6 +149,7 @@ from tx402.policy import (
     PolicyEngine,
     PolicyRequirement,
     RoutingPolicy,
+    normalize_policy_host,
 )
 from tx402.routing import (
     RouteCandidate,
@@ -151,6 +158,7 @@ from tx402.routing import (
     plan_routes,
     plan_routes_async,
 )
+from tx402.spend_store_contract import SpendStoreContractError, check_spend_store
 from tx402.trusted_keys import MANIFEST_SIGNING_DOMAIN, TRUSTED_MANIFEST_KEYS
 
 __all__ = [
@@ -158,6 +166,7 @@ __all__ = [
     "EVENT_NAMES",
     "HEALTH_NEW_ENDPOINT_SCORE",
     "HEALTH_OPEN_MS",
+    "MALFORMED_SETTLEMENT_CAUSE",
     "MANIFEST_SIGNING_DOMAIN",
     "MAX_AUTHORIZATION_SECONDS",
     "MAX_PAID_ATTEMPTS_REASON",
@@ -170,6 +179,9 @@ __all__ = [
     "RESERVATION_TTL_MS",
     "RESERVED_REQUEST_HEADERS",
     "ROLLING_WINDOW_MS",
+    "SETTLED_RESOURCE_UNUSABLE_REASON",
+    "SPEND_STORE_COMMIT_FAILED_REASON",
+    "SPEND_STORE_UNAVAILABLE_CAUSE",
     "TRUSTED_MANIFEST_KEYS",
     "TX402_ERROR_CODES",
     "TX402_ERROR_DESCRIPTORS",
@@ -222,6 +234,8 @@ __all__ = [
     "SignerError",
     "SpendEntry",
     "SpendReservation",
+    "SpendStore",
+    "SpendStoreContractError",
     "TransportError",
     "Tx402Client",
     "Tx402Error",
@@ -231,8 +245,10 @@ __all__ = [
     "Tx402Transport",
     "UnsupportedProtocolError",
     "UnsupportedSchemeError",
+    "assert_spend_store",
     "assert_valid_release_manifest",
     "chain_family",
+    "check_spend_store",
     "classify_paid_attempt",
     "create_evm_authorization",
     "create_evm_chain_adapter",
@@ -240,6 +256,7 @@ __all__ = [
     "format_money_decimal",
     "is_tx402_error",
     "load_chain_adapter",
+    "normalize_policy_host",
     "order_route_candidates",
     "parse_money_atomic",
     "parse_positive_money_atomic",

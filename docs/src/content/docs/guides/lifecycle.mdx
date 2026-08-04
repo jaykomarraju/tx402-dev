@@ -88,9 +88,22 @@ moved, and the same dollar could then be spent again inside the same hour.
 | Planning                  | No viable route                        | none taken   | `TX402_LIQUIDITY` with per-network deficits     |
 | Planning                  | No signer for any offered chain        | none taken   | `TX402_SCHEME_UNSUPPORTED`                      |
 | Signing                   | Signer refused or returned garbage     | **released** | `TX402_SIGNER`                                  |
-| After transmission        | Timeout, reset, 5xx, 3xx               | **retained** | `TX402_PAYMENT_AMBIGUOUS`                       |
+| After transmission        | Timeout, reset, 5xx, same-origin 3xx   | **retained** | `TX402_PAYMENT_AMBIGUOUS`                       |
+| After transmission        | Cross-origin redirect (SEC-005)        | **retained** | `TX402_REDIRECT_BLOCKED`, `paid: "unknown"`     |
+| After transmission        | `PAYMENT-RESPONSE` present, undecodable | **retained** | `TX402_PAYMENT_AMBIGUOUS`, `settlement-metadata-unparseable` |
+| Refused, no settlement    | 4xx with no `PAYMENT-RESPONSE`         | **released** | `TX402_RESOURCE_DELIVERY`, `paid: false`        |
 | Delivered, not settled    | `success: false` in `PAYMENT-RESPONSE` | **released** | `TX402_RESOURCE_DELIVERY`                       |
-| Settled, resource refused | 403 after payment                      | **released** | `TX402_RESOURCE_DELIVERY`                       |
+| Settled, resource refused | 403 **with** a successful settlement   | **committed** | `TX402_RESOURCE_DELIVERY`, `paid: true`        |
+| Settled, ledger write failed | Your spend store rejected the commit | **retained** | `TX402_RESOURCE_DELIVERY`, `paid: true`         |
+
+**The last three rows are the ones worth reading twice**, and an earlier revision of this
+page had the third of them wrong — it said a settled 403 releases (the S15 audit's O44).
+Settlement evidence outranks the status line: if the merchant's own `PAYMENT-RESPONSE`
+reports a successful settlement, the money moved, so the spend is **committed** and you are
+told `paid: true` whatever the status line said. The same 403 with no settlement claim is a
+refusal and releases. And a settled payment whose ledger write fails is still a settled
+payment, so it is reported `paid: true` and is never retryable — retrying is the one action
+that can pay twice. See ADR-016 and ADR-017.
 
 `TX402_LIQUIDITY` and `TX402_SCHEME_UNSUPPORTED` are deliberately different errors. "Everything
 was attempted and fell short" and "nothing was even attempted" send an operator to two

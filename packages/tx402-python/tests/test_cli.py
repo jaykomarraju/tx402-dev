@@ -12,7 +12,14 @@ enough to cover all nine exit codes. The one thing that genuinely needs a proces
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Any, Literal
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - exercised only on the 3.10 CI leg
+    import tomli as tomllib
 
 import httpx
 import pytest
@@ -127,10 +134,19 @@ class TestArgumentParsing:
         assert run_cli(harness) == EXIT_CODES["success"]
         assert "tx402 call <URL>" in harness.stdout_text
 
-    def test_reports_the_version(self) -> None:
+    def test_reports_the_version_the_package_actually_declares(self) -> None:
+        """Read from ``pyproject.toml``, not from ``tx402._version``.
+
+        Comparing the CLI's output against the generated module it already prints would
+        prove only that the module equals itself. Until S15b this asserted the literal
+        ``0.0.0``, so a correctly tagged 0.1.0 would have shipped a console script
+        identifying itself as 0.0.0 and the test would still have been green (O51).
+        """
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        declared = tomllib.loads(pyproject.read_text())["project"]["version"]
         harness = Harness(["--version"])
         assert run_cli(harness) == EXIT_CODES["success"]
-        assert "tx402 0.0.0" in harness.stdout_text
+        assert harness.stdout_text == f"tx402 {declared}\n"
 
     def test_rejects_an_unknown_command(self) -> None:
         harness = Harness(["fetch", URL])
@@ -217,14 +233,24 @@ class TestExitCodeMapping:
         assert used == set(EXIT_CODES.values()) - {EXIT_CODES["success"]}
         assert 1 not in set(EXIT_CODES.values())
 
-    def test_keeps_ambiguous_payment_on_its_own_code_so_a_script_can_stop(self) -> None:
-        ambiguous = TX402_ERROR_CODES["payment_ambiguous"]
-        assert EXIT_CODE_BY_ERROR[ambiguous] == EXIT_CODES["ambiguous_payment"]
-        assert [
+    def test_reserves_exit_code_eight_for_outcomes_that_may_pay_twice(self) -> None:
+        """8 is the "stop, money may have moved" code.
+
+        It is shared by exactly the two errors reachable only *after* a signature was
+        transmitted. The blocked cross-origin redirect joined it at S15b: ADR-014 always
+        described it as exit 8, the table said 9, and O52 made the error reachable from the
+        high-level client at all.
+        """
+        assert sorted(
             code
             for code, exit_code in EXIT_CODE_BY_ERROR.items()
             if exit_code == EXIT_CODES["ambiguous_payment"]
-        ] == [ambiguous]
+        ) == sorted(
+            [
+                TX402_ERROR_CODES["payment_ambiguous"],
+                TX402_ERROR_CODES["redirect_blocked"],
+            ]
+        )
 
     def test_matches_the_typescript_table_row_for_row(self) -> None:
         """The two CLIs are one exit-code contract; a divergence here breaks a script."""
@@ -243,7 +269,7 @@ class TestExitCodeMapping:
             "TX402_TRANSPORT": 7,
             "TX402_PAYMENT_AMBIGUOUS": 8,
             "TX402_RESOURCE_DELIVERY": 9,
-            "TX402_REDIRECT_BLOCKED": 9,
+            "TX402_REDIRECT_BLOCKED": 8,
         }
         assert dict(EXIT_CODE_BY_ERROR) == expected
 

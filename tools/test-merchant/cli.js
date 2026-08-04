@@ -43,6 +43,9 @@ Options:
   --scenario <name>       default: pay-once
   --port <n>              default: 0 (ephemeral)
   --requirements <list>   comma-separated: ${Object.keys(DEFAULT_REQUIREMENTS).join(", ")}
+  --facilitator <url>     settle for real through this x402 facilitator, e.g.
+                          https://x402.org/facilitator — without it PAYMENT-RESPONSE is
+                          deterministic and no money moves
 
 Scenarios:
 ${Object.entries(SCENARIOS)
@@ -73,11 +76,20 @@ const merchant = await createTestMerchant({
   scenario: flags.scenario ?? "pay-once",
   port: Number(flags.port ?? 0),
   requirements: requirementKeys.map((key) => DEFAULT_REQUIREMENTS[key]),
+  // Exposed so the documented quickstart can reach a *settled* payment without a public
+  // demo merchant. `tools/ttv` has used this since S12; leaving it off the CLI meant the
+  // quickstart could not offer a merchant URL that actually moves money (PLAN.md O50).
+  ...(flags.facilitator === undefined ? {} : { facilitatorUrl: flags.facilitator }),
 });
 
 // One line, flushed immediately: the harness blocks on this to learn the ephemeral port.
 console.log(
-  JSON.stringify({ url: merchant.url, port: merchant.port, scenario: merchant.scenario }),
+  JSON.stringify({
+    url: merchant.url,
+    port: merchant.port,
+    scenario: merchant.scenario,
+    settles: flags.facilitator !== undefined,
+  }),
 );
 
 const shutdown = () => {

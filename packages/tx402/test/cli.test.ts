@@ -7,6 +7,10 @@
  * `process.exitCode` — live in `cli/index.ts` and are deliberately not exercised here.
  */
 
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { createEvmRpcStub, type EvmRpcStub } from "@tx402-dev/evm-rpc-stub";
 import { createTestMerchant } from "@tx402-dev/test-merchant";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -122,10 +126,33 @@ describe("argument parsing", () => {
     expect(harness.err.join("")).toBe("");
   });
 
-  it("reports the version", async () => {
+  it("reports the version the package actually declares", async () => {
+    // Read from `package.json` rather than from `src/version.ts`, so the generated module
+    // cannot be self-consistently wrong. Until S15b the CLI printed a `0.0.0` literal that
+    // nothing compared against anything, and a correctly tagged 0.1.0 would have shipped a
+    // binary identifying itself as 0.0.0 (O51).
+    const manifest = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
     const harness = io(["--version"]);
     expect(await run(harness)).toBe(EXIT_CODES.success);
-    expect(harness.out.join("")).toMatch(/^tx402 /u);
+    expect(harness.out.join("")).toBe(`tx402 ${manifest.version}\n`);
+  });
+
+  it("fails the version gate when a supplied version disagrees", () => {
+    // The negative half. A gate that only ever runs against agreeing inputs proves nothing;
+    // this is the shape the release workflow uses to bind the git tag to the package.
+    const tool = fileURLToPath(
+      new URL("../../../tools/version-sync/index.js", import.meta.url),
+    );
+    const drifted = spawnSync(process.execPath, [tool, "check", "--expect", "9.9.9"], {
+      encoding: "utf8",
+    });
+    expect(drifted.status).toBe(1);
+    expect(drifted.stderr).toContain("does not match the package version");
+
+    const agreeing = spawnSync(process.execPath, [tool, "check"], { encoding: "utf8" });
+    expect(agreeing.status).toBe(0);
   });
 
   it("rejects an unknown command", async () => {
@@ -224,10 +251,18 @@ describe("exit code mapping (SPEC §11)", () => {
     );
   });
 
-  it("keeps ambiguous payment on its own code so a script can stop", () => {
-    // 8 must not be shared: it is the one outcome where retrying may pay twice.
-    const eights = Object.entries(EXIT_CODE_BY_ERROR).filter(([, v]) => v === 8);
-    expect(eights).toEqual([[TX402_ERROR_CODES.paymentAmbiguous, 8]]);
+  it("reserves exit code 8 for the outcomes where retrying may pay twice", () => {
+    // 8 is the "stop, money may have moved" code, and it is shared by exactly the two
+    // errors that can only be reached *after* a signature was transmitted. The blocked
+    // cross-origin redirect joined it at S15b: ADR-014 always described it as exit 8, the
+    // table said 9, and O52 made the error reachable from the high-level client at all.
+    const eights = Object.entries(EXIT_CODE_BY_ERROR)
+      .filter(([, code]) => code === 8)
+      .map(([error]) => error)
+      .sort();
+    expect(eights).toEqual(
+      [TX402_ERROR_CODES.paymentAmbiguous, TX402_ERROR_CODES.redirectBlocked].sort(),
+    );
   });
 
   it("exits 3 when local policy refuses", async () => {

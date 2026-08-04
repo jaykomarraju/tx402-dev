@@ -65,8 +65,24 @@ jobs:
           printf '/  /docs/  302\n' > deploy/_redirects
           test -f deploy/docs/index.html
 
-      # Skipped rather than failed when the token is absent, so a fork or a pre-setup branch
-      # still gets the build-and-check signal above without a red run it cannot fix.
+      # **A missing token on `main` is a failure, not a skip** (PLAN.md O49). It used to be a
+      # notice, so the workflow went green while nothing was published and the Documentation
+      # URL both packages advertise stayed dead. On a fork or a branch the build-and-check
+      # signal above is still worth having without a red run nobody can fix, so the fail-
+      # closed rule is scoped to pushes to `main` on this repository.
+      - name: A deploy from main requires the deploy credentials
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not configured, so tx402.dev/docs cannot" \
+                 "be published. SPEC §12.4 makes published documentation a release gate;" \
+                 "a silent skip here is what let a release ship with dead Documentation URLs."
+            exit 1
+          fi
+
       - name: Deploy to Cloudflare Pages
         if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
         env:
@@ -78,10 +94,19 @@ jobs:
             --branch "${GITHUB_REF_NAME}" \
             --commit-dirty=true
 
+      # Deploying is not publishing. The audit found a live deploy behind a registrar
+      # redirect that landed on a 404, so the site is read back over the public internet at
+      # the URL the packages actually advertise.
+      - name: The published site is reachable
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node tools/docs-live/index.js check
+
       - name: Report when the deploy was skipped
         if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           echo "::notice::Site built and verified, but CLOUDFLARE_API_TOKEN is not set," \
-               "so nothing was deployed. Add the secret to publish to tx402.dev/docs."
+               "so nothing was deployed. This is permitted only off main."

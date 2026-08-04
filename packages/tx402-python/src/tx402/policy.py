@@ -18,7 +18,7 @@ from tx402.errors import (
     Tx402ErrorContext,
     UnsupportedSchemeError,
 )
-from tx402.ledger import MemorySpendStore
+from tx402.ledger import SpendStore
 from tx402.manifest import require_network
 from tx402.money import MoneyAssetMetadata, MoneyParseError, parse_positive_money_atomic
 
@@ -330,7 +330,7 @@ class PolicyEngine:
         request_id: str,
         policy_scope: str,
         now_epoch_ms: int,
-        spend_store: MemorySpendStore,
+        spend_store: SpendStore,
     ) -> PolicyDecision:
         context = Tx402ErrorContext(request_id=request_id, phase="policy")
         host = self.assert_domain(payment_required["resource"]["url"], request_id, "policy")

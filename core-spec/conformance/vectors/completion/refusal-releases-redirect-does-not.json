@@ -14,7 +14,7 @@
         "result": {
           "kind": "response",
           "status": 403,
-          "settlement": "unknown"
+          "settlement": "absent"
         }
       },
       {
@@ -30,7 +30,7 @@
         "result": {
           "kind": "response",
           "status": 307,
-          "settlement": "unknown"
+          "settlement": "absent"
         }
       }
     ]

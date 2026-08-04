@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Final
 from urllib.parse import urlsplit
 
+from tx402._version import PACKAGE_VERSION
 from tx402.errors import TX402_ERROR_CODES, Tx402Error
 from tx402.meta import PACKAGE_NAME, PROJECT_URLS
 
@@ -71,7 +72,11 @@ EXIT_CODE_BY_ERROR: Final[Mapping[str, int]] = {
     TX402_ERROR_CODES["transport"]: EXIT_CODES["transport"],
     TX402_ERROR_CODES["payment_ambiguous"]: EXIT_CODES["ambiguous_payment"],
     TX402_ERROR_CODES["resource_delivery"]: EXIT_CODES["resource_failure"],
-    TX402_ERROR_CODES["redirect_blocked"]: EXIT_CODES["resource_failure"],
+    # Reachable only *after* the signature has been transmitted (SPEC §6.1, ADR-014): the
+    # block stops the follow-up request, not the original one, so money may already have
+    # moved and the reservation is retained. That is exactly what `8` means, and ADR-014
+    # said so in prose while this table said `9`. Corrected at S15b alongside O52.
+    TX402_ERROR_CODES["redirect_blocked"]: EXIT_CODES["ambiguous_payment"],
 }
 
 
@@ -561,7 +566,7 @@ def run_cli(io: CliIo) -> int:
             io.stdout(f"{USAGE}\n")
             return EXIT_CODES["success"]
         if parsed.kind == "version":
-            io.stdout(f"{PACKAGE_NAME} 0.0.0\n")
+            io.stdout(f"{PACKAGE_NAME} {PACKAGE_VERSION}\n")
             return EXIT_CODES["success"]
 
         options = parsed.options

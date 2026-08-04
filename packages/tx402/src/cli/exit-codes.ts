@@ -64,7 +64,12 @@ export const EXIT_CODE_BY_ERROR: Record<Tx402ErrorCode, ExitCode> = {
   [TX402_ERROR_CODES.paymentAmbiguous]: EXIT_CODES.ambiguousPayment,
 
   [TX402_ERROR_CODES.resourceDelivery]: EXIT_CODES.resourceFailure,
-  [TX402_ERROR_CODES.redirectBlocked]: EXIT_CODES.resourceFailure,
+  // Reachable only *after* the signature has been transmitted (SPEC §6.1, ADR-014): the
+  // block stops the follow-up request, not the original one, so money may already have
+  // moved and the reservation is retained. That is exactly what `8` means, and ADR-014
+  // said so in prose while the table said `9`. Corrected at S15b alongside O52, which made
+  // this error reachable from the high-level client at all.
+  [TX402_ERROR_CODES.redirectBlocked]: EXIT_CODES.ambiguousPayment,
 };
 
 /** Raised for a bad invocation, before the SDK is reached. Always exit code 2. */

@@ -18,6 +18,7 @@ import { isTx402Error, type Tx402Error } from "../core/errors.js";
 import type { Tx402Signers } from "../core/signers.js";
 import { formatMoneyDecimal } from "../core/money.js";
 import { PACKAGE_NAME, PROJECT_URLS } from "../meta.js";
+import { PACKAGE_VERSION } from "../version.js";
 import { parseArgs, type CallOptions } from "./args.js";
 import { EXIT_CODES, UsageError, exitCodeFor, type ExitCode } from "./exit-codes.js";
 
@@ -295,7 +296,7 @@ export async function run(io: CliIo): Promise<ExitCode> {
       return EXIT_CODES.success;
     }
     if (parsed.kind === "version") {
-      io.stdout(`${PACKAGE_NAME} 0.0.0\n`);
+      io.stdout(`${PACKAGE_NAME} ${PACKAGE_VERSION}\n`);
       return EXIT_CODES.success;
     }
     options = parsed.options;

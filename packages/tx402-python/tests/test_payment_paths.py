@@ -32,6 +32,7 @@ from tx402 import (
     InsufficientLiquidityError,
     InvalidPaymentRequiredError,
     MemorySpendStore,
+    PaidRedirectBlockedError,
     Policy,
     ResourceDeliveryError,
     RoutingPolicy,
@@ -475,9 +476,17 @@ class TestRechallengeLoop:
         state = budget(store, f"{BASE}/erc20:{BASE_ASSET}")
         assert [item.state for item in state.reservations] == ["reserved"]
 
-    def test_t012_a_cross_origin_redirect_is_blocked_and_stays_ambiguous(self) -> None:
-        """SEC-005 stopped the follow-up, not the original transmission — the merchant
-        already has the signature and may well have settled against it.
+    def test_t012_a_cross_origin_redirect_raises_paid_redirect_blocked(self) -> None:
+        """SPEC §6.1: "Cross-origin redirect raises ``PaidRedirectBlockedError``."
+
+        Two separate facts, and the audit's O52 was that only one of them held. The
+        **money** fact is that SEC-005 stopped the follow-up, not the original transmission
+        — the merchant already has the signature and may well have settled against it — so
+        the reservation is retained. The **identity** fact is that SPEC §6.1 and ADR-014
+        both name ``PaidRedirectBlockedError``, and the high-level client used to catch it
+        and re-raise a generic ``AmbiguousPaymentError``, so the class the specification
+        promises was unreachable from the only entry point callers use. The error still
+        carries the origins SPEC §8 requires of its code.
         """
         merchant = Merchant(
             paid_statuses=[307, 200],
@@ -486,9 +495,14 @@ class TestRechallengeLoop:
         store = MemorySpendStore()
         with (
             client(merchant, spend_store=store, policy=Policy(max_paid_attempts=3)) as sdk,
-            pytest.raises(AmbiguousPaymentError) as raised,
+            pytest.raises(PaidRedirectBlockedError) as raised,
         ):
             sdk.get(URL)
+        assert raised.value.code == "TX402_REDIRECT_BLOCKED"
+        assert raised.value.retryable is False
+        assert raised.value.context.paid == "unknown"
+        assert raised.value.details["fromOrigin"] == "https://merchant.test"
+        assert raised.value.details["toOrigin"] == "https://elsewhere.test"
         assert raised.value.details["causeCategory"] == "redirect-blocked"
         assert raised.value.__cause__ is not None
         assert merchant.paid == 1

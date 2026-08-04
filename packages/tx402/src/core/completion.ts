@@ -22,6 +22,12 @@
  * is still asking to be paid — which is why a re-challenge releases while a 5xx retains.
  * Releasing on anything ambiguous would let the same money be spent twice against the
  * hourly cap.
+ *
+ * **S15b (ADR-016) made that asymmetry actually hold.** Until then the status line was
+ * consulted first, so a 403 carrying a successful `PAYMENT-RESPONSE` released the
+ * reservation and reported the call unpaid — the audit's O44. Settlement evidence is now
+ * read on every status and outranks the status line, and a present-but-undecodable header
+ * is its own fourth evidence value rather than being folded into "absent".
  */
 
 import { TX402_ERROR_CODES, type Tx402ErrorCode } from "./errors.js";
@@ -32,11 +38,21 @@ export const MAX_PAID_ATTEMPTS_REASON = "max-paid-attempts-exhausted";
 /**
  * What the merchant's PAYMENT-RESPONSE proves about settlement.
  *
- * `"unknown"` covers both an absent header and one that does not decode. Neither is
- * evidence in either direction, and conflating either with `"unsuccessful"` would refuse
- * a resource the merchant did deliver.
+ * Four values, not three. Until S15b `"unknown"` covered both an absent header and one
+ * that does not decode, and the audit's O53 showed why that conflation is wrong: SPEC §6.7
+ * accepts *missing* metadata because the pinned upstream protocol marks the header
+ * optional, and says a 2xx is paid-success "only when any required upstream
+ * PAYMENT-RESPONSE parses successfully". A header the merchant chose not to send and a
+ * header the merchant sent in a form tx402 cannot read are different facts, and only the
+ * first is one the specification forgives. See ADR-016.
+ *
+ * - `"success"` — decoded, and `success: true`.
+ * - `"unsuccessful"` — decoded, and `success: false`. The merchant says it did not settle.
+ * - `"absent"` — no header at all. Permitted; a diagnostic warning is emitted.
+ * - `"malformed"` — a header is present and does not decode. A protocol violation, and
+ *   never evidence in either direction, so it can neither commit nor release.
  */
-export type SettlementEvidence = "success" | "unsuccessful" | "unknown";
+export type SettlementEvidence = "success" | "unsuccessful" | "absent" | "malformed";
 
 /** How the one signature-bearing request of an attempt ended. */
 export type PaidAttemptResult =
@@ -59,7 +75,14 @@ export interface PaidAttemptInput {
   readonly result: PaidAttemptResult;
 }
 
-/** Terminal, with the outcome unknown. The reservation is held to its TTL. */
+/**
+ * Terminal, with the outcome unknown. The reservation is held to its TTL.
+ *
+ * `errorCode` is not always `TX402_PAYMENT_AMBIGUOUS`. The *kind* is the money
+ * disposition; the *code* is the public error identity, and SPEC §6.1 names a specific one
+ * for a cross-origin redirect. Keeping them as two fields is what let S15b fix O52 without
+ * touching what happens to the money.
+ */
 export interface AmbiguousDisposition {
   readonly kind: "ambiguous";
   readonly reservation: "retained";
@@ -80,7 +103,24 @@ export type PaidAttemptDisposition =
       readonly errorCode: Tx402ErrorCode;
       readonly reason: string;
     }
+  /**
+   * The merchant's own metadata reports a successful settlement and the resource response
+   * is unusable (SPEC §5.3). The money moved, so the spend is **committed** and the caller
+   * is told `paid: true` — the one disposition that both commits and throws.
+   */
+  | {
+      readonly kind: "paid-undelivered";
+      readonly reservation: "committed";
+      readonly errorCode: Tx402ErrorCode;
+      readonly reason: string;
+    }
   | AmbiguousDisposition;
+
+/** SPEC §5.3: settlement succeeded, resource unusable. Recorded in ADR-016. */
+export const SETTLED_RESOURCE_UNUSABLE_REASON = "settlement-succeeded-resource-unusable";
+
+/** ADR-016: a present PAYMENT-RESPONSE that does not decode is never evidence. */
+export const MALFORMED_SETTLEMENT_CAUSE = "settlement-metadata-unparseable";
 
 const COMMIT: PaidAttemptDisposition = Object.freeze({
   kind: "commit",
@@ -101,13 +141,29 @@ function failed(reason: string): PaidAttemptDisposition {
   });
 }
 
-function ambiguous(causeCategory: string): AmbiguousDisposition {
+function paidUndelivered(reason: string): PaidAttemptDisposition {
+  return Object.freeze({
+    kind: "paid-undelivered",
+    reservation: "committed",
+    errorCode: TX402_ERROR_CODES.resourceDelivery,
+    reason,
+  });
+}
+
+function ambiguous(
+  causeCategory: string,
+  errorCode: Tx402ErrorCode = TX402_ERROR_CODES.paymentAmbiguous,
+): AmbiguousDisposition {
   return Object.freeze({
     kind: "ambiguous",
     reservation: "retained",
-    errorCode: TX402_ERROR_CODES.paymentAmbiguous,
+    errorCode,
     causeCategory,
   });
+}
+
+function isSuccessStatus(status: number): boolean {
+  return status >= 200 && status < 300;
 }
 
 /**
@@ -134,8 +190,25 @@ export function classifyPaidAttempt(input: PaidAttemptInput): PaidAttemptDisposi
   if (result.kind === "transport-failure") return ambiguous("transport-after-signature");
 
   // SEC-005 stopped the *follow-up*, not the original transmission. The merchant already
-  // has the signature and may well have settled against it.
-  if (result.kind === "redirect-blocked") return ambiguous("redirect-blocked");
+  // has the signature and may well have settled against it, so the reservation is retained
+  // — but the public error is the one SPEC §6.1 names, not a generic ambiguity (O52).
+  if (result.kind === "redirect-blocked")
+    return ambiguous("redirect-blocked", TX402_ERROR_CODES.redirectBlocked);
+
+  // **Settlement evidence outranks the status line** (SPEC §5.3, O44). A merchant that
+  // reports a successful settlement has said the money moved; whether it then managed to
+  // hand over the resource is a separate fact. Releasing the reservation here would give
+  // back budget for a payment that really happened, and an autonomous caller would be free
+  // to pay for the same thing again. This is checked before every status branch precisely
+  // so no status can reach a branch that releases.
+  if (result.settlement === "success" && !isSuccessStatus(result.status))
+    return paidUndelivered(SETTLED_RESOURCE_UNUSABLE_REASON);
+
+  // A present header that does not decode is a protocol violation and is evidence of
+  // nothing (ADR-016). It cannot commit — SPEC §6.7 makes parsing a precondition of
+  // paid-success — and it must not release, because the merchant plainly attempted to
+  // report a settlement. Retention is the only disposition left, on any status.
+  if (result.settlement === "malformed") return ambiguous(MALFORMED_SETTLEMENT_CAUSE);
 
   if (result.status === 402) {
     // Checked here rather than as a loop guard: an exhausted budget of attempts must be a
@@ -157,13 +230,17 @@ export function classifyPaidAttempt(input: PaidAttemptInput): PaidAttemptDisposi
   if (result.status >= 300 && result.status < 400)
     return ambiguous("redirect-not-followed");
 
-  // Any other non-2xx is the merchant declining the request outright. Declining is a
-  // statement that it did not settle.
-  if (result.status < 200 || result.status >= 300) return failed("paid-request-rejected");
+  // Any other non-2xx is the merchant declining the request outright, *without* claiming a
+  // settlement — the success case was taken above. Declining is a statement that it did
+  // not settle.
+  if (!isSuccessStatus(result.status)) return failed("paid-request-rejected");
 
   // A 2xx whose own PAYMENT-RESPONSE says `success: false` is a merchant contradicting
   // itself. tx402 believes the payment metadata, not the status line.
   if (result.settlement === "unsuccessful") return failed("settlement-unsuccessful");
 
+  // `"success"` and `"absent"` both land here. Absent is permitted because the pinned
+  // upstream protocol marks the header optional (SPEC §6.7); a warning is emitted at the
+  // read site rather than changing the money.
   return COMMIT;
 }

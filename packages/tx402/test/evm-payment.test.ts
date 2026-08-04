@@ -411,7 +411,7 @@ describe("M3 payment path edge cases", () => {
     expect(tx402.getBudgetState().committedAtomic).toBe("0");
   });
 
-  it("delivers with a warning when PAYMENT-RESPONSE cannot be decoded", async () => {
+  it("refuses delivery when PAYMENT-RESPONSE is present and cannot be decoded", async () => {
     await merchant.close();
     merchant = await createTestMerchant({
       scenario: "corrupt-payment-response",
@@ -427,21 +427,26 @@ describe("M3 payment path edge cases", () => {
     };
 
     const tx402 = client({ logger });
-    await expect(tx402.fetch(`${merchant.url}/resource`)).resolves.toHaveProperty(
-      "status",
-      200,
-    );
 
-    // A response tx402 cannot parse is not evidence in either direction; the resource was
-    // delivered, so the spend is committed and the ambiguity is reported, not guessed at.
+    // SPEC §6.7 makes a 2xx paid-success "only when any required upstream PAYMENT-RESPONSE
+    // parses successfully". A header that is present and does not decode is a protocol
+    // violation and is evidence in neither direction — so it cannot commit, and it cannot
+    // release either (ADR-016, O53). Until S15b this returned the resource as paid success.
+    await expect(tx402.fetch(`${merchant.url}/resource`)).rejects.toMatchObject({
+      code: "TX402_PAYMENT_AMBIGUOUS",
+      context: { paid: "unknown" },
+      details: { causeCategory: "settlement-metadata-unparseable" },
+    });
     expect(events).toContainEqual(
       expect.objectContaining({ reason: "payment-response-unparseable" }),
     );
-    expect(tx402.getBudgetState().committedAtomic).toBe("50000");
-    expect(tx402.getBudgetState().entries[0]?.settlementId).toBeUndefined();
+    // Retained, not committed and not released: the reservation still counts against the
+    // hourly cap until its TTL, because a corrupt header is no evidence that nothing moved.
+    expect(tx402.getBudgetState().committedAtomic).toBe("0");
+    expect(tx402.getBudgetState().reservedAtomic).toBe("50000");
   });
 
-  it("treats a blocked cross-origin redirect after signing as ambiguous", async () => {
+  it("raises PaidRedirectBlockedError for a cross-origin redirect after signing", async () => {
     await merchant.close();
     merchant = await createTestMerchant({
       scenario: "cross-origin-redirect",
@@ -451,9 +456,10 @@ describe("M3 payment path edge cases", () => {
     const tx402 = client({ spendStore: recordingStore(log) });
 
     // SEC-005 stops the signature from travelling onward, but it already reached this
-    // merchant, so the outcome is unknown and the reservation is held (SPEC §6.7).
+    // merchant, so the outcome is unknown and the reservation is held (SPEC §6.7). The
+    // class is the one SPEC §6.1 names, not a generic ambiguity (O52).
     await expect(tx402.fetch(`${merchant.url}/resource`)).rejects.toMatchObject({
-      code: "TX402_PAYMENT_AMBIGUOUS",
+      code: "TX402_REDIRECT_BLOCKED",
       details: { causeCategory: "redirect-blocked" },
     });
     expect(log).toEqual(["reserve"]);
@@ -550,11 +556,16 @@ describe("M3 payment path edge cases", () => {
         }),
     };
 
+    // A reserve that fails is pre-transmission, so it is genuinely retryable — but the
+    // category now names the spend store rather than reporting the generic "runtime" that
+    // any unclassified throw produced (O46).
     await expect(
       client({ spendStore: broken }).fetch(`${merchant.url}/resource`),
     ).rejects.toMatchObject({
       code: "TX402_TRANSPORT",
-      details: { causeCategory: "runtime" },
+      retryable: true,
+      context: { phase: "policy" },
+      details: { causeCategory: "spend-store-unavailable", storeKind: "broken" },
     });
     expect(signer.signCount).toBe(0);
   });

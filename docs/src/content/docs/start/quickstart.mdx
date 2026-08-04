@@ -43,11 +43,19 @@ matters. See [Key management](../../security/keys/) for the real answer.
   <TabItem label="TypeScript">
 
 ```bash
-npm install tx402
+# Base / EVM — what the rest of this page uses
+npm install tx402 @x402/evm viem
 ```
 
-Node 20 or newer. The `evm` and `solana` adapters ship in the same package behind subpath
-exports, so there is nothing else to install.
+```bash
+# Solana instead
+npm install tx402 @solana-program/token @solana/kit @x402/svm viem
+```
+
+Node 20 or newer. The adapters ship in the same package behind subpath exports, but the chain
+runtimes they call are **optional peer dependencies**, so npm does not install them for you —
+that is what keeps `import "tx402"` free of any chain library. `npm install tx402` on its own
+gives you the core and the CLI, which is enough for `--dry-run`.
 
   </TabItem>
   <TabItem label="Python">
@@ -61,7 +69,37 @@ Python 3.10 or newer. The bare `tx402` install has no chain library; the extra a
   </TabItem>
 </Tabs>
 
-## 2. See what a merchant is asking, without paying
+## 2. Start a merchant to pay
+
+x402 is young enough that public demo merchants come and go, so this page does not send you
+to one it cannot promise is up. Run one instead — it is a single command, it speaks real
+x402 v2, and with `--facilitator` it performs a **real settlement on the testnet**, so the
+payment below moves real testnet USDC and shows up on a block explorer.
+
+```bash
+git clone --depth 1 https://github.com/neogeeks/tx402 && cd tx402
+node tools/test-merchant/cli.js \
+  --requirements baseSepolia \
+  --facilitator https://x402.org/facilitator
+```
+
+It prints one JSON line and keeps running:
+
+```json
+{ "url": "http://127.0.0.1:54321", "port": 54321, "scenario": "pay-once", "settles": true }
+```
+
+Use that `url` wherever this page says `<merchant-url>` — the path is `/resource`, so the
+full URL is `http://127.0.0.1:54321/resource`. Swap `--requirements baseSepolia` for
+`solanaDevnet` to be offered a Solana route instead, or pass both, comma-separated, to be
+offered a choice and watch the router pick.
+
+:::note[Why `http://` is accepted here]
+The SDK requires HTTPS everywhere except localhost, where the CLI opts in explicitly. A
+merchant on any other host must be `https://`, and there is no flag to change that.
+:::
+
+## 3. See what the merchant is asking, without paying
 
 No key, no signature, no money — just the challenge and what tx402 would do with it:
 
@@ -75,12 +113,18 @@ can run it as many times as you like.
 
 Add `--json` to get one machine-readable object on stdout instead.
 
-## 3. Point tx402 at your key
+## 4. Point tx402 at your key
 
 ```bash
 # Base Sepolia — 0x-prefixed 32-byte hex
 export TX402_DEV_PRIVATE_KEY=0x...
+
+# Solana Devnet — the JSON array a `solana-keygen` file contains, or its base58 form
+export TX402_DEV_SOLANA_KEYPAIR="$(cat ~/.config/solana/id.json)"
 ```
+
+Set whichever matches the chain you funded. Setting both is fine: tx402 offers the router
+two signers and the merchant's own offer decides which one is used.
 
 tx402 prints a warning to stderr **every time** it reads this variable. That is deliberate, not
 noise: anything that can read this process's environment can read the key.
@@ -88,7 +132,7 @@ noise: anything that can read this process's environment can read the key.
 The CLI accepts **no flag that carries a key**, and never will — a flag lands in shell history,
 in `ps` output, and in CI logs.
 
-## 4. Make the paid call
+## 5. Make the paid call
 
 ```bash
 npx tx402 call <merchant-url> --max-spend "0.10 USDC"
@@ -110,24 +154,28 @@ To confirm a payment landed, check your token balance or the explorer's token-tr
 not its transaction list.
 :::
 
-## 5. Do the same from code
+## 6. Do the same from code
 
 <Tabs syncKey="lang">
   <TabItem label="TypeScript">
 
 ```ts title="quickstart.ts"
 import { createTx402Client } from "tx402";
-import { privateKeyToEvmSigner } from "tx402/signers";
+import { keypairToSolanaSigner, privateKeyToEvmSigner } from "tx402/signers";
 
 const tx402 = createTx402Client({
+  // Configure the chain you funded. Both is fine — the merchant's offer decides.
   signers: {
     evm: privateKeyToEvmSigner(process.env.TX402_DEV_PRIVATE_KEY as `0x${string}`),
+    solana: await keypairToSolanaSigner(process.env.TX402_DEV_SOLANA_KEYPAIR!),
   },
   policy: {
     maxPerRequest: "0.10 USDC",
     maxPerHour: "1.00 USDC",
-    allowedNetworks: ["eip155:84532"],
+    allowedNetworks: ["eip155:84532", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
   },
+  // Only because the merchant above is on localhost. Never set this for a real merchant.
+  allowInsecureLocalhost: true,
 });
 
 const response = await tx402.fetch("<merchant-url>");
@@ -141,15 +189,19 @@ console.log(response.status, await response.text());
 import os
 
 from tx402 import Policy, Tx402Client
-from tx402.signers import private_key_to_evm_signer
+from tx402.signers import keypair_to_solana_signer, private_key_to_evm_signer
 
+# Configure the chain you funded. Both is fine — the merchant's offer decides.
 with Tx402Client(
     evm_signer=private_key_to_evm_signer(os.environ["TX402_DEV_PRIVATE_KEY"]),
+    solana_signer=keypair_to_solana_signer(os.environ["TX402_DEV_SOLANA_KEYPAIR"]),
     policy=Policy(
         max_per_request="0.10 USDC",
         max_per_hour="1.00 USDC",
-        allowed_networks=["eip155:84532"],
+        allowed_networks=["eip155:84532", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
     ),
+    # Only because the merchant above is on localhost. Never set this for a real merchant.
+    allow_insecure_localhost=True,
 ) as tx402:
     response = tx402.get("<merchant-url>")
     print(response.status_code, response.text)

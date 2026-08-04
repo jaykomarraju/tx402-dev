@@ -38,6 +38,15 @@ export interface BudgetState extends SpendTotals {
   readonly storeKind: string;
   readonly entries: readonly SpendEntry[];
   readonly reservations: readonly SpendReservation[];
+  /**
+   * The ledger these totals describe — the normalized merchant host (ADR-018).
+   *
+   * Absent only on the empty snapshot a client returns before it has paid anything. A
+   * snapshot that reports figures always says which scope and asset they are for; the
+   * audit's O45 found unlabelled zeros that belonged to no ledger at all.
+   */
+  readonly policyScope?: string;
+  readonly assetId?: string;
 }
 
 export interface ReserveSpendInput {
@@ -63,6 +72,29 @@ export interface SpendQuery {
   readonly nowEpochMs: number;
 }
 
+/**
+ * The pluggable spend ledger (SPEC §4.3, §5.3). Implement this to share one budget across
+ * processes; the built-in {@link MemorySpendStore} is process-local.
+ *
+ * The contract an adapter must honour, stated once so the Python `SpendStore` protocol and
+ * this interface say the same thing (ADR-018):
+ *
+ *  - **`policyScope` is the normalized merchant host.** It is opaque to the store — the
+ *    store must only ever compare it for equality, never parse it — but it is the key that
+ *    makes two processes calling one merchant share one cap, so a store must not
+ *    substitute its own.
+ *  - **`reserve` is atomic.** The cap comparison and the insert are one operation, or a
+ *    concurrent pair of callers can both pass a cap only one of them fits under.
+ *  - **`reserve` rejects an over-cap request with `BudgetExceededError`.** Any other
+ *    exception is read as an outage: the client converts it to a retryable
+ *    `TransportError`, because nothing has been signed yet.
+ *  - **`commit` and `release` are idempotent** for a reservation already in that state.
+ *  - **A `commit` failure is money-relevant.** It happens after settlement, so the client
+ *    converts it to `ResourceDeliveryError` with `paid: true` and does *not* release. Fail
+ *    loudly rather than returning a fabricated entry.
+ *  - **`getBudgetState` is diagnostics** and may throw; the client swallows the failure
+ *    rather than failing a paid request over a snapshot.
+ */
 export interface SpendStore {
   readonly kind: string;
   /** The cap comparison and reservation insert MUST be one atomic operation. */
@@ -259,6 +291,8 @@ export class MemorySpendStore implements SpendStore {
     const current = this.#matching(query);
     return Object.freeze({
       storeKind: this.kind,
+      policyScope: query.policyScope,
+      assetId: query.assetId,
       committedAtomic: current.committed.toString(),
       reservedAtomic: current.reserved.toString(),
       entries: Object.freeze(current.entries.map(frozenEntry)),

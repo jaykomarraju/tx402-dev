@@ -440,7 +440,7 @@ describe("T-011 unknown outcome after the signature is transmitted", () => {
 });
 
 describe("T-012 cross-origin redirect on a paid retry", () => {
-  it("blocks the redirect and holds the reservation", async () => {
+  it("blocks the redirect, raises PaidRedirectBlockedError, and holds the reservation", async () => {
     const server = await startMerchant({
       scenario: "cross-origin-redirect",
       requirements: [REQUIREMENT],
@@ -449,9 +449,13 @@ describe("T-012 cross-origin redirect on a paid retry", () => {
     const tx402 = client({ spendStore: recordingStore(log) });
 
     // SEC-005: the signature must not travel to another origin. It already reached this
-    // merchant, so the outcome is unknown and the reservation is held to its TTL.
+    // merchant, so the outcome is unknown and the reservation is held to its TTL — but
+    // SPEC §6.1 names `PaidRedirectBlockedError` for this case by class, and until S15b
+    // the high-level client caught it and reported a generic ambiguity instead (O52).
+    // The money disposition below is unchanged; only the identity moved.
     await expect(tx402.fetch(`${server.url}/resource`)).rejects.toMatchObject({
-      code: "TX402_PAYMENT_AMBIGUOUS",
+      code: "TX402_REDIRECT_BLOCKED",
+      retryable: false,
       context: { paid: "unknown" },
       details: { causeCategory: "redirect-blocked" },
     });

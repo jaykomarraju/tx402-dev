@@ -14,7 +14,7 @@
         "result": {
           "kind": "response",
           "status": 402,
-          "settlement": "unknown"
+          "settlement": "absent"
         }
       }
     ]

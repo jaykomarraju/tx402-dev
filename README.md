@@ -37,14 +37,30 @@ The protocol layer is settled — x402 v2 exists and works. The gap is everythin
 
 ## Install
 
+Chain support is optional in both languages, so **the install command depends on which chain you
+pay on**. Importing `tx402` itself loads no chain library in either language, and a subprocess test
+asserts that so the property cannot rot.
+
 ```bash
-npm install tx402                # TypeScript / Node 20+
-pip install "tx402[evm]"         # Python 3.10+  (or tx402[svm], tx402[all])
+# TypeScript / Node 20+ — pick the row you need
+npm install tx402                                                   # core + CLI, no chain
+npm install tx402 @x402/evm viem                                    # Base / EVM
+npm install tx402 @solana-program/token @solana/kit @x402/svm viem  # Solana
 ```
 
-Chain support is optional in both languages — subpath exports (`tx402/evm`, `tx402/solana`) in
-TypeScript, extras in Python. **Importing `tx402` loads no chain library in either language**, and
-a test asserts it in a subprocess so the property cannot rot.
+```bash
+# Python 3.10+ — the same split, spelled as extras
+pip install tx402            # core, no chain
+pip install "tx402[evm]"     # Base / EVM
+pip install "tx402[svm]"     # Solana
+pip install "tx402[all]"     # both
+```
+
+npm has no equivalent of Python's extras, so TypeScript names the chain packages directly. They are
+**optional peer dependencies**: npm is deliberately told not to install them, which is what keeps a
+core install free of two chain runtimes. `tools/install-contract` holds the commands above to the
+package's own `peerDependencies` and smoke-installs every row from a clean directory, because a
+README that is wrong about installation is worse than no README.
 
 ## Sixty seconds
 

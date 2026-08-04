@@ -355,6 +355,13 @@ jobs:
       - name: Reproducible build
         run: pnpm reproducible
 
+      # Every documented npm install, packed and installed into an empty directory outside
+      # the workspace, with every entry point it advertises imported (PLAN.md O47). This
+      # needs a network and the built artifact, which is why it lives here rather than in
+      # `pnpm check`.
+      - name: Documented installs load their entry points
+        run: pnpm install-smoke
+
       - name: Upload SBOM and build digest
         uses: actions/upload-artifact@v7
         with:

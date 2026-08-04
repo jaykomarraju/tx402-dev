@@ -152,7 +152,7 @@ dependencies that actually ship — the development tree is not distributed and 
 CI uploads them as build artifacts on every run.
 
 ```bash
-pnpm sbom            # sbom/tx402-npm.cdx.json, sbom/tx402-pypi.cdx.json, sbom/LICENSES.md
+pnpm sbom            # sbom/tx402-{npm,pypi}-{core,evm,solana,all}.cdx.json + LICENSES.md
 pnpm supply-chain    # licence policy + vulnerability gate
 pnpm reproducible    # two clean builds must be byte-identical
 ```

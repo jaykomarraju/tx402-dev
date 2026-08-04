@@ -33,6 +33,7 @@ import {
 import {
   classifyPaidAttempt,
   MAX_PAID_ATTEMPTS_REASON,
+  type AmbiguousDisposition,
   type SettlementEvidence,
 } from "./completion.js";
 import {
@@ -44,15 +45,20 @@ import {
   ReservedHeaderError,
   ResourceDeliveryError,
   TransportError,
+  TX402_ERROR_CODES,
   UnsupportedSchemeError,
   isTx402Error,
+  type Tx402Error,
   type Tx402ErrorContext,
+  type Tx402ErrorDetails,
 } from "./errors.js";
 import { fingerprintRequest } from "./fingerprint.js";
 import { HealthIndex } from "./health.js";
 import {
   MemorySpendStore,
   type BudgetState,
+  type ReserveSpendInput,
+  type SpendEntry,
   type SpendReservation,
   type SpendStore,
 } from "./ledger.js";
@@ -143,12 +149,36 @@ export interface PaymentPlan {
   readonly assetId?: string;
 }
 
+/**
+ * Which ledger to ask about (SPEC §5.3, ADR-018).
+ *
+ * `policyScope` is the **normalized merchant host** — the same value the request path
+ * reserves under, and the same value Python's `get_budget_state` expects. Use
+ * `normalizePolicyHost(url)` to derive it from a URL rather than hand-writing it.
+ */
+export interface BudgetQuery {
+  readonly policyScope: string;
+  readonly assetId: string;
+  /** Defaults to the client's clock. Present so a caller can ask about a past instant. */
+  readonly nowEpochMs?: number;
+}
+
 export interface Tx402Client {
   fetch(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<Response>;
   inspect(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<PaymentInspection>;
   /** Plans a payment without reserving budget or producing a signature (SPEC §11). */
   plan(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<PaymentPlan>;
+  /**
+   * The immutable ledger snapshot from the most recent paid request (SPEC §4.1).
+   *
+   * Self-describing: `policyScope` and `assetId` say which ledger the totals belong to,
+   * and both are absent until this client has completed a paid request. For any other
+   * scope — or for a shared store written by another process — use
+   * {@link Tx402Client.queryBudgetState}, which reads the store.
+   */
   getBudgetState(): BudgetState;
+  /** Reads the spend store directly for one scope and asset (SPEC §5.3). */
+  queryBudgetState(query: BudgetQuery): Promise<BudgetState>;
   resetHealth(): void;
 }
 
@@ -167,6 +197,29 @@ const SYSTEM_CLOCK: Tx402Clock = Object.freeze({
 const DEFAULT_PAYMENT_RETRY_MS = 10_000;
 const MIN_PAYMENT_RETRY_MS = 1_000;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * `details.reason` when the settlement succeeded and the spend store could not record it.
+ *
+ * Exported so a caller can branch on it without matching a message string (ADR-017).
+ */
+export const SPEND_STORE_COMMIT_FAILED_REASON = "spend-store-commit-failed";
+
+/** `details.causeCategory` when the spend store failed before anything was signed. */
+export const SPEND_STORE_UNAVAILABLE_CAUSE = "spend-store-unavailable";
+
+/**
+ * What to run when a chain family's optional peers are missing (O47).
+ *
+ * Kept beside the failure rather than in the docs alone: the caller who hits this has
+ * already read the docs and still ended up here. `tools/install-contract` holds these
+ * strings to the package's own `peerDependencies`, so they cannot drift from what npm
+ * would actually install.
+ */
+const CHAIN_INSTALL_COMMANDS: Readonly<Record<string, string>> = Object.freeze({
+  eip155: "npm install tx402 @x402/evm viem",
+  solana: "npm install tx402 @solana-program/token @solana/kit @x402/svm viem",
+});
 
 function uuidV7(nowEpochMs: number): string {
   const bytes = randomBytes(16);
@@ -326,6 +379,15 @@ interface PreparedRequest {
   readonly request: Request;
   readonly method: string;
   readonly url: string;
+  /**
+   * The ledger scope for this request: the normalized merchant host (SPEC §5.3, ADR-018).
+   *
+   * Computed here, once, from the request that is actually going out — not held on the
+   * client. A client is not a tenant; a merchant host is. Before S15b this was a per-client
+   * UUID, so two clients sharing one `SpendStore` saw two ledgers for one host and one
+   * client saw one ledger across every host it called (O45).
+   */
+  readonly policyScope: string;
   readonly bodyBytes: Uint8Array | null;
   readonly bodyFactory: Tx402RequestInit["bodyFactory"];
 }
@@ -392,6 +454,7 @@ async function prepareRequest(
     request,
     method: request.method,
     url: request.url,
+    policyScope: normalizePolicyHost(request.url),
     bodyBytes,
     bodyFactory,
   };
@@ -477,7 +540,6 @@ interface ClientRuntime {
   readonly manifest: ReleaseManifest;
   readonly policyEngine: PolicyEngine;
   readonly spendStore: SpendStore;
-  readonly policyScope: string;
   readonly clock: Tx402Clock;
   readonly logger: Tx402Logger;
   readonly signers: Tx402Signers;
@@ -512,13 +574,21 @@ async function adapterFor(
   try {
     return await pending;
   } catch (error) {
-    // A missing optional peer dependency arrives here as a module resolution failure.
+    // A missing optional peer dependency arrives here as a module resolution failure. The
+    // message names the exact packages rather than saying "dependencies": the audit's O47
+    // showed a caller can follow every documented step and still land here, and being told
+    // *which* install to run is the difference between a one-line fix and a bug report.
     runtime.adapters.delete(family);
+    const install = CHAIN_INSTALL_COMMANDS[family] ?? `npm install tx402`;
     throw new ConfigurationError(
-      `Paying on ${family} requires its optional chain adapter dependencies to be installed`,
+      `Paying on ${family} needs its optional chain packages. Run: ${install}`,
       {
         context: errorContext,
-        details: { configPath: `signers.${family}`, reason: "chain-adapter-unavailable" },
+        details: {
+          configPath: `signers.${family}`,
+          reason: "chain-adapter-unavailable",
+          install,
+        },
         cause: error,
       },
     );
@@ -640,11 +710,16 @@ function settlementIdHash(settlementId: string): string {
 }
 
 /**
- * Reads PAYMENT-RESPONSE, which upstream marks optional on a delivered resource.
+ * Reads PAYMENT-RESPONSE, on **every** status (SPEC §5.3, ADR-016).
  *
- * Absent and undecodable both report `"unknown"` rather than a failure: neither is evidence
- * in either direction, and treating either as `"unsuccessful"` would refuse a resource the
- * merchant did deliver and did settle.
+ * Two things about this function are load-bearing and were both wrong before S15b:
+ *
+ *  - It is called whatever the merchant's status line says. A 403 or a 500 carrying a
+ *    successful settlement is exactly the case SPEC §5.3 legislates for, and it cannot be
+ *    handled by a disposition table that never sees the evidence (O44).
+ *  - Absent and undecodable are **different** evidence values. Upstream marks the header
+ *    optional, so absent is forgiven; a header that is present and does not decode is a
+ *    protocol violation and is evidence of nothing (O53).
  */
 function readPaymentResponse(
   response: Response,
@@ -659,7 +734,7 @@ function readPaymentResponse(
       paid: true,
       reason: "payment-response-absent",
     });
-    return { settlement: "unknown" };
+    return { settlement: "absent" };
   }
   try {
     const settle = decodePaymentResponseHeader(header);
@@ -670,14 +745,15 @@ function readPaymentResponse(
         : {}),
     };
   } catch {
-    // A response tx402 cannot parse is not evidence of anything, in either direction.
+    // A response tx402 cannot parse is not evidence of anything, in either direction —
+    // which is why it neither commits nor releases (ADR-016).
     emit(logger, "warn", {
       event: "payment.completed",
       requestId,
-      paid: true,
+      paid: "unknown",
       reason: "payment-response-unparseable",
     });
-    return { settlement: "unknown" };
+    return { settlement: "malformed" };
   }
 }
 
@@ -796,7 +872,7 @@ async function attemptPayment(
   /* Policy — entirely local, before any balance read or signer call (SEC-002). */
   const decision = await runtime.policyEngine.evaluate(challenge, {
     requestId,
-    policyScope: runtime.policyScope,
+    policyScope: prepared.policyScope,
     nowEpochMs: runtime.clock.now(),
     spendStore: runtime.spendStore,
   });
@@ -834,9 +910,9 @@ async function attemptPayment(
     body: prepared.bodyBytes,
     challengeHash: challenge.headerHash,
   });
-  const reservation: SpendReservation = await runtime.spendStore.reserve({
+  const reservation: SpendReservation = await reserveOrFail(runtime, {
     requestId,
-    policyScope: runtime.policyScope,
+    policyScope: prepared.policyScope,
     requestFingerprint: requestHash,
     assetId: selected.requirement.assetId,
     amountAtomic: selected.requirement.amountAtomic,
@@ -958,28 +1034,19 @@ async function attemptPayment(
           ? { kind: "redirect-blocked" }
           : { kind: "transport-failure" },
     });
-    throw ambiguousPayment(
-      runtime,
-      error,
-      reservation,
-      errorContext,
-      disposition.causeCategory,
-    );
+    throw transmissionUnresolved(runtime, error, reservation, errorContext, disposition);
   } finally {
     // Held until the attempt settles, then released — the timer must outlive the request and
     // must not outlive it by longer than necessary.
     paid.deadline.dispose();
   }
 
-  // PAYMENT-RESPONSE is read before the disposition is taken: "the merchant's own metadata
-  // says the settlement failed" is one of the table's inputs, not a check after the fact.
-  let settlement: SettlementEvidence = "unknown";
-  let settlementId: string | undefined;
-  if (response.status >= 200 && response.status < 300) {
-    const read = readPaymentResponse(response, requestId, runtime.logger);
-    settlement = read.settlement;
-    settlementId = read.settlementId;
-  }
+  // PAYMENT-RESPONSE is read before the disposition is taken, and on every status: "the
+  // merchant reports a successful settlement" is one of the table's inputs, not a check
+  // after the fact, and gating the read on 2xx is what hid O44.
+  const read = readPaymentResponse(response, requestId, runtime.logger);
+  const settlement: SettlementEvidence = read.settlement;
+  const settlementId = read.settlementId;
 
   const disposition = classifyPaidAttempt({
     attempt,
@@ -988,12 +1055,36 @@ async function attemptPayment(
   });
 
   if (disposition.kind === "ambiguous") {
-    throw ambiguousPayment(
+    throw transmissionUnresolved(
       runtime,
       undefined,
       reservation,
       errorContext,
-      disposition.causeCategory,
+      disposition,
+    );
+  }
+
+  // SPEC §5.3: the settlement stands and the resource does not. Commit first — the money
+  // moved — and only then report the delivery failure, with `paid: true`.
+  if (disposition.kind === "paid-undelivered") {
+    await commitOrFail(runtime, reservation, settlementId, errorContext, response.status);
+    emit(runtime.logger, "warn", {
+      event: "payment.completed",
+      requestId,
+      paid: true,
+      reason: disposition.reason,
+    });
+    throw new ResourceDeliveryError(
+      "The merchant reported a successful settlement but did not deliver the resource",
+      {
+        context: { ...errorContext, phase: "complete", paid: true },
+        details: {
+          status: response.status,
+          reason: disposition.reason,
+          attempt,
+          maxPaidAttempts,
+        },
+      },
     );
   }
 
@@ -1047,11 +1138,13 @@ async function attemptPayment(
     );
   }
 
-  const entry = await runtime.spendStore.commit({
-    reservationId: reservation.reservationId,
-    committedAtEpochMs: runtime.clock.now(),
-    ...(settlementId === undefined ? {} : { settlementId }),
-  });
+  const entry = await commitOrFail(
+    runtime,
+    reservation,
+    settlementId,
+    errorContext,
+    response.status,
+  );
 
   emit(runtime.logger, "info", {
     event: "payment.completed",
@@ -1063,6 +1156,37 @@ async function attemptPayment(
     totalSdkOverheadMs: Math.max(0, runtime.clock.monotonic() - startedAt),
   });
   return { kind: "delivered", response };
+}
+
+/**
+ * Reserves, or converts a store outage into a typed pre-transmission failure (O46).
+ *
+ * Nothing has been signed here, so a retry is genuinely safe and `TransportError` — the one
+ * `caller-policy` retryable code — is the honest classification. `BudgetExceededError` and
+ * anything else already typed pass through untouched: a refused budget is not an outage.
+ */
+async function reserveOrFail(
+  runtime: ClientRuntime,
+  input: ReserveSpendInput,
+): Promise<SpendReservation> {
+  try {
+    return await runtime.spendStore.reserve(input);
+  } catch (error) {
+    if (isTx402Error(error)) throw error;
+    throw new TransportError("The spend store could not take a reservation", {
+      context: {
+        requestId: input.requestId,
+        phase: "policy",
+        amountAtomic: input.amountAtomic,
+        assetId: input.assetId,
+      },
+      details: {
+        causeCategory: SPEND_STORE_UNAVAILABLE_CAUSE,
+        storeKind: runtime.spendStore.kind,
+      },
+      cause: error,
+    });
+  }
 }
 
 /** Releases a reservation without letting a store failure mask the original error. */
@@ -1078,27 +1202,110 @@ async function releaseQuietly(
   }
 }
 
-function ambiguousPayment(
+/**
+ * Commits, or converts the store's failure into the one honest typed outcome (O46, ADR-017).
+ *
+ * The payment has already settled by the time this runs. A store that cannot record it has
+ * broken tx402's *accounting*, not the merchant's *settlement*, and the two must not be
+ * conflated:
+ *
+ *  - It is **not** a transport failure. Before S15b this surfaced as `TX402_TRANSPORT`
+ *    with `retryable: true` at `phase: "policy"`, which invites the one action that can
+ *    pay twice. `ResourceDeliveryError` is `app-dependent`, so `retryable` is false.
+ *  - `paid` is **`true`**, not `"unknown"`. The merchant's own metadata reported a
+ *    successful settlement; tx402 knows the money moved and says so.
+ *  - The reservation is deliberately **not** released. It still counts against the hourly
+ *    cap until its TTL, which is the conservative direction to be wrong in.
+ */
+async function commitOrFail(
+  runtime: ClientRuntime,
+  reservation: SpendReservation,
+  settlementId: string | undefined,
+  errorContext: Tx402ErrorContext,
+  status: number,
+): Promise<SpendEntry> {
+  try {
+    return await runtime.spendStore.commit({
+      reservationId: reservation.reservationId,
+      committedAtEpochMs: runtime.clock.now(),
+      ...(settlementId === undefined ? {} : { settlementId }),
+    });
+  } catch (error) {
+    emit(runtime.logger, "error", {
+      event: "request.failed",
+      requestId: errorContext.requestId,
+      errorCode: TX402_ERROR_CODES.resourceDelivery,
+      phase: "complete",
+      paid: true,
+    });
+    throw new ResourceDeliveryError(
+      "The payment settled but the spend store could not record it",
+      {
+        context: { ...errorContext, phase: "complete", paid: true },
+        details: {
+          status,
+          reason: SPEND_STORE_COMMIT_FAILED_REASON,
+          reservationExpiresAtEpochMs: reservation.expiresAtEpochMs,
+          storeKind: runtime.spendStore.kind,
+        },
+        cause: error,
+      },
+    );
+  }
+}
+
+/**
+ * The typed error for a signature that reached the merchant without a resolved outcome.
+ *
+ * Which class is raised comes from the disposition's `errorCode`, not from this function:
+ * SPEC §6.1 requires a cross-origin redirect to raise `PaidRedirectBlockedError`, and
+ * before S15b the high-level client swallowed it and reported `AmbiguousPaymentError`
+ * instead (O52). The money disposition is identical either way — retained to TTL — so the
+ * fix is an identity fix and nothing more.
+ */
+function transmissionUnresolved(
   runtime: ClientRuntime,
   cause: unknown,
   reservation: SpendReservation,
   errorContext: Tx402ErrorContext,
-  causeCategory: string,
-): AmbiguousPaymentError {
+  disposition: AmbiguousDisposition,
+): Tx402Error {
   emit(runtime.logger, "warn", {
     event: "request.failed",
     requestId: errorContext.requestId,
-    errorCode: "TX402_PAYMENT_AMBIGUOUS",
+    errorCode: disposition.errorCode,
     phase: "retry",
     paid: "unknown",
   });
+  const context: Tx402ErrorContext = { ...errorContext, phase: "retry", paid: "unknown" };
+
+  if (disposition.errorCode === TX402_ERROR_CODES.redirectBlocked) {
+    // SPEC §8 requires `fromOrigin`/`toOrigin` on this code, and the block site already
+    // computed them — so they are carried over rather than recomputed or dropped.
+    const origins =
+      cause instanceof PaidRedirectBlockedError ? cause.details : ({} as Tx402ErrorDetails);
+    return new PaidRedirectBlockedError(
+      "Paid retry redirect crossed origins after the signature had been transmitted",
+      {
+        context,
+        details: {
+          fromOrigin: origins.fromOrigin,
+          toOrigin: origins.toOrigin,
+          reservationExpiresAtEpochMs: reservation.expiresAtEpochMs,
+          causeCategory: disposition.causeCategory,
+        },
+        ...(cause === undefined ? {} : { cause }),
+      },
+    );
+  }
+
   return new AmbiguousPaymentError(
     "The payment was transmitted but its outcome is unknown",
     {
-      context: { ...errorContext, phase: "retry", paid: "unknown" },
+      context,
       details: {
         reservationExpiresAtEpochMs: reservation.expiresAtEpochMs,
-        causeCategory,
+        causeCategory: disposition.causeCategory,
       },
       ...(cause === undefined ? {} : { cause }),
     },
@@ -1174,7 +1381,6 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
     manifest,
     policyEngine,
     spendStore,
-    policyScope: uuidV7(clock.now()),
     clock,
     logger,
     signers: config.signers ?? {},
@@ -1185,6 +1391,16 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
     allowInsecureLocalhost,
   };
 
+  /**
+   * The snapshot `getBudgetState()` returns: the ledger as it stood after the most recent
+   * paid request, for **that request's** scope and asset.
+   *
+   * It carries `policyScope` and `assetId` so it is self-describing rather than an
+   * unlabelled pair of numbers — the S15 audit's O45 found a caller could not tell which
+   * host and asset the figures belonged to, and in fact they belonged to nothing, because
+   * the store was never read. `queryBudgetState` is the way to ask about a scope the
+   * client has not just paid.
+   */
   let budgetState: BudgetState = Object.freeze({
     storeKind: spendStore.kind,
     committedAtomic: "0",
@@ -1193,12 +1409,22 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
     reservations: Object.freeze([]),
   });
 
-  const refreshBudgetState = async (assetId: string): Promise<void> => {
+  const queryBudgetState = async (query: BudgetQuery): Promise<BudgetState> =>
+    spendStore.getBudgetState({
+      policyScope: query.policyScope,
+      assetId: query.assetId,
+      nowEpochMs: query.nowEpochMs ?? clock.now(),
+    });
+
+  const refreshBudgetState = async (
+    policyScope: string,
+    assetId: string,
+  ): Promise<void> => {
     try {
-      budgetState = await spendStore.getBudgetState({
-        policyScope: runtime.policyScope,
+      budgetState = Object.freeze({
+        ...(await queryBudgetState({ policyScope, assetId })),
+        policyScope,
         assetId,
-        nowEpochMs: clock.now(),
       });
     } catch {
       // A snapshot is diagnostics. Failing to refresh it must not fail a paid request.
@@ -1270,15 +1496,15 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
     const requestId = uuidV7(clock.now());
     let phase: Tx402ErrorContext["phase"] = "initial";
     try {
-      const { response } = await begin(input, init, requestId);
+      const { prepared, response } = await begin(input, init, requestId);
       if (response.status !== 402) return Object.freeze({ requestId, response });
 
       phase = "parse";
       const paymentRequired = decodePaymentRequired(
         response.headers.get(PROTOCOL_HEADERS.paymentRequired),
         {
-          requestUrl: requestUrl(input).toString(),
-          requestMethod: init?.method ?? (input instanceof Request ? input.method : "GET"),
+          requestUrl: prepared.url,
+          requestMethod: prepared.method,
           requestId,
           clockEpochMs: clock.now(),
           allowInsecureLocalhost,
@@ -1294,7 +1520,7 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
       phase = "policy";
       const decision = await policyEngine.evaluate(paymentRequired, {
         requestId,
-        policyScope: runtime.policyScope,
+        policyScope: prepared.policyScope,
         nowEpochMs: clock.now(),
         spendStore,
       });
@@ -1411,13 +1637,15 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
             selection,
           );
         } finally {
-          if (selection.assetId !== undefined) await refreshBudgetState(selection.assetId);
+          if (selection.assetId !== undefined)
+            await refreshBudgetState(prepared.policyScope, selection.assetId);
         }
       } catch (error) {
         throw failure(error, requestId, phase);
       }
     },
     getBudgetState: () => budgetState,
+    queryBudgetState,
     // One index, so one call clears everything — no adapter needs to be loaded or awaited,
     // and there is no window in which one layer has forgotten an endpoint and another has
     // not (SPEC §4.1; O19/O22).

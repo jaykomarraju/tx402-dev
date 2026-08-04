@@ -114,21 +114,58 @@ explicitly once you know your merchants.
 ## What policy does not do
 
 - **It is not a rate limiter.** `maxPerHour` bounds spend, not request count.
-- **It is not shared across processes.** The default ledger is in-memory and per-client. Two
-  processes have two budgets. Supply your own spend store if you need one budget across several.
+- **It is not shared across processes _by default_.** The default ledger is in-memory, so two
+  processes have two budgets. Supply your own `SpendStore` and they share one — see below.
 - **It does not survive a restart.** A fresh client starts with a fresh hourly window. This is a
   deliberate v0.1 scope decision (ADR-007), not an oversight.
 - **It cannot stop a merchant from asking.** It stops tx402 from paying.
 
 ## Checking your budget
 
+Two calls, and the difference matters. `getBudgetState()` is a synchronous snapshot of the
+most recent paid request; `queryBudgetState()` reads the store, so it can answer about any
+scope — including one another process wrote.
+
 ```ts
-const state = tx402.getBudgetState({
-  policyScope: "api.example.com",
+import { normalizePolicyHost } from "tx402";
+
+// The snapshot: what this client last paid, and it says which ledger that was.
+const last = tx402.getBudgetState();
+// { storeKind, policyScope, assetId, committedAtomic, reservedAtomic, entries, reservations }
+
+// The query: any scope, read from the store.
+const state = await tx402.queryBudgetState({
+  policyScope: normalizePolicyHost("https://api.example.com/v1/x"), // → "api.example.com"
   assetId: "eip155:8453/erc20:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 });
-// { storeKind, committedAtomic, reservedAtomic, entries, reservations }
+```
+
+```python
+from tx402 import normalize_policy_host
+
+state = client.get_budget_state(
+    policy_scope=normalize_policy_host("https://api.example.com/v1/x"),
+    asset_id="eip155:8453/erc20:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+)
 ```
 
 Budgets are scoped **per host and per asset**, so spending against one merchant does not consume
 another's allowance, and USDC on Base is a different budget from USDC on Solana.
+
+## Sharing one budget across processes
+
+The scope key is the **normalized merchant host** in both languages, which is what makes a
+shared store actually shared: two processes calling `api.example.com` write the same ledger
+row. Supply any object with the four `SpendStore` methods.
+
+```python
+from tx402 import check_spend_store
+
+check_spend_store(lambda: MySpendStore())   # shipped conformance suite
+```
+
+`check_spend_store` is part of the published package, not this repository's test suite, and
+it runs the whole contract — including twenty concurrent reservations against a five-unit
+cap, because the rule an adapter is most likely to break is that `reserve` must be atomic.
+TypeScript publishes the same contract as the `SpendStore` interface. Both are documented in
+full on the type itself; the rules are in ADR-018.

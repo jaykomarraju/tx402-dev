@@ -352,9 +352,18 @@ def test_signer_failure_releases_reservation() -> None:
 
 
 def test_definitive_merchant_refusal_releases() -> None:
+    """A 403 that claims *no* settlement is a refusal, and refusals give the budget back.
+
+    ``payment_response=""`` is not decoration. Before S15b this fixture sent a
+    **successful** settlement header on its 403 by default and the test asserted release —
+    the audit
+    filed that as O44, because the assertion was pinning the implementation rather than
+    SPEC §5.3. The settled counterpart is
+    :func:`test_settled_403_commits_and_reports_paid`.
+    """
     store = MemorySpendStore()
     with (
-        client(Merchant(paid_status=403), store=store) as sdk,
+        client(Merchant(paid_status=403, payment_response=""), store=store) as sdk,
         pytest.raises(ResourceDeliveryError) as raised,
     ):
         sdk.get(URL)
@@ -376,7 +385,7 @@ def test_definitive_merchant_refusal_releases() -> None:
 def test_ambiguous_status_retains_reservation(status: int, category: str) -> None:
     store = MemorySpendStore()
     with (
-        client(Merchant(paid_status=status), store=store) as sdk,
+        client(Merchant(paid_status=status, payment_response=""), store=store) as sdk,
         pytest.raises(AmbiguousPaymentError) as raised,
     ):
         sdk.get(URL)
@@ -398,10 +407,36 @@ def test_unsuccessful_settlement_releases() -> None:
     assert raised.value.details["reason"] == "settlement-unsuccessful"
 
 
-def test_missing_and_malformed_payment_response_are_optional() -> None:
-    for value in ("", "not-base64"):
-        with client(Merchant(payment_response=value)) as sdk:
-            assert sdk.get(URL).status_code == 200
+def test_absent_payment_response_still_delivers() -> None:
+    """Upstream marks PAYMENT-RESPONSE optional, so its absence cannot fail a 2xx."""
+    with client(Merchant(payment_response="")) as sdk:
+        assert sdk.get(URL).status_code == 200
+
+
+def test_malformed_payment_response_is_not_delivery(caplog: Any) -> None:
+    """A header that is present and does not decode is a protocol violation (O53).
+
+    It used to be folded in with an absent header and the resource returned as paid
+    success. SPEC §6.7 makes parsing a precondition of paid-success, so the call now ends
+    ambiguously — and, because a corrupt header is no evidence that nothing settled, the
+    reservation is held rather than released.
+    """
+    del caplog
+    store = MemorySpendStore()
+    with (
+        client(Merchant(payment_response="not-base64"), store=store) as sdk,
+        pytest.raises(AmbiguousPaymentError) as raised,
+    ):
+        sdk.get(URL)
+    assert raised.value.details["causeCategory"] == "settlement-metadata-unparseable"
+    assert [
+        item.state
+        for item in store.get_budget_state(
+            policy_scope="merchant.test",
+            asset_id=f"{NETWORK}/erc20:{ASSET}",
+            now_epoch_ms=int(time.time() * 1000),
+        ).reservations
+    ] == ["reserved"]
 
 
 def test_initial_and_paid_transport_failures_are_distinct() -> None:

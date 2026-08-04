@@ -200,12 +200,15 @@ Grouped the other way — which errors produce which code:
 ${grouped}
 
 :::caution[Exit 8 is the one to handle specially]
-\`TX402_PAYMENT_AMBIGUOUS\` has its own exit code precisely so a script can **stop**. It means
-the signature reached the merchant and tx402 could not determine the outcome — a timeout after
-transmission, a 5xx, a connection reset, or a redirect it declined to follow (ADR-014). The
-budget reservation is deliberately **retained** until its TTL rather than released, so the same
-money cannot be spent twice against the hourly cap. Retrying without reconciling against the
-merchant can pay twice.
+Exit 8 means the signature reached the merchant and tx402 could not determine the outcome. Two
+codes produce it, and they are exactly the two that can only be reached **after** a signature
+was transmitted: \`TX402_PAYMENT_AMBIGUOUS\` — a timeout, a 5xx, a connection reset, a
+same-origin redirect it declined to follow (ADR-014), or a \`PAYMENT-RESPONSE\` that is present
+and does not decode (ADR-016) — and \`TX402_REDIRECT_BLOCKED\`, a cross-origin redirect refused
+by SEC-005 after the merchant already had the signature. In both cases the budget reservation
+is deliberately **retained** until its TTL rather than released, so the same money cannot be
+spent twice against the hourly cap. Retrying without reconciling against the merchant can pay
+twice.
 :::
 
 ## Every error in detail

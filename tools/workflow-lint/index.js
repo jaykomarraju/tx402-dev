@@ -25,6 +25,11 @@
  *    wholesale rather than reported per-job.
  * 4. **A matrix expression refers to a key the matrix declares**, which catches a renamed
  *    matrix axis leaving a dangling `${{ matrix.node }}`.
+ * 5. **Any job holding `id-token: write` uses only SHA-pinned actions** (PLAN.md O48). Such
+ *    a job can exchange the repository's OIDC identity for publish rights on npm and PyPI,
+ *    so an action referenced by a mutable tag is a third party who can rewrite what runs
+ *    with those rights. This check is what stops a later edit reintroducing `@v7`: it is
+ *    the easy, natural thing to type, and it looks fine in review.
  */
 
 import { readFileSync, readdirSync } from "node:fs";
@@ -90,6 +95,24 @@ for (const file of readdirSync(WORKFLOWS).filter((name) => /\.ya?ml$/u.test(name
       }
     }
 
+    // A job that can mint a publishing credential may not run a mutable reference.
+    const permissions = job?.permissions ?? {};
+    const privileged = permissions === "write-all" || permissions?.["id-token"] === "write";
+    if (privileged) {
+      for (const step of Array.isArray(job?.steps) ? job.steps : []) {
+        const uses = step?.uses;
+        if (typeof uses !== "string" || uses.startsWith("./")) continue;
+        const reference = uses.split("@")[1] ?? "";
+        if (!/^[0-9a-f]{40}$/u.test(reference)) {
+          problems.push(
+            `${file}: job "${id}" has id-token: write and uses "${uses}", which is not ` +
+              "pinned to a 40-character commit SHA. A moved tag in a job that can publish " +
+              "is a supply-chain compromise with release rights.",
+          );
+        }
+      }
+    }
+
     const axes = new Set(Object.keys(job?.strategy?.matrix ?? {}));
     if (axes.size > 0) {
       const serialized = JSON.stringify(job);
@@ -119,4 +142,7 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log(`OK    workflows in .github/workflows parse and use valid job-level contexts`);
+console.log(
+  "OK    workflows parse, use valid job-level contexts, and pin every action in a " +
+    "publish-capable job",
+);
