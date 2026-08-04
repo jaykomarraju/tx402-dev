@@ -43,15 +43,32 @@ const BINARY_EXTENSIONS = new Set([
   ".wasm",
 ]);
 
-function trackedFiles() {
-  return execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 })
+/**
+ * Every file git would keep: tracked, plus untracked-and-not-ignored.
+ *
+ * `--others --exclude-standard` is the load-bearing half, and it was added after this guard
+ * missed a raw NUL in a brand-new file at S14. `git ls-files` alone lists only *tracked*
+ * files, so a file created during a session is invisible to the check until it has been
+ * committed — which means the guard passes locally and fails in CI, on the very commit that
+ * introduced the problem. That is the O38 pattern ("a gate is only evidence if it ran from
+ * the state CI uses") wearing a different hat: here the local state had *less* than CI's,
+ * not more.
+ *
+ * Ignored files are still excluded. `node_modules` and `dist` are not ours to police.
+ */
+function candidateFiles() {
+  return execFileSync(
+    "git",
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 },
+  )
     .toString("utf8")
     .split("\0")
     .filter((path) => path !== "");
 }
 
 const offenders = [];
-for (const path of trackedFiles()) {
+for (const path of candidateFiles()) {
   if (BINARY_EXTENSIONS.has(extname(path).toLowerCase())) continue;
 
   let bytes;
@@ -85,4 +102,4 @@ if (offenders.length > 0) {
   process.exit(1);
 }
 
-console.log(`OK    no NUL bytes in ${trackedFiles().length} tracked files`);
+console.log(`OK    no NUL bytes in ${candidateFiles().length} tracked and new files`);
