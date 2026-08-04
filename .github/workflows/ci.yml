@@ -57,6 +57,12 @@ jobs:
       - name: No NUL bytes in tracked text files (O25)
         run: pnpm nul-check
 
+      # A workflow is the one file here whose mistakes cannot be found by running it
+      # locally. An invalid job-level context rejects the *entire* file before any job is
+      # created, which surfaces as a run with zero jobs and no readable error (O37).
+      - name: Workflow validity (O37)
+        run: pnpm workflow-lint
+
       - name: Conformance index integrity (SEC-007)
         run: pnpm conformance:check
 
@@ -140,7 +146,12 @@ jobs:
   # stays on Linux; these legs answer "does it work at all off Linux", which is the
   # question that was actually open.
   cross-platform:
-    name: ${{ matrix.os }} (Node ${{ env.NODE_VERSION_DEFAULT }}, Python 3.12)
+    # The Node version is not interpolated into this name. A job-level `name` may only read
+    # the github/needs/strategy/matrix/vars/inputs contexts — `env` is not among them, and
+    # using it is an *invalid workflow* rather than an empty string: the run completes as a
+    # failure with zero jobs, which looks nothing like a syntax error and cost one red run
+    # to identify. Keep literals here and let the steps read `env`.
+    name: ${{ matrix.os }} (Node 20, Python 3.12)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -176,11 +187,15 @@ jobs:
       - name: CLI smoke (resolves and exits per SPEC §11)
         shell: bash
         run: |
+          set -uo pipefail
           node packages/tx402/dist/cli/index.js --version
           node packages/tx402/dist/cli/index.js --help
-          # Exit 2 for an unknown command, on every platform.
-          node packages/tx402/dist/cli/index.js nonsense && exit 1
-          test $? -eq 1 || true
+          # An unknown command must exit 2 on every platform, not merely fail. Captured
+          # explicitly rather than through `&& exit 1`, which under `set -e` fails the step
+          # on the *expected* non-zero status and so asserts nothing.
+          node packages/tx402/dist/cli/index.js nonsense && code=0 || code=$?
+          echo "unknown command exited $code"
+          test "$code" -eq 2
 
       - name: Python suite
         working-directory: packages/tx402-python
