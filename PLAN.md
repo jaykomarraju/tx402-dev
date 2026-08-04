@@ -982,6 +982,15 @@ TypeScript side: tx402's own pre-sign validator depends on it, so it must not re
 package's resolution. It stays off the core install path, and a subprocess-based package-contract
 test asserts that `import tx402` loads no chain library at all.
 
+**S10 CI is verified green.** Commit `0d64e9b` was pushed to `main`; GitHub Actions run
+[#27](https://github.com/jaykomarraju/tx402-dev/actions/runs/30875614118) completed 7/7
+successfully: TypeScript on Node 20 and 22, Python on CPython 3.10/3.11/3.12/3.13, and TS↔Python
+conformance parity. The run also passed frozen-lockfile install, lint, format, typecheck,
+conformance-index, manifest-signature, coverage, package builds, and size gates. The 3.10 leg
+matters more than usual this session: it resolves `solders` 0.27.1 rather than the 0.28.0 this
+machine develops against, so the SVM construction path is confirmed against both. This row was
+written only after the workflow completed, per the S5 process note.
+
 ## 8. Session Protocol (how this stays a living document)
 
 **At the start of every session,** the agent MUST:
