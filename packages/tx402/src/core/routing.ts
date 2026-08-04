@@ -64,13 +64,6 @@ export interface RouteCandidate {
 }
 
 /**
- * Memoizes an in-flight read so requirements sharing a network/asset/owner share one query.
- *
- * Keyed on the promise rather than on the result, so concurrent callers join the same request
- * instead of racing two. The cache lives for exactly one planning pass: a balance is a
- * snapshot, and reusing it across requests would be reusing a stale one.
- */
-/**
  * Separates the parts of a balance-cache key.
  *
  * A NUL cannot appear in a CAIP-2 identifier, a token address, or an account address, so
@@ -80,6 +73,13 @@ export interface RouteCandidate {
  */
 export const BALANCE_KEY_SEPARATOR = "\u0000";
 
+/**
+ * Memoizes an in-flight read so requirements sharing a network/asset/owner share one query.
+ *
+ * Keyed on the promise rather than on the result, so concurrent callers join the same request
+ * instead of racing two. The cache lives for exactly one planning pass: a balance is a
+ * snapshot, and reusing it across requests would be reusing a stale one.
+ */
 export interface BalanceProbeCache {
   read<T>(key: string, load: () => Promise<T>): Promise<T>;
 }

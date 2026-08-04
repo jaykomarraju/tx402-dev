@@ -743,6 +743,15 @@ Stage A** — the two-stage contract working as designed, with Python's `IMPLEME
 `M2` until S9. Two new vector kinds were added to the frozen schema: `routing.candidate-order` and
 `health.circuit`.
 
+**S7 CI is verified green on the M5 commit.** `e01841c` was pushed to `main`; GitHub Actions run
+[#19](https://github.com/jaykomarraju/tx402-dev/actions/runs/30869395611) completed 7/7 successfully:
+TypeScript on Node 20 and 22, Python on CPython 3.10/3.11/3.12/3.13, and TS↔Python conformance
+parity. The run also passed frozen-lockfile install, lint, format, typecheck, conformance-index,
+manifest-signature, coverage, build, and the re-baselined size gate.
+
+The follow-up commit `25abb21` — the NUL-byte fix recorded as O25 — is
+[run #20](https://github.com/jaykomarraju/tx402-dev/actions/runs/30869582982), also 7/7 green.
+
 ## 8. Session Protocol (how this stays a living document)
 
 **At the start of every session,** the agent MUST:

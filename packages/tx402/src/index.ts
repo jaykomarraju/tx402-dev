@@ -184,6 +184,7 @@ export {
   orderRouteCandidates,
   planRoutes,
   createBalanceProbeCache,
+  BALANCE_KEY_SEPARATOR,
 } from "./core/routing.js";
 export type {
   BalanceProbeCache,
