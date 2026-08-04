@@ -686,7 +686,9 @@ nothing touches `neogeeks/tx402` until the first two run clean.
 
 | S13 | CI green + Solana proof | ✅ Complete | 2026-08-04. CI 10/10 after three runs, all three failures real (O37 zero-job workflow rejection, O38 build-before-lint and prettier-mangled MDX, O39 Windows CRLF invalidating all 65 vector hashes). **Solana settles for real** — tx `4TRZkmKX…qwRc6JYj`, slot 481100292, value moved and the balances prove it (O40). §11 written as the normative release sequence. |
 | S14 | M8 release engineering | ✅ Complete | 2026-08-04. **T-019 fully green, 50 Base + 50 Solana**, via **ADR-015** `routing.rpcOverrides` (O35). O35's 429→`TX402_SIGNER` misclassification fixed in TypeScript, where ADR-013 means Python never had it. **O40 closed**: `tools/ttv` takes a network argument; Solana **2.80 s** verified on-chain beside Base **2.04 s**. SPEC §12.4 gates built and passing: fuzz, perf, SBOM, licences, vulnerabilities, reproducible build. Release + docs workflows with OIDC trusted publishing. **README/CHANGELOG/CODE_OF_CONDUCT/VERSIONING** written; both package READMEs corrected. **Found and fixed: both CLIs documented a Solana dev key neither read.** **CI 11/11 green, run #36 on `c93ff2e`** (the eleventh leg is the new `release-gates` job). Remaining for release: O10 registry-side config, O12 key generation, and O8's independent reviewer — all USER. |
-| S15 | Pre-publication audit | ⬜ Not started | **§11.2.** On `tx402-dev`. Correctness, adversarially derived tests, security, maintainer quality. Governing rule: the existing tests are not proof. No publish planning. |
+| S15 | Pre-publication audit | ⬜ Not started | **§11.2.** On `tx402-dev`, **findings only — no fixes** (scope set by the user at S14). Correctness, adversarially derived tests, security, maintainer quality. Governing rule: the existing tests are not proof. No publish planning, no backlog clearing, no deploys, no keys. |
+| S15b | Audit remediation | ⬜ Conditional | Ordinary dev session, only if S15 finds anything requiring a change. Fixes land here with tests, not in the audit. |
+| S15c | Audit re-run | ⬜ Conditional | §11.1: a stage is complete when it runs clean, not when its findings are filed. Skipped only if S15 found nothing to fix. |
 | S16 | Fresh-eyes UX pass | ⬜ Not started | **§11.3.** On `tx402-dev`, **cold start** — reads the README and docs site only, never `PLAN.md`, until the pass is done. Installs and uses the product as a stranger; times TTV with a stopwatch. |
 | S17 | Publish | ⬜ Not started | **§11.4.** Planned only once S15 and S16 run clean. `neogeeks/tx402` migration, npm + PyPI trusted publishing, SPEC §12.4 gates. |
 
@@ -1439,8 +1441,11 @@ skip a stage or run two in one sitting.**
 
 ```
   remaining dev sessions        ──▶  on tx402-dev
-  pre-publication audit (§11.2) ──▶  on tx402-dev        ← no publishing planned yet
+  pre-publication audit (§11.2) ──▶  on tx402-dev, findings only ← no fixes, no publish planning
+    └─ fixes, if any            ──▶  ordinary dev session
+    └─ audit re-run             ──▶  must come back clean
   fresh-eyes UX pass    (§11.3) ──▶  on tx402-dev, COLD start
+    └─ same: findings, then fixes, then re-run
   ─────────────────────────────────────────────────────
   only now: plan the publish (§11.4) — neogeeks/tx402, npm, PyPI
 ```
@@ -1461,8 +1466,31 @@ stage is **re-run**. A stage is complete when it runs clean, not when its findin
 
 ### 11.2 Pre-publication audit charter
 
-One session, on `tx402-dev`. Its output is findings and — only where a finding proves it
-necessary — changes. It is not a feature session.
+One session, on `tx402-dev`. It is not a feature session.
+
+**Scope discipline — set by the user at S14, and it narrows the paragraph that follows.**
+The audit session does **the audit and nothing else**. Its output is **findings**, recorded
+in §9 with owners. It does not fix them, it does not clear backlog, it does not deploy, it
+does not touch keys or registries, and it does not plan the publish.
+
+This resolves a tension between this section's original wording — "only where a finding
+proves it necessary, changes" — and §11.1's rule that required changes "land as ordinary
+dev work and the affected stage is **re-run**." §11.1 wins. The sequence is:
+
+```
+  S15   audit          → findings only, no fixes
+  S15b  ordinary dev   → fix what the findings require   (only if there is anything)
+  S15c  audit re-run   → must come back clean
+```
+
+Two reasons this is worth the extra session rather than a nuisance. An auditor who is also
+the repairer stops auditing the moment the first real defect appears, because fixing is
+concrete and looking is not — so the back half of the repository gets a worse read than the
+front half. And a finding fixed in the same breath it was found is a finding nobody
+independently confirmed was real.
+
+The auditor **may** write throwaway probes to establish a fact, and **must** write down the
+reproduction for anything it claims. It must not commit a fix.
 
 **The governing instruction: do not trust the existing tests as proof that the product
 works.** They were written by the same model that wrote the implementation, against that
