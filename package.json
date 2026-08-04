@@ -25,7 +25,7 @@
     "docs:dev": "pnpm --filter tx402-docs dev",
     "docs:build": "pnpm --filter tx402-docs build",
     "nul-check": "node tools/nul-check/index.js",
-    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm nul-check && pnpm workflow-lint && pnpm conformance:check && pnpm manifest:verify && pnpm test && pnpm build && pnpm size && pnpm docs:check",
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm nul-check && pnpm workflow-lint && pnpm conformance:check && pnpm manifest:verify && pnpm test && pnpm build && pnpm size && pnpm docs:check && pnpm docs:build",
     "workflow-lint": "node tools/workflow-lint/index.js"
   },
   "devDependencies": {

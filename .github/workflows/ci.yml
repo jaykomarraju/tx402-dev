@@ -42,6 +42,14 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
+      # Built before lint and typecheck, not after. `examples/typescript` consumes `tx402`
+      # exactly as a user does — through the package's emitted declarations — so with no
+      # `dist/` every import resolves to `any`, every `no-unsafe-*` rule fires, and the
+      # examples fail to typecheck. A local run hides this by inheriting a previous build,
+      # which is precisely how it reached CI.
+      - name: Build
+        run: pnpm build
+
       - name: Lint
         run: pnpm lint
 
@@ -86,9 +94,6 @@ jobs:
 
       - name: Coverage thresholds (SPEC §12.1)
         run: pnpm --filter tx402 exec vitest run --coverage
-
-      - name: Build
-        run: pnpm build
 
       - name: Size gate (ADR-008)
         run: pnpm size
