@@ -145,6 +145,40 @@ function renderPlanHuman(io: CliIo, plan: PaymentPlan): void {
   io.stderr("dry run — nothing was signed and no budget was reserved\n");
 }
 
+/**
+ * Recovers the inspection and route facts from the structured event stream.
+ *
+ * `fetch` returns a `Response`, not a plan, so on the paying path these are not available
+ * as return values — but SPEC §11 requires `--json` to report both. Rather than widen the
+ * SDK's return type for the CLI's benefit, they are read back out of the SPEC §10 events
+ * the run already emitted. Those events are redaction-safe by construction, so nothing
+ * reaches the JSON document that could not already be logged.
+ */
+function fromEvents(events: readonly Record<string, unknown>[]) {
+  const find = (name: string) => events.find((event) => event["event"] === name);
+  const required = find("payment.required");
+  const planned = find("route.planned");
+  return {
+    inspection:
+      required === undefined
+        ? null
+        : {
+            requirementCount: required["requirementCount"],
+            headerHash: required["headerHash"],
+          },
+    route:
+      planned === undefined
+        ? null
+        : {
+            network: planned["selectedNetwork"],
+            scheme: planned["selectedScheme"],
+            healthScore: planned["selectedHealthScore"],
+            rank: planned["selectedRank"],
+            candidateCount: planned["candidateCount"],
+          },
+  };
+}
+
 /** The `--json` document (SPEC §11: schema version, inspection, route, timings, error). */
 function jsonDocument(fields: {
   ok: boolean;
@@ -159,6 +193,9 @@ function jsonDocument(fields: {
   events: Record<string, unknown>[];
 }): string {
   const { plan, error } = fields;
+  // A dry run has the plan in hand and reports it directly; the paying path reconstructs
+  // the same facts from the event stream, so both produce the same document shape.
+  const recovered = fromEvents(fields.events);
   return `${JSON.stringify(
     {
       schemaVersion: JSON_SCHEMA_VERSION,
@@ -168,7 +205,7 @@ function jsonDocument(fields: {
       ...(fields.requestId === undefined ? {} : { requestId: fields.requestId }),
       inspection:
         plan?.paymentRequired === undefined
-          ? null
+          ? recovered.inspection
           : {
               status: plan.response.status,
               requirementCount: plan.paymentRequired.requirements.length,
@@ -176,7 +213,7 @@ function jsonDocument(fields: {
             },
       route:
         plan?.selected === undefined
-          ? null
+          ? recovered.route
           : {
               network: plan.selected.network,
               scheme: plan.selected.scheme,

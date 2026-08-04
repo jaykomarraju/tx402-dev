@@ -321,6 +321,24 @@ describe("--json", () => {
     expect(document.inspection.requirementCount).toBe(1);
   });
 
+  it("reports inspection and route on the paying path too", async () => {
+    // `fetch` returns a Response, not a plan, so these are recovered from the SPEC §10
+    // event stream. Pinned because the first cut returned nulls here and still looked
+    // like a valid document — SPEC §11 requires both fields on every --json run.
+    const harness = io(["call", `${merchant.url}/resource`, "--json"], {
+      createClient: createClient(),
+    });
+    await run(harness);
+    const document = JSON.parse(harness.out.join("")) as {
+      inspection: { requirementCount: number; headerHash: string };
+      route: { network: string; scheme: string };
+    };
+    expect(document.inspection.requirementCount).toBe(1);
+    expect(document.inspection.headerHash).toMatch(/^sha256:/u);
+    expect(document.route.network).toBe("eip155:8453");
+    expect(document.route.scheme).toBe("exact");
+  });
+
   it("still emits one parseable object on failure, with the typed error", async () => {
     const harness = io(
       ["call", `${merchant.url}/resource`, "--max-spend", "0.001 USDC", "--json"],
