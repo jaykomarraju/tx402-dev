@@ -830,6 +830,13 @@ twenty-three at Stage A** — the two-stage contract working as designed, with P
 `completion.paid-attempt`. `core-spec/conformance/README.md` now carries the freeze declaration
 and what changing a frozen vector costs.
 
+**S8 CI is verified green on the M6 commit.** `b87a5a3` was pushed to `main`; GitHub Actions run
+[#23](https://github.com/jaykomarraju/tx402-dev/actions/runs/30870956827) completed 7/7
+successfully: TypeScript on Node 20 and 22, Python on CPython 3.10/3.11/3.12/3.13, and TS↔Python
+conformance parity. The run also passed frozen-lockfile install, lint, format, typecheck,
+conformance-index, manifest-signature, coverage, build, and size gates. This row was written after
+the run reported, per the S5 process note.
+
 ## 8. Session Protocol (how this stays a living document)
 
 **At the start of every session,** the agent MUST:
