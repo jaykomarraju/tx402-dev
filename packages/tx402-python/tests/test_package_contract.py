@@ -122,9 +122,9 @@ class TestCrossLanguageParity:
         assert PYPROJECT["project"]["urls"]["Security"] == PROJECT_URLS["security"]
         assert npm_pkg["homepage"] == PROJECT_URLS["homepage"]
         assert npm_pkg["bugs"]["url"] == PROJECT_URLS["issues"]
-        assert (
-            npm_pkg["repository"]["url"] == f"git+{PROJECT_URLS['repository']}.git"
-        ), "npm repository URL must be the git+ form of the canonical repository"
+        assert npm_pkg["repository"]["url"] == f"git+{PROJECT_URLS['repository']}.git", (
+            "npm repository URL must be the git+ form of the canonical repository"
+        )
 
     def test_no_placeholder_repository_url_survives(self) -> None:
         """The pre-S11 placeholder was ``github.com/tx402/tx402``.

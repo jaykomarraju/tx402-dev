@@ -56,6 +56,13 @@ from tx402.completion import (
     PaidAttemptResult,
     classify_paid_attempt,
 )
+from tx402.diagnostics import (
+    EVENT_NAMES,
+    NOOP_LOGGER,
+    LogLevel,
+    NoopLogger,
+    Tx402Logger,
+)
 from tx402.errors import (
     TX402_ERROR_CODES,
     TX402_ERROR_DESCRIPTORS,
@@ -147,12 +154,14 @@ from tx402.trusted_keys import MANIFEST_SIGNING_DOMAIN, TRUSTED_MANIFEST_KEYS
 
 __all__ = [
     "BUNDLED_MANIFEST",
+    "EVENT_NAMES",
     "HEALTH_NEW_ENDPOINT_SCORE",
     "HEALTH_OPEN_MS",
     "MANIFEST_SIGNING_DOMAIN",
     "MAX_AUTHORIZATION_SECONDS",
     "MAX_PAID_ATTEMPTS_REASON",
     "MAX_PROVIDERS_PER_NETWORK",
+    "NOOP_LOGGER",
     "PACKAGE_NAME",
     "PROJECT_URLS",
     "PROTOCOL_HEADERS",
@@ -189,10 +198,12 @@ __all__ = [
     "HealthIndex",
     "InsufficientLiquidityError",
     "InvalidPaymentRequiredError",
+    "LogLevel",
     "MemorySpendStore",
     "MoneyAssetMetadata",
     "MoneyParseError",
     "NonReplayableRequestError",
+    "NoopLogger",
     "PaidAttemptDisposition",
     "PaidAttemptResult",
     "PaidRedirectBlockedError",
@@ -214,6 +225,7 @@ __all__ = [
     "Tx402Error",
     "Tx402ErrorContext",
     "Tx402ErrorDescriptor",
+    "Tx402Logger",
     "Tx402Transport",
     "UnsupportedProtocolError",
     "UnsupportedSchemeError",

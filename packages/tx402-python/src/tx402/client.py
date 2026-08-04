@@ -53,6 +53,15 @@ from tx402.completion import (
     classify_paid_attempt,
 )
 from tx402.deadline import with_deadline, with_deadline_async
+from tx402.diagnostics import (
+    NOOP_LOGGER,
+    Monotonic,
+    Tx402Logger,
+    elapsed_ms,
+    emit,
+    monotonic_ms,
+    settlement_id_hash,
+)
 from tx402.errors import (
     AmbiguousPaymentError,
     ConfigurationError,
@@ -279,19 +288,47 @@ def _origin(url: httpx.URL) -> str:
 
 def _read_payment_response(
     response: httpx.Response,
+    *,
+    logger: Tx402Logger,
+    request_id: str,
 ) -> tuple[SettlementEvidence, str | None]:
     """Reads PAYMENT-RESPONSE, which upstream marks optional on a delivered resource.
 
     Absent and undecodable both report ``"unknown"`` rather than a failure: neither is
     evidence in either direction, and treating either as ``"unsuccessful"`` would refuse a
     resource the merchant did deliver and did settle.
+
+    Both cases are logged at ``warn`` anyway, and with distinct reasons: the resource is
+    delivered either way, but "the merchant sent no settlement metadata" and "the merchant
+    sent metadata I could not parse" point at different bugs on the merchant's side, and an
+    operator reconciling against a merchant ledger needs to know which one happened.
     """
     header = response.headers.get(PROTOCOL_HEADERS["payment_response"])
     if not header:
+        emit(
+            logger,
+            "warn",
+            {
+                "event": "payment.completed",
+                "requestId": request_id,
+                "paid": True,
+                "reason": "payment-response-absent",
+            },
+        )
         return "unknown", None
     try:
         settlement = decode_payment_response_header(header)
     except (ValueError, TypeError):
+        emit(
+            logger,
+            "warn",
+            {
+                "event": "payment.completed",
+                "requestId": request_id,
+                "paid": True,
+                "reason": "payment-response-unparseable",
+            },
+        )
         return "unknown", None
     if not settlement.success:
         return "unsuccessful", None
@@ -306,6 +343,11 @@ class _Prepared:
     request: httpx.Request
     body: bytes
     host: str
+    #: Monotonic reading taken before the initial request, for ``totalSdkOverheadMs``.
+    #: Carried here rather than passed alongside because every emit site that needs it
+    #: already has the prepared request, and a second parallel parameter is a second
+    #: thing to forget to thread through the async path.
+    started_at: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +385,8 @@ class _Core:
         allow_insecure_localhost: bool,
         payment_retry_timeout_ms: int,
         disable_request_id_header: bool,
+        logger: Tx402Logger,
+        monotonic: Monotonic,
     ) -> None:
         self.evm_signer = evm_signer
         self.solana_signer = solana_signer
@@ -353,6 +397,8 @@ class _Core:
         self.allow_insecure_localhost = allow_insecure_localhost
         self.payment_retry_timeout_ms = payment_retry_timeout_ms
         self.disable_request_id_header = disable_request_id_header
+        self.logger = logger
+        self.monotonic = monotonic
         #: The one health index (SPEC §6.5). Every RPC pool in every adapter reports here.
         self.health = HealthIndex()
         self._rpc_transports = {
@@ -399,6 +445,79 @@ class _Core:
         """Clears in-memory health metrics. Never touches the spend ledger (SPEC §4.1)."""
         self.health.reset()
 
+    # -- diagnostics (SPEC §10) ----------------------------------------------------------
+    #
+    # These live on the core rather than in each transport so the sync and async paths emit
+    # identical streams by construction. Duplicating them per transport is how the two
+    # would quietly drift, and a diagnostic difference between `client.get()` and
+    # `await client.get()` is exactly the kind of bug nobody looks for.
+
+    def log_request_started(self, request_id: str, request: httpx.Request) -> None:
+        emit(
+            self.logger,
+            "info",
+            {
+                "event": "request.started",
+                "requestId": request_id,
+                "method": request.method,
+                "normalizedHost": normalize_policy_host(str(request.url)),
+            },
+        )
+
+    def log_payment_required(
+        self,
+        request_id: str,
+        challenge: Mapping[str, Any],
+        *,
+        attempt: int | None = None,
+        started_at: float | None = None,
+    ) -> None:
+        """One event, three call sites: initial decode, ``inspect``, and a re-challenge.
+
+        ``attempt`` and ``totalSdkOverheadMs`` are each present only where the TypeScript
+        reference includes them — ``inspect`` reports overhead because parsing is the whole
+        operation, whereas on the paying path the overhead is reported once at
+        ``payment.completed`` for the call as a whole.
+        """
+        event: dict[str, object] = {
+            "event": "payment.required",
+            "requestId": request_id,
+            "requirementCount": len(challenge["requirements"]),
+            "headerHash": challenge["headerHash"],
+        }
+        if attempt is not None:
+            event["attempt"] = attempt
+        if started_at is not None:
+            event["totalSdkOverheadMs"] = elapsed_ms(self.monotonic, started_at)
+        emit(self.logger, "info", event)
+
+    def log_request_retried(
+        self, request_id: str, attempt: int, selection: _Selection
+    ) -> None:
+        emit(
+            self.logger,
+            "info",
+            {
+                "event": "request.retried",
+                "requestId": request_id,
+                "attempt": attempt,
+                "selectedNetwork": selection.requirement.requirement["network"],
+            },
+        )
+
+    def log_request_failed(self, error: Tx402Error) -> None:
+        emit(
+            self.logger,
+            "error",
+            {
+                "event": "request.failed",
+                "requestId": error.context.request_id,
+                "errorCode": error.code,
+                "phase": error.context.phase,
+                "paid": error.context.paid if error.context.paid is not None else False,
+            },
+        )
+
     # -- request preparation -------------------------------------------------------------
 
     def prepare(self, request: httpx.Request, request_id: str) -> tuple[bytes, str]:
@@ -431,13 +550,27 @@ class _Core:
     def decide(
         self, payment_required: Mapping[str, Any], request_id: str, host: str
     ) -> PolicyDecision:
-        return self.policy.evaluate(
+        decision = self.policy.evaluate(
             payment_required,
             request_id=request_id,
             policy_scope=host,
             now_epoch_ms=self.clock(),
             spend_store=self.spend_store,
         )
+        # Only the allowed outcome is emitted here because a rejection raises rather than
+        # returning: the refusal is already reported by `request.failed` carrying the
+        # specific policy error code, and emitting both would double-count it.
+        emit(
+            self.logger,
+            "info",
+            {
+                "event": "policy.checked",
+                "requestId": request_id,
+                "outcome": "allowed",
+                "policyCode": "allowed",
+            },
+        )
+        return decision
 
     # -- route planning ------------------------------------------------------------------
 
@@ -564,7 +697,23 @@ class _Core:
                     "offeredNetworks": [network_id],
                 },
             )
-        return _Selection(plan, plan.selected_requirement, adapter, network)
+        selection = _Selection(plan, plan.selected_requirement, adapter, network)
+        # Redaction-safe by construction: a candidate carries public identifiers and atomic
+        # figures only, and never an RPC URL (SEC-003).
+        emit(
+            self.logger,
+            "info",
+            {
+                "event": "route.planned",
+                "requestId": request_id,
+                "candidateCount": len(plan.candidates),
+                "selectedNetwork": selection.requirement.requirement["network"],
+                "selectedScheme": selection.requirement.requirement["scheme"],
+                "selectedHealthScore": plan.selected.health_score,
+                "selectedRank": plan.selected.rank,
+            },
+        )
+        return selection
 
     # -- reservation and signing ---------------------------------------------------------
 
@@ -595,6 +744,17 @@ class _Core:
             max_per_hour_atomic=item.max_per_hour_atomic,
             now_epoch_ms=now,
         )
+        emit(
+            self.logger,
+            "info",
+            {
+                "event": "budget.reserved",
+                "requestId": request_id,
+                "reservationId": reservation.reservation_id,
+                "assetId": reservation.asset_id,
+                "amountAtomic": reservation.amount_atomic,
+            },
+        )
         return reservation, request_hash
 
     def _authorization_request(
@@ -620,6 +780,43 @@ class _Core:
         )
 
     @staticmethod
+    def _signer_kind(selection: _Selection) -> str:
+        family = chain_family(selection.requirement.requirement["network"])
+        return "evm" if family == "eip155" else "solana"
+
+    def _log_sign_started(self, request_id: str, selection: _Selection) -> float:
+        """Emits ``sign.started`` and returns the monotonic mark for ``sign.completed``.
+
+        SPEC §10 requires the duration to come from a monotonic clock, and pairing the two
+        emits in one helper is what stops a later edit from timing the span against the
+        wall clock that the rest of the request path uses for authorization bounds.
+        """
+        emit(
+            self.logger,
+            "debug",
+            {
+                "event": "sign.started",
+                "requestId": request_id,
+                "signerKind": self._signer_kind(selection),
+            },
+        )
+        return self.monotonic()
+
+    def _log_sign_completed(
+        self, request_id: str, selection: _Selection, started_at: float
+    ) -> None:
+        emit(
+            self.logger,
+            "debug",
+            {
+                "event": "sign.completed",
+                "requestId": request_id,
+                "signerKind": self._signer_kind(selection),
+                "durationMs": elapsed_ms(self.monotonic, started_at),
+            },
+        )
+
+    @staticmethod
     def _signature_header(selection: _Selection, authorization: Any, url: str) -> str:
         return encode_payment_signature_header(
             PaymentPayload(
@@ -638,6 +835,7 @@ class _Core:
         request_id: str,
         request_hash: str,
     ) -> str:
+        signing_started_at = self._log_sign_started(request_id, selection)
         authorization = selection.adapter.create_authorization(
             self._authorization_request(
                 selection=selection,
@@ -646,6 +844,7 @@ class _Core:
                 request_hash=request_hash,
             )
         )
+        self._log_sign_completed(request_id, selection, signing_started_at)
         return self._signature_header(selection, authorization, str(prepared.request.url))
 
     async def sign_async(
@@ -656,6 +855,7 @@ class _Core:
         request_id: str,
         request_hash: str,
     ) -> str:
+        signing_started_at = self._log_sign_started(request_id, selection)
         authorization = await selection.adapter.create_authorization_async(
             self._authorization_request(
                 selection=selection,
@@ -664,6 +864,7 @@ class _Core:
                 request_hash=request_hash,
             )
         )
+        self._log_sign_completed(request_id, selection, signing_started_at)
         return self._signature_header(selection, authorization, str(prepared.request.url))
 
     # -- disposition ---------------------------------------------------------------------
@@ -758,7 +959,9 @@ class _Core:
         settlement: SettlementEvidence = "unknown"
         settlement_id: str | None = None
         if 200 <= response.status_code < 300:
-            settlement, settlement_id = _read_payment_response(response)
+            settlement, settlement_id = _read_payment_response(
+                response, logger=self.logger, request_id=request_id
+            )
 
         disposition = classify_paid_attempt(
             attempt=attempt,
@@ -813,6 +1016,18 @@ class _Core:
             committed_at_epoch_ms=self.clock(),
             settlement_id=settlement_id,
         )
+        completed: dict[str, object] = {
+            "event": "payment.completed",
+            "requestId": request_id,
+            "paid": True,
+        }
+        if settlement_id is not None:
+            # Hashed, never raw: see `settlement_id_hash`. The key is absent rather than
+            # null when the merchant supplied no identifier, matching the TypeScript
+            # reference's conditional spread so both streams have the same shape.
+            completed["settlementIdHash"] = settlement_id_hash(settlement_id)
+        completed["totalSdkOverheadMs"] = elapsed_ms(self.monotonic, prepared.started_at)
+        emit(self.logger, "info", completed)
         return _Delivered(response)
 
 
@@ -840,6 +1055,8 @@ def _build_core(
     allow_insecure_localhost: bool,
     payment_retry_timeout_ms: int,
     disable_request_id_header: bool,
+    logger: Tx402Logger,
+    monotonic: Monotonic,
 ) -> tuple[_Core, MemorySpendStore]:
     """Validates configuration synchronously and returns an immutable core (SPEC §4.1)."""
     verified = assert_valid_release_manifest(
@@ -861,6 +1078,8 @@ def _build_core(
         allow_insecure_localhost=allow_insecure_localhost,
         payment_retry_timeout_ms=payment_retry_timeout_ms,
         disable_request_id_header=disable_request_id_header,
+        logger=logger,
+        monotonic=monotonic,
     )
     return core, store
 
@@ -873,23 +1092,43 @@ class Tx402Transport(httpx.BaseTransport):
         self._core = core
 
     def inspect(self, request: httpx.Request) -> PaymentInspection:
-        request_id = _request_id(self._core.clock())
-        self._core.prepare(request, request_id)
+        core = self._core
+        started_at = core.monotonic()
+        request_id = _request_id(core.clock())
         try:
-            response = self._inner.handle_request(request)
-        except httpx.HTTPError as error:
-            raise _transport_error(error, request_id, "initial") from error
-        if response.status_code != 402:
-            return PaymentInspection(request_id, response, None)
-        response.read()
-        return PaymentInspection(
-            request_id, response, self._core.decode(response, request, request_id)
-        )
+            core.prepare(request, request_id)
+            core.log_request_started(request_id, request)
+            try:
+                response = self._inner.handle_request(request)
+            except httpx.HTTPError as error:
+                raise _transport_error(error, request_id, "initial") from error
+            if response.status_code != 402:
+                return PaymentInspection(request_id, response, None)
+            response.read()
+            challenge = core.decode(response, request, request_id)
+            core.log_payment_required(request_id, challenge, started_at=started_at)
+            return PaymentInspection(request_id, response, challenge)
+        except Tx402Error as error:
+            core.log_request_failed(error)
+            raise
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            return self._handle(request)
+        except Tx402Error as error:
+            # One place for `request.failed`, wrapping the whole paid path including the
+            # re-challenge loop. Emitting from each raise site instead would mean every new
+            # failure mode has to remember to log itself, and the ones that forget are
+            # invisible precisely when diagnostics matter most.
+            self._core.log_request_failed(error)
+            raise
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
         core = self._core
+        started_at = core.monotonic()
         request_id = _request_id(core.clock())
         body, host = core.prepare(request, request_id)
+        core.log_request_started(request_id, request)
         try:
             response = self._inner.handle_request(request)
         except httpx.HTTPError as error:
@@ -897,8 +1136,9 @@ class Tx402Transport(httpx.BaseTransport):
         if response.status_code != 402:
             return response
         response.read()
-        prepared = _Prepared(request, body, host)
+        prepared = _Prepared(request, body, host, started_at)
         challenge = core.decode(response, request, request_id)
+        core.log_payment_required(request_id, challenge)
 
         # The re-challenge loop (SPEC §6.7). Nothing carries over between attempts: each
         # pass re-evaluates policy, re-plans from the new challenge, takes its own
@@ -912,6 +1152,7 @@ class Tx402Transport(httpx.BaseTransport):
                 return outcome.response
             challenge = outcome.challenge
             attempt += 1
+            core.log_payment_required(request_id, challenge, attempt=attempt)
 
     def _attempt(
         self,
@@ -948,6 +1189,7 @@ class Tx402Transport(httpx.BaseTransport):
             core.release_quietly(reservation.reservation_id)
             raise
 
+        core.log_request_retried(request_id, attempt, selection)
         try:
             paid = with_deadline(
                 lambda: self._inner.handle_request(retry),
@@ -986,23 +1228,39 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
         self._core = core
 
     async def inspect(self, request: httpx.Request) -> PaymentInspection:
-        request_id = _request_id(self._core.clock())
-        await self._core.prepare_async(request, request_id)
+        core = self._core
+        started_at = core.monotonic()
+        request_id = _request_id(core.clock())
         try:
-            response = await self._inner.handle_async_request(request)
-        except httpx.HTTPError as error:
-            raise _transport_error(error, request_id, "initial") from error
-        if response.status_code != 402:
-            return PaymentInspection(request_id, response, None)
-        await response.aread()
-        return PaymentInspection(
-            request_id, response, self._core.decode(response, request, request_id)
-        )
+            await core.prepare_async(request, request_id)
+            core.log_request_started(request_id, request)
+            try:
+                response = await self._inner.handle_async_request(request)
+            except httpx.HTTPError as error:
+                raise _transport_error(error, request_id, "initial") from error
+            if response.status_code != 402:
+                return PaymentInspection(request_id, response, None)
+            await response.aread()
+            challenge = core.decode(response, request, request_id)
+            core.log_payment_required(request_id, challenge, started_at=started_at)
+            return PaymentInspection(request_id, response, challenge)
+        except Tx402Error as error:
+            core.log_request_failed(error)
+            raise
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            return await self._handle(request)
+        except Tx402Error as error:
+            self._core.log_request_failed(error)
+            raise
+
+    async def _handle(self, request: httpx.Request) -> httpx.Response:
         core = self._core
+        started_at = core.monotonic()
         request_id = _request_id(core.clock())
         body, host = await core.prepare_async(request, request_id)
+        core.log_request_started(request_id, request)
         try:
             response = await self._inner.handle_async_request(request)
         except httpx.HTTPError as error:
@@ -1010,8 +1268,9 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
         if response.status_code != 402:
             return response
         await response.aread()
-        prepared = _Prepared(request, body, host)
+        prepared = _Prepared(request, body, host, started_at)
         challenge = core.decode(response, request, request_id)
+        core.log_payment_required(request_id, challenge)
 
         attempt = 1
         while True:
@@ -1020,6 +1279,7 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
                 return outcome.response
             challenge = outcome.challenge
             attempt += 1
+            core.log_payment_required(request_id, challenge, attempt=attempt)
 
     async def _attempt(
         self,
@@ -1055,6 +1315,7 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
             core.release_quietly(reservation.reservation_id)
             raise
 
+        core.log_request_retried(request_id, attempt, selection)
         try:
             paid = await with_deadline_async(
                 self._inner.handle_async_request(retry),
@@ -1100,6 +1361,8 @@ class Tx402Client:
         allow_insecure_localhost: bool = False,
         payment_retry_timeout_ms: int = _PAYMENT_RETRY_TIMEOUT_MS,
         disable_request_id_header: bool = False,
+        logger: Tx402Logger = NOOP_LOGGER,
+        monotonic: Monotonic = monotonic_ms,
     ) -> None:
         core, store = _build_core(
             evm_signer=evm_signer,
@@ -1114,6 +1377,8 @@ class Tx402Client:
             allow_insecure_localhost=allow_insecure_localhost,
             payment_retry_timeout_ms=payment_retry_timeout_ms,
             disable_request_id_header=disable_request_id_header,
+            logger=logger,
+            monotonic=monotonic,
         )
         self._core = core
         self._store = store
@@ -1184,6 +1449,8 @@ class AsyncTx402Client:
         allow_insecure_localhost: bool = False,
         payment_retry_timeout_ms: int = _PAYMENT_RETRY_TIMEOUT_MS,
         disable_request_id_header: bool = False,
+        logger: Tx402Logger = NOOP_LOGGER,
+        monotonic: Monotonic = monotonic_ms,
     ) -> None:
         core, store = _build_core(
             evm_signer=evm_signer,
@@ -1198,6 +1465,8 @@ class AsyncTx402Client:
             allow_insecure_localhost=allow_insecure_localhost,
             payment_retry_timeout_ms=payment_retry_timeout_ms,
             disable_request_id_header=disable_request_id_header,
+            logger=logger,
+            monotonic=monotonic,
         )
         self._core = core
         self._store = store
