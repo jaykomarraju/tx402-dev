@@ -1,13 +1,34 @@
-"""tx402-owned synchronous and asynchronous HTTPX transports (SPEC §4.2, §6)."""
+"""tx402-owned synchronous and asynchronous HTTPX transports (SPEC §4.2, §6).
+
+The ordering in :meth:`_Core.attempt` is the security-critical part of this module and is
+not an implementation detail::
+
+    parse → policy → plan → **reserve** → sign → retry → commit
+
+SEC-002 requires every policy check and the budget reservation to complete before a signer
+is invoked, and SPEC §6.6 requires the reservation to exist before signing. Both hold on
+*every* attempt, not only the first: a second pass re-reserves before it re-signs exactly
+as the first did.
+
+The other rule that shapes the code is SPEC §6.7's asymmetry after a signature is
+transmitted. Before transmission, a failure releases the reservation. After transmission,
+the outcome may be a settled payment tx402 never saw, so the reservation is **retained**
+until its TTL and the caller gets ``AmbiguousPaymentError``. Releasing there would let the
+same money be spent twice against the hourly cap. That rule is not branched on here — it
+lives in :func:`tx402.completion.classify_paid_attempt`, and this module looks the
+disposition up and obeys it.
+"""
 
 from __future__ import annotations
 
-import asyncio
+import dataclasses
 import secrets
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Final, TypeVar
+from urllib.parse import urlsplit
 
 import httpx
 from x402.http.utils import (
@@ -17,29 +38,36 @@ from x402.http.utils import (
 from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo
 
 from tx402.bundled_manifest import BUNDLED_MANIFEST
+from tx402.chain import (
+    MAX_AUTHORIZATION_SECONDS,
+    ChainAdapter,
+    ChainAuthorizationRequest,
+    ChainRouteRequest,
+    chain_family,
+    load_chain_adapter,
+)
+from tx402.completion import (
+    MAX_PAID_ATTEMPTS_REASON,
+    PaidAttemptResult,
+    SettlementEvidence,
+    classify_paid_attempt,
+)
+from tx402.deadline import with_deadline, with_deadline_async
 from tx402.errors import (
     AmbiguousPaymentError,
     ConfigurationError,
-    InsufficientLiquidityError,
     NonReplayableRequestError,
+    PaidRedirectBlockedError,
     ReservedHeaderError,
     ResourceDeliveryError,
     TransportError,
+    Tx402Error,
     Tx402ErrorContext,
     UnsupportedSchemeError,
 )
-from tx402.evm import (
-    EvmRpcError,
-    EvmRpcPool,
-    EvmSigner,
-    _with_deadline,
-    _with_deadline_async,
-    create_evm_authorization,
-    plan_exact_evm_authorization,
-    resolve_evm_address,
-)
 from tx402.fingerprint import fingerprint_request
-from tx402.ledger import BudgetState, MemorySpendStore
+from tx402.health import HealthIndex
+from tx402.ledger import BudgetState, MemorySpendStore, SpendReservation
 from tx402.manifest import assert_valid_release_manifest
 from tx402.meta import PROTOCOL_HEADERS, REQUEST_ID_HEADER, RESERVED_REQUEST_HEADERS
 from tx402.policy import (
@@ -48,14 +76,26 @@ from tx402.policy import (
     PolicyEngine,
     PolicyRequirement,
     RoutingPolicy,
+    normalize_policy_host,
 )
 from tx402.protocol import decode_payment_required
+from tx402.routing import (
+    BalanceProbeCache,
+    RoutePlan,
+    RouteProbeOutcome,
+    plan_routes,
+    plan_routes_async,
+)
 
 BodyFactory = Callable[[], bytes | str]
 Clock = Callable[[], int]
 _BODY_FACTORY_EXTENSION: Final = "tx402.body_factory"
 _PAYMENT_RETRY_TIMEOUT_MS: Final = 10_000
 _MIN_PAYMENT_RETRY_TIMEOUT_MS: Final = 1_000
+_REDIRECT_STATUSES: Final = frozenset({301, 302, 303, 307, 308})
+
+ClientT = TypeVar("ClientT", bound="Tx402Client")
+AsyncClientT = TypeVar("AsyncClientT", bound="AsyncTx402Client")
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +110,7 @@ def _system_clock() -> int:
 
 
 def _request_id(now_epoch_ms: int) -> str:
-    """UUIDv7-compatible diagnostic ID without depending on Python 3.14's uuid7."""
+    """UUIDv7-compatible diagnostic ID without depending on Python 3.14's ``uuid7``."""
     timestamp = now_epoch_ms & ((1 << 48) - 1)
     random = secrets.randbits(74)
     value = (
@@ -99,12 +139,7 @@ def _assert_url(request: httpx.Request, allow_insecure_localhost: bool) -> None:
     if (
         allow_insecure_localhost
         and request.url.scheme == "http"
-        and host
-        in {
-            "localhost",
-            "127.0.0.1",
-            "::1",
-        }
+        and host in {"localhost", "127.0.0.1", "::1"}
     ):
         return
     raise _configuration("url", "https-required")
@@ -120,29 +155,20 @@ def _assert_headers(request: httpx.Request, request_id: str) -> None:
             )
 
 
-def _capture_body(request: httpx.Request, request_id: str) -> bytes:
-    body_factory = request.extensions.get(_BODY_FACTORY_EXTENSION)
-    if not isinstance(request.stream, httpx.ByteStream) and body_factory is None:
-        raise NonReplayableRequestError(
-            "Streaming request body cannot be replayed",
-            context=Tx402ErrorContext(request_id=request_id, phase="initial"),
-            details={"reason": "stream-without-body-factory"},
-        )
-    return request.read()
-
-
-async def _capture_body_async(request: httpx.Request, request_id: str) -> bytes:
-    body_factory = request.extensions.get(_BODY_FACTORY_EXTENSION)
-    if not isinstance(request.stream, httpx.ByteStream) and body_factory is None:
-        raise NonReplayableRequestError(
-            "Streaming request body cannot be replayed",
-            context=Tx402ErrorContext(request_id=request_id, phase="initial"),
-            details={"reason": "stream-without-body-factory"},
-        )
-    return await request.aread()
+def _assert_replayable(request: httpx.Request, request_id: str) -> None:
+    if isinstance(request.stream, httpx.ByteStream):
+        return
+    if request.extensions.get(_BODY_FACTORY_EXTENSION) is not None:
+        return
+    raise NonReplayableRequestError(
+        "Streaming request body cannot be replayed",
+        context=Tx402ErrorContext(request_id=request_id, phase="initial"),
+        details={"reason": "stream-without-body-factory"},
+    )
 
 
 def _fresh_body(request: httpx.Request, captured: bytes, request_id: str) -> bytes:
+    """One transmission's body. With a factory the caller owns replay; else replay bytes."""
     factory = request.extensions.get(_BODY_FACTORY_EXTENSION)
     if factory is None:
         return captured
@@ -167,6 +193,12 @@ def _fresh_body(request: httpx.Request, captured: bytes, request_id: str) -> byt
 
 
 def _payment_requirements(requirement: Mapping[str, Any]) -> PaymentRequirements:
+    """The merchant's own offer, unmodified, as it goes back on the wire as ``accepted``.
+
+    The lifetime clamp SPEC §6.6 applies is handed to the scheme separately; a facilitator
+    comparing the payload against the merchant's published offer must see exactly what the
+    merchant published.
+    """
     return PaymentRequirements.model_validate(
         {
             "scheme": requirement["scheme"],
@@ -181,11 +213,22 @@ def _payment_requirements(requirement: Mapping[str, Any]) -> PaymentRequirements
 
 
 def _retry_request(
-    request: httpx.Request, body: bytes, signature: str, request_id: str
+    request: httpx.Request,
+    body: bytes,
+    signature: str,
+    request_id: str,
+    *,
+    disable_request_id_header: bool,
 ) -> httpx.Request:
+    """Clones the original request and adds exactly one PAYMENT-SIGNATURE (SPEC §6.7).
+
+    A caller's ``Idempotency-Key`` survives because the whole header set is copied; tx402
+    never synthesizes one, because merchant semantics are unknown.
+    """
     headers = request.headers.copy()
     headers[PROTOCOL_HEADERS["payment_signature"]] = signature
-    headers[REQUEST_ID_HEADER] = request_id
+    if not disable_request_id_header:
+        headers[REQUEST_ID_HEADER] = request_id
     return httpx.Request(
         request.method,
         request.url,
@@ -204,33 +247,166 @@ def _transport_error(error: BaseException, request_id: str, phase: str) -> Trans
     )
 
 
+def _blocked_redirect(
+    response: httpx.Response, request: httpx.Request, request_id: str
+) -> PaidRedirectBlockedError | None:
+    """SEC-005: a paid retry may not follow a redirect to another origin.
+
+    The block happens after the merchant already has the signature, so it is *not* proof
+    that nothing settled — which is why the caller hands it to the disposition table as
+    ``redirect-blocked`` rather than releasing the reservation here.
+    """
+    if response.status_code not in _REDIRECT_STATUSES:
+        return None
+    location = response.headers.get("location")
+    if location is None:
+        return None
+    destination = request.url.join(location)
+    source, target = _origin(request.url), _origin(destination)
+    if source == target:
+        return None
+    return PaidRedirectBlockedError(
+        "Paid retry redirect crossed origins",
+        context=Tx402ErrorContext(request_id=request_id, phase="retry"),
+        details={"fromOrigin": source, "toOrigin": target},
+    )
+
+
+def _origin(url: httpx.URL) -> str:
+    parsed = urlsplit(str(url))
+    return f"{parsed.scheme}://{parsed.netloc}".lower()
+
+
+def _read_payment_response(
+    response: httpx.Response,
+) -> tuple[SettlementEvidence, str | None]:
+    """Reads PAYMENT-RESPONSE, which upstream marks optional on a delivered resource.
+
+    Absent and undecodable both report ``"unknown"`` rather than a failure: neither is
+    evidence in either direction, and treating either as ``"unsuccessful"`` would refuse a
+    resource the merchant did deliver and did settle.
+    """
+    header = response.headers.get(PROTOCOL_HEADERS["payment_response"])
+    if not header:
+        return "unknown", None
+    try:
+        settlement = decode_payment_response_header(header)
+    except (ValueError, TypeError):
+        return "unknown", None
+    if not settlement.success:
+        return "unsuccessful", None
+    transaction = settlement.transaction
+    return "success", transaction if isinstance(transaction, str) and transaction else None
+
+
+@dataclass(frozen=True, slots=True)
+class _Prepared:
+    """The initial request, plus everything needed to reissue it byte-for-byte."""
+
+    request: httpx.Request
+    body: bytes
+    host: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Selection:
+    plan: RoutePlan
+    requirement: PolicyRequirement
+    adapter: ChainAdapter
+    network: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _Delivered:
+    response: httpx.Response
+
+
+@dataclass(frozen=True, slots=True)
+class _Rechallenged:
+    challenge: Mapping[str, Any]
+
+
 class _Core:
+    """Everything both transports share. Holds no per-request state."""
+
     def __init__(
         self,
         *,
-        evm_signer: EvmSigner | None,
+        evm_signer: object,
+        solana_signer: object,
         policy: PolicyEngine,
         spend_store: MemorySpendStore,
         manifest: Mapping[str, Any],
         clock: Clock,
-        rpc_transport: httpx.BaseTransport | httpx.AsyncBaseTransport | None,
+        evm_rpc_transport: object,
+        solana_rpc_transport: object,
         allow_insecure_localhost: bool,
         payment_retry_timeout_ms: int,
+        disable_request_id_header: bool,
     ) -> None:
         self.evm_signer = evm_signer
+        self.solana_signer = solana_signer
         self.policy = policy
         self.spend_store = spend_store
         self.manifest = manifest
         self.clock = clock
-        self.rpc_transport = rpc_transport
         self.allow_insecure_localhost = allow_insecure_localhost
         self.payment_retry_timeout_ms = payment_retry_timeout_ms
+        self.disable_request_id_header = disable_request_id_header
+        #: The one health index (SPEC §6.5). Every RPC pool in every adapter reports here.
+        self.health = HealthIndex()
+        self._rpc_transports = {
+            "eip155": evm_rpc_transport,
+            "solana": solana_rpc_transport,
+        }
+        self._adapters: dict[str, ChainAdapter | None] = {}
+        self.policy_scope_default = ""
+
+    # -- configuration surface -----------------------------------------------------------
+
+    def signer_for(self, family: str) -> object:
+        if family == "eip155":
+            return self.evm_signer
+        if family == "solana":
+            return self.solana_signer
+        return None
+
+    def adapter_for(self, family: str, context: Tx402ErrorContext) -> ChainAdapter | None:
+        if family in self._adapters:
+            return self._adapters[family]
+        try:
+            adapter = load_chain_adapter(
+                family,
+                health=self.health,
+                rpc_transport=self._rpc_transports.get(family),
+            )
+        except ImportError as error:
+            # A missing optional extra arrives here as a module resolution failure. The
+            # caller is told which extra to install rather than which module was absent.
+            raise ConfigurationError(
+                f"Paying on {family} requires the matching tx402 extra to be installed",
+                context=context,
+                details={
+                    "configPath": f"signers.{family}",
+                    "reason": "chain-adapter-unavailable",
+                },
+                cause=error,
+            ) from error
+        self._adapters[family] = adapter
+        return adapter
+
+    def reset_health(self) -> None:
+        """Clears in-memory health metrics. Never touches the spend ledger (SPEC §4.1)."""
+        self.health.reset()
+
+    # -- request preparation -------------------------------------------------------------
 
     def prepare(self, request: httpx.Request, request_id: str) -> tuple[bytes, str]:
         _assert_url(request, self.allow_insecure_localhost)
         _assert_headers(request, request_id)
         host = self.policy.assert_domain(str(request.url), request_id)
-        return _capture_body(request, request_id), host
+        _assert_replayable(request, request_id)
+        return request.read(), host
 
     async def prepare_async(
         self, request: httpx.Request, request_id: str
@@ -238,7 +414,8 @@ class _Core:
         _assert_url(request, self.allow_insecure_localhost)
         _assert_headers(request, request_id)
         host = self.policy.assert_domain(str(request.url), request_id)
-        return await _capture_body_async(request, request_id), host
+        _assert_replayable(request, request_id)
+        return await request.aread(), host
 
     def decode(
         self, response: httpx.Response, request: httpx.Request, request_id: str
@@ -262,199 +439,434 @@ class _Core:
             spend_store=self.spend_store,
         )
 
-    def evm_inputs(
-        self, decision: PolicyDecision, request_id: str
-    ) -> tuple[PolicyRequirement, Mapping[str, Any], Mapping[str, Any], str, Any]:
-        if self.evm_signer is None:
-            raise UnsupportedSchemeError(
-                "No configured signer can authorize the offered routes",
-                context=Tx402ErrorContext(request_id=request_id, phase="route"),
-                details={
-                    "offeredSchemes": [
-                        item.requirement["scheme"] for item in decision.requirements
-                    ],
-                    "offeredNetworks": [
-                        item.requirement["network"] for item in decision.requirements
-                    ],
-                },
-            )
-        item = next(
-            (
-                candidate
-                for candidate in decision.requirements
-                if candidate.requirement["network"].startswith("eip155:")
-            ),
-            None,
-        )
-        if item is None:
-            raise UnsupportedSchemeError(
-                "Python M3 supports only EVM routes",
-                context=Tx402ErrorContext(request_id=request_id, phase="route"),
-                details={
-                    "offeredSchemes": [
-                        candidate.requirement["scheme"]
-                        for candidate in decision.requirements
-                    ],
-                    "offeredNetworks": [
-                        candidate.requirement["network"]
-                        for candidate in decision.requirements
-                    ],
-                },
-            )
-        requirement = item.requirement
-        network = self.manifest["networks"][requirement["network"]]
-        asset = item.manifest_asset
-        context = Tx402ErrorContext(
-            request_id=request_id,
-            phase="route",
-            network=requirement["network"],
-            scheme=requirement["scheme"],
-            amount_atomic=requirement["amountAtomic"],
-            asset_id=item.asset_id,
-        )
-        address = resolve_evm_address(self.evm_signer, context)
-        plan = plan_exact_evm_authorization(
-            requirement=requirement,
-            network_id=requirement["network"],
-            network=network,
-            asset=asset,
-            payer=address,
-            now_epoch_ms=self.clock(),
-            context=context,
-        )
-        return item, network, asset, address, plan
+    # -- route planning ------------------------------------------------------------------
 
-    def reserve_and_sign(
+    def _probe_inputs(
+        self, requirement: PolicyRequirement, request_id: str, now_epoch_ms: int
+    ) -> tuple[ChainAdapter, ChainRouteRequest] | RouteProbeOutcome:
+        """Resolves signer, adapter, and manifest network, or says why it could not.
+
+        Each failure is a *candidate* rejection rather than a fatal error: SPEC §6.4 step 20
+        distinguishes "nothing was even attempted" from "everything attempted fell short",
+        and that distinction is only available if unattempted requirements survive as
+        candidates.
+        """
+        network_id = requirement.requirement["network"]
+        family = chain_family(network_id)
+        context = Tx402ErrorContext(request_id=request_id, phase="route")
+        if self.signer_for(family) is None:
+            return RouteProbeOutcome(kind="rejected", reason="no-signer-configured")
+        adapter = self.adapter_for(family, context)
+        if adapter is None:
+            return RouteProbeOutcome(kind="rejected", reason="scheme-unsupported")
+        network = self.manifest["networks"].get(network_id)
+        if network is None:
+            return RouteProbeOutcome(kind="rejected", reason="network-not-in-manifest")
+        return adapter, ChainRouteRequest(
+            request_id=request_id,
+            network_id=network_id,
+            network=network,
+            asset=requirement.manifest_asset,
+            requirement=requirement,
+            signer=self.signer_for(family),
+            now_epoch_ms=now_epoch_ms,
+        )
+
+    @staticmethod
+    def _classify_route_failure(error: BaseException) -> RouteProbeOutcome:
+        """Maps an adapter failure onto the vocabulary the RouteCandidate schema allows.
+
+        A ``TransportError`` from a chain adapter is an RPC that could not answer, which
+        makes one candidate non-viable — not the whole plan fatal. Anything else (a missing
+        extra, a manifest inconsistency) is a configuration problem the caller has to see,
+        and reporting it as "insufficient liquidity" sends them looking at their wallet.
+        """
+        if not isinstance(error, TransportError):
+            return RouteProbeOutcome(
+                kind="failed", reason="balance-unavailable", error=error, fatal=True
+            )
+        category = error.details.get("causeCategory")
+        if category in {"chain-id-mismatch", "genesis-hash-mismatch"}:
+            reason = "chain-identity-mismatch"
+        elif category == "circuit-open":
+            reason = "circuit-open"
+        else:
+            reason = "balance-unavailable"
+        return RouteProbeOutcome(kind="failed", reason=reason, error=error, fatal=False)
+
+    def plan(
+        self, decision: PolicyDecision, request_id: str, now_epoch_ms: int
+    ) -> _Selection:
+        def probe(
+            requirement: PolicyRequirement, balances: BalanceProbeCache
+        ) -> RouteProbeOutcome:
+            resolved = self._probe_inputs(requirement, request_id, now_epoch_ms)
+            if isinstance(resolved, RouteProbeOutcome):
+                return resolved
+            adapter, route_request = resolved
+            try:
+                route = adapter.plan_route(
+                    dataclasses.replace(route_request, balances=balances)
+                )
+            except BaseException as error:
+                return self._classify_route_failure(error)
+            return RouteProbeOutcome(kind="route", route=route)
+
+        plan = plan_routes(
+            requirements=decision.requirements,
+            prefer_networks=self.policy.prefer_networks,
+            health=self.health,
+            now_epoch_ms=now_epoch_ms,
+            context=Tx402ErrorContext(request_id=request_id, phase="route"),
+            probe=probe,
+        )
+        return self._selection(plan, request_id)
+
+    async def plan_async(
+        self, decision: PolicyDecision, request_id: str, now_epoch_ms: int
+    ) -> _Selection:
+        async def probe(
+            requirement: PolicyRequirement, balances: BalanceProbeCache
+        ) -> RouteProbeOutcome:
+            resolved = self._probe_inputs(requirement, request_id, now_epoch_ms)
+            if isinstance(resolved, RouteProbeOutcome):
+                return resolved
+            adapter, route_request = resolved
+            try:
+                route = await adapter.plan_route_async(
+                    dataclasses.replace(route_request, balances=balances)
+                )
+            except BaseException as error:
+                return self._classify_route_failure(error)
+            return RouteProbeOutcome(kind="route", route=route)
+
+        plan = await plan_routes_async(
+            requirements=decision.requirements,
+            prefer_networks=self.policy.prefer_networks,
+            health=self.health,
+            now_epoch_ms=now_epoch_ms,
+            context=Tx402ErrorContext(request_id=request_id, phase="route"),
+            probe=probe,
+        )
+        return self._selection(plan, request_id)
+
+    def _selection(self, plan: RoutePlan, request_id: str) -> _Selection:
+        network_id = plan.selected_requirement.requirement["network"]
+        context = Tx402ErrorContext(request_id=request_id, phase="route")
+        adapter = self.adapter_for(chain_family(network_id), context)
+        network = self.manifest["networks"].get(network_id)
+        if adapter is None or network is None:  # pragma: no cover - probed successfully
+            raise UnsupportedSchemeError(
+                "Selected network lost its chain adapter",
+                context=context,
+                details={
+                    "offeredSchemes": [plan.selected_requirement.requirement["scheme"]],
+                    "offeredNetworks": [network_id],
+                },
+            )
+        return _Selection(plan, plan.selected_requirement, adapter, network)
+
+    # -- reservation and signing ---------------------------------------------------------
+
+    def reserve(
         self,
         *,
-        request: httpx.Request,
-        captured_body: bytes,
-        host: str,
+        selection: _Selection,
+        prepared: _Prepared,
         request_id: str,
-        item: PolicyRequirement,
-        asset: Mapping[str, Any],
-        address: str,
-        plan: Any,
         challenge_hash: str,
-    ) -> tuple[str, str, int]:
-        requirement = item.requirement
+    ) -> tuple[SpendReservation, str]:
+        """Atomic reservation, before a signer is reachable (SEC-002, SPEC §6.6)."""
+        item = selection.requirement
         now = self.clock()
-        reservation_id = _request_id(now)
         request_hash = fingerprint_request(
-            method=request.method,
-            url=str(request.url),
-            body=captured_body,
+            method=prepared.request.method,
+            url=str(prepared.request.url),
+            body=prepared.body,
             challenge_hash=challenge_hash,
         )
         reservation = self.spend_store.reserve(
-            reservation_id=reservation_id,
+            reservation_id=_request_id(now),
             request_id=request_id,
-            policy_scope=host,
+            policy_scope=prepared.host,
             request_fingerprint=request_hash,
             asset_id=item.asset_id,
-            amount_atomic=requirement["amountAtomic"],
+            amount_atomic=item.requirement["amountAtomic"],
             max_per_hour_atomic=item.max_per_hour_atomic,
             now_epoch_ms=now,
         )
-        sign_context = Tx402ErrorContext(
+        return reservation, request_hash
+
+    def _authorization_request(
+        self,
+        *,
+        selection: _Selection,
+        prepared: _Prepared,
+        request_id: str,
+        request_hash: str,
+    ) -> ChainAuthorizationRequest:
+        item = selection.requirement
+        return ChainAuthorizationRequest(
             request_id=request_id,
-            phase="sign",
-            network=requirement["network"],
-            scheme=requirement["scheme"],
-            amount_atomic=requirement["amountAtomic"],
-            asset_id=item.asset_id,
-            reservation_id=reservation_id,
+            network_id=item.requirement["network"],
+            network=selection.network,
+            asset=item.manifest_asset,
+            requirement=item,
+            signer=self.signer_for(chain_family(item.requirement["network"])),
+            now_epoch_ms=self.clock(),
+            resource_host=normalize_policy_host(str(prepared.request.url)),
+            request_hash=request_hash,
+            max_authorization_seconds=MAX_AUTHORIZATION_SECONDS,
         )
-        try:
-            payload, expires = create_evm_authorization(
-                signer=self.evm_signer,  # type: ignore[arg-type]
-                address=address,
-                plan=plan,
-                requirement=requirement,
-                asset=asset,
-                resource_host=host,
-                request_hash=request_hash,
-                context=sign_context,
+
+    @staticmethod
+    def _signature_header(selection: _Selection, authorization: Any, url: str) -> str:
+        return encode_payment_signature_header(
+            PaymentPayload(
+                x402_version=authorization.x402_version,
+                payload=dict(authorization.payload),
+                accepted=_payment_requirements(selection.requirement.requirement),
+                resource=ResourceInfo(url=url),
             )
-        except BaseException:
+        )
+
+    def sign(
+        self,
+        *,
+        selection: _Selection,
+        prepared: _Prepared,
+        request_id: str,
+        request_hash: str,
+    ) -> str:
+        authorization = selection.adapter.create_authorization(
+            self._authorization_request(
+                selection=selection,
+                prepared=prepared,
+                request_id=request_id,
+                request_hash=request_hash,
+            )
+        )
+        return self._signature_header(selection, authorization, str(prepared.request.url))
+
+    async def sign_async(
+        self,
+        *,
+        selection: _Selection,
+        prepared: _Prepared,
+        request_id: str,
+        request_hash: str,
+    ) -> str:
+        authorization = await selection.adapter.create_authorization_async(
+            self._authorization_request(
+                selection=selection,
+                prepared=prepared,
+                request_id=request_id,
+                request_hash=request_hash,
+            )
+        )
+        return self._signature_header(selection, authorization, str(prepared.request.url))
+
+    # -- disposition ---------------------------------------------------------------------
+
+    def release_quietly(self, reservation_id: str) -> None:
+        """Releases without letting a store failure mask the original error.
+
+        A reservation expires on its own after 120 s, so a store that cannot release is not
+        a reason to replace a precise failure with a vaguer one.
+        """
+        with suppress(Tx402Error):
             self.spend_store.release(
                 reservation_id=reservation_id, now_epoch_ms=self.clock()
             )
-            raise
-        outer = PaymentPayload(
-            x402_version=2,
-            payload=payload,
-            accepted=_payment_requirements(requirement),
-            resource=ResourceInfo(url=str(request.url)),
-        )
-        return encode_payment_signature_header(outer), reservation.reservation_id, expires
 
-    def complete(
+    def ambiguous(
         self,
-        response: httpx.Response,
         *,
         request_id: str,
-        reservation_id: str,
-        reservation_expires: int,
-    ) -> httpx.Response:
-        if 200 <= response.status_code < 300:
-            settlement_id: str | None = None
-            payment_response = response.headers.get(PROTOCOL_HEADERS["payment_response"])
-            if payment_response:
-                try:
-                    settlement = decode_payment_response_header(payment_response)
-                except (ValueError, TypeError):
-                    settlement = None
-                if settlement is not None:
-                    if not settlement.success:
-                        self.spend_store.release(
-                            reservation_id=reservation_id, now_epoch_ms=self.clock()
-                        )
-                        raise ResourceDeliveryError(
-                            "Merchant reported unsuccessful settlement",
-                            context=Tx402ErrorContext(
-                                request_id=request_id, phase="complete", paid=False
-                            ),
-                            details={
-                                "status": response.status_code,
-                                "reason": "settlement-unsuccessful",
-                            },
-                        )
-                    settlement_id = settlement.transaction
-            self.spend_store.commit(
-                reservation_id=reservation_id,
-                committed_at_epoch_ms=self.clock(),
-                settlement_id=settlement_id,
+        reservation: SpendReservation,
+        cause_category: str,
+        cause: BaseException | None = None,
+    ) -> AmbiguousPaymentError:
+        return AmbiguousPaymentError(
+            "The payment was transmitted but its outcome is unknown",
+            context=Tx402ErrorContext(
+                request_id=request_id,
+                phase="retry",
+                paid="unknown",
+                reservation_id=reservation.reservation_id,
+            ),
+            details={
+                "reservationExpiresAtEpochMs": reservation.expires_at_epoch_ms,
+                "causeCategory": cause_category,
+            },
+            cause=cause,
+        )
+
+    def transmission_failed(
+        self,
+        *,
+        request_id: str,
+        reservation: SpendReservation,
+        attempt: int,
+        cause: BaseException,
+    ) -> AmbiguousPaymentError:
+        """A signature-bearing request that never completed (SPEC §6.7).
+
+        Routed through the disposition table rather than categorized here, so the category
+        is the one the frozen ``completion.paid-attempt`` vectors pin in both languages.
+        """
+        disposition = classify_paid_attempt(
+            attempt=attempt,
+            max_paid_attempts=self.policy.max_paid_attempts,
+            result=PaidAttemptResult(kind="transport-failure"),
+        )
+        return self.ambiguous(
+            request_id=request_id,
+            reservation=reservation,
+            cause_category=disposition.cause_category or "transport-after-signature",
+            cause=cause,
+        )
+
+    def settle(
+        self,
+        *,
+        response: httpx.Response,
+        request: httpx.Request,
+        prepared: _Prepared,
+        request_id: str,
+        reservation: SpendReservation,
+        attempt: int,
+    ) -> _Delivered | _Rechallenged:
+        """Applies SPEC §6.7's disposition to one completed signature-bearing attempt."""
+        blocked = _blocked_redirect(response, request, request_id)
+        if blocked is not None:
+            disposition = classify_paid_attempt(
+                attempt=attempt,
+                max_paid_attempts=self.policy.max_paid_attempts,
+                result=PaidAttemptResult(kind="redirect-blocked"),
             )
-            return response
-        if 300 <= response.status_code < 400 or response.status_code >= 500:
-            raise AmbiguousPaymentError(
-                "Paid request outcome is ambiguous",
+            raise self.ambiguous(
+                request_id=request_id,
+                reservation=reservation,
+                cause_category=disposition.cause_category or "redirect-blocked",
+                cause=blocked,
+            )
+
+        # PAYMENT-RESPONSE is read *before* the disposition is taken: "the merchant's own
+        # metadata says the settlement failed" is one of the table's inputs, not a check
+        # after the fact.
+        settlement: SettlementEvidence = "unknown"
+        settlement_id: str | None = None
+        if 200 <= response.status_code < 300:
+            settlement, settlement_id = _read_payment_response(response)
+
+        disposition = classify_paid_attempt(
+            attempt=attempt,
+            max_paid_attempts=self.policy.max_paid_attempts,
+            result=PaidAttemptResult(
+                kind="response", status=response.status_code, settlement=settlement
+            ),
+        )
+
+        if disposition.kind == "ambiguous":
+            raise self.ambiguous(
+                request_id=request_id,
+                reservation=reservation,
+                cause_category=disposition.cause_category or "unknown",
+            )
+
+        # Both remaining non-commit dispositions release: the merchant either re-challenged
+        # or refused, and each is evidence that no settlement occurred (SPEC §6.7).
+        if disposition.kind != "commit":
+            self.release_quietly(reservation.reservation_id)
+
+        if disposition.kind == "rechallenge":
+            # Parsed from scratch, with the same binding checks the first challenge got.
+            # The reservation is already gone, so a challenge that fails to decode fails
+            # cleanly rather than stranding budget.
+            return _Rechallenged(self.decode(response, prepared.request, request_id))
+
+        if disposition.kind == "failed":
+            raise ResourceDeliveryError(
+                f"Merchant re-challenged every one of the "
+                f"{self.policy.max_paid_attempts} permitted paid attempts"
+                if disposition.reason == MAX_PAID_ATTEMPTS_REASON
+                else "Merchant did not deliver the paid resource",
                 context=Tx402ErrorContext(
                     request_id=request_id,
-                    phase="complete",
-                    paid="unknown",
-                    reservation_id=reservation_id,
+                    phase="complete"
+                    if disposition.reason == "settlement-unsuccessful"
+                    else "retry",
+                    paid=False,
+                    reservation_id=reservation.reservation_id,
                 ),
                 details={
-                    "reservationExpiresAtEpochMs": reservation_expires,
-                    "causeCategory": (
-                        "redirect-not-followed"
-                        if response.status_code < 400
-                        else "merchant-server-error"
-                    ),
+                    "status": response.status_code,
+                    "reason": disposition.reason,
+                    "attempt": attempt,
+                    "maxPaidAttempts": self.policy.max_paid_attempts,
                 },
             )
-        self.spend_store.release(reservation_id=reservation_id, now_epoch_ms=self.clock())
-        raise ResourceDeliveryError(
-            "Merchant refused the paid request",
-            context=Tx402ErrorContext(request_id=request_id, phase="complete", paid=False),
-            details={"status": response.status_code, "reason": "merchant-refused"},
+
+        self.spend_store.commit(
+            reservation_id=reservation.reservation_id,
+            committed_at_epoch_ms=self.clock(),
+            settlement_id=settlement_id,
         )
+        return _Delivered(response)
+
+
+def _validate_retry_timeout(value: object) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < _MIN_PAYMENT_RETRY_TIMEOUT_MS
+    ):
+        raise _configuration("payment_retry_timeout_ms", "below-minimum")
+    return value
+
+
+def _build_core(
+    *,
+    evm_signer: object,
+    solana_signer: object,
+    policy: Policy | None,
+    routing: RoutingPolicy | None,
+    spend_store: MemorySpendStore | None,
+    manifest: Mapping[str, Any],
+    clock: Clock,
+    evm_rpc_transport: object,
+    solana_rpc_transport: object,
+    allow_insecure_localhost: bool,
+    payment_retry_timeout_ms: int,
+    disable_request_id_header: bool,
+) -> tuple[_Core, MemorySpendStore]:
+    """Validates configuration synchronously and returns an immutable core (SPEC §4.1)."""
+    verified = assert_valid_release_manifest(
+        manifest,
+        context=Tx402ErrorContext(request_id="configuration", phase="initial"),
+        now_epoch_ms=clock(),
+    )
+    _validate_retry_timeout(payment_retry_timeout_ms)
+    store = spend_store or MemorySpendStore()
+    core = _Core(
+        evm_signer=evm_signer,
+        solana_signer=solana_signer,
+        policy=PolicyEngine(verified, policy, routing),
+        spend_store=store,
+        manifest=verified,
+        clock=clock,
+        evm_rpc_transport=evm_rpc_transport,
+        solana_rpc_transport=solana_rpc_transport,
+        allow_insecure_localhost=allow_insecure_localhost,
+        payment_retry_timeout_ms=payment_retry_timeout_ms,
+        disable_request_id_header=disable_request_id_header,
+    )
+    return core, store
 
 
 class Tx402Transport(httpx.BaseTransport):
-    """Synchronous HTTPX transport implementing the tx402 M1-M3 request path."""
+    """Synchronous HTTPX transport implementing the full tx402 request path."""
 
     def __init__(self, inner: httpx.BaseTransport, core: _Core) -> None:
         self._inner = inner
@@ -475,8 +887,9 @@ class Tx402Transport(httpx.BaseTransport):
         )
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        request_id = _request_id(self._core.clock())
-        body, host = self._core.prepare(request, request_id)
+        core = self._core
+        request_id = _request_id(core.clock())
+        body, host = core.prepare(request, request_id)
         try:
             response = self._inner.handle_request(request)
         except httpx.HTTPError as error:
@@ -484,91 +897,81 @@ class Tx402Transport(httpx.BaseTransport):
         if response.status_code != 402:
             return response
         response.read()
-        payment_required = self._core.decode(response, request, request_id)
-        decision = self._core.decide(payment_required, request_id, host)
-        item, network, asset, address, plan = self._core.evm_inputs(decision, request_id)
-        pool = EvmRpcPool(network["rpcUrls"], transport=self._core.rpc_transport)
-        try:
-            reading = pool.read_balance(
-                chain_id=plan.chain_id,
-                token=plan.verifying_contract,
-                owner=address,
-            )
-        except EvmRpcError as error:
-            raise TransportError(
-                "Base RPC is unavailable for route planning",
-                context=Tx402ErrorContext(request_id=request_id, phase="route"),
-                details={"causeCategory": error.failure},
-                cause=error,
-            ) from error
-        if reading.balance_atomic < int(item.requirement["amountAtomic"]):
-            raise InsufficientLiquidityError(
-                "No offered route has sufficient balance",
-                context=Tx402ErrorContext(request_id=request_id, phase="route"),
-                details={
-                    "deficits": [
-                        {
-                            "network": item.requirement["network"],
-                            "requiredAtomic": item.requirement["amountAtomic"],
-                            "availableAtomic": str(reading.balance_atomic),
-                        }
-                    ]
-                },
-            )
-        signature, reservation_id, expires = self._core.reserve_and_sign(
-            request=request,
-            captured_body=body,
-            host=host,
+        prepared = _Prepared(request, body, host)
+        challenge = core.decode(response, request, request_id)
+
+        # The re-challenge loop (SPEC §6.7). Nothing carries over between attempts: each
+        # pass re-evaluates policy, re-plans from the new challenge, takes its own
+        # reservation, and produces its own signature. The bound lives in the disposition
+        # table, not here — `classify_paid_attempt` returns "rechallenge" only while
+        # attempts remain, and turns the last one into a typed terminal error.
+        attempt = 1
+        while True:
+            outcome = self._attempt(prepared, request_id, challenge, attempt)
+            if isinstance(outcome, _Delivered):
+                return outcome.response
+            challenge = outcome.challenge
+            attempt += 1
+
+    def _attempt(
+        self,
+        prepared: _Prepared,
+        request_id: str,
+        challenge: Mapping[str, Any],
+        attempt: int,
+    ) -> _Delivered | _Rechallenged:
+        core = self._core
+        decision = core.decide(challenge, request_id, prepared.host)
+        selection = core.plan(decision, request_id, core.clock())
+        reservation, request_hash = core.reserve(
+            selection=selection,
+            prepared=prepared,
             request_id=request_id,
-            item=item,
-            asset=asset,
-            address=address,
-            plan=plan,
-            challenge_hash=payment_required["headerHash"],
-        )
-        retry = _retry_request(
-            request, _fresh_body(request, body, request_id), signature, request_id
+            challenge_hash=challenge["headerHash"],
         )
         try:
-            paid = _with_deadline(
+            signature = core.sign(
+                selection=selection,
+                prepared=prepared,
+                request_id=request_id,
+                request_hash=request_hash,
+            )
+            retry = _retry_request(
+                prepared.request,
+                _fresh_body(prepared.request, prepared.body, request_id),
+                signature,
+                request_id,
+                disable_request_id_header=core.disable_request_id_header,
+            )
+        except BaseException:
+            # Still pre-transmission: nothing reached the merchant, so the budget goes back.
+            core.release_quietly(reservation.reservation_id)
+            raise
+
+        try:
+            paid = with_deadline(
                 lambda: self._inner.handle_request(retry),
-                self._core.payment_retry_timeout_ms,
+                core.payment_retry_timeout_ms,
             )
-        except TimeoutError as error:
-            raise AmbiguousPaymentError(
-                "Paid request timed out",
-                context=Tx402ErrorContext(
-                    request_id=request_id,
-                    phase="retry",
-                    paid="unknown",
-                    reservation_id=reservation_id,
-                ),
-                details={
-                    "reservationExpiresAtEpochMs": expires,
-                    "causeCategory": "timeout",
-                },
+        except (TimeoutError, httpx.HTTPError) as error:
+            # From here the signature is on the wire, so no failure path may assume
+            # otherwise. A transmission that never completed is ambiguous whatever the cause
+            # — a deadline and a reset are the same fact about settlement — so both reach
+            # the disposition table as one input and share its category.
+            raise core.transmission_failed(
+                request_id=request_id,
+                reservation=reservation,
+                attempt=attempt,
                 cause=error,
             ) from error
-        except httpx.HTTPError as error:
-            raise AmbiguousPaymentError(
-                "Paid request transport failed",
-                context=Tx402ErrorContext(
-                    request_id=request_id,
-                    phase="retry",
-                    paid="unknown",
-                    reservation_id=reservation_id,
-                ),
-                details={
-                    "reservationExpiresAtEpochMs": expires,
-                    "causeCategory": "transport",
-                },
-                cause=error,
-            ) from error
-        return self._core.complete(
-            paid,
+        paid.read()
+        return core.settle(
+            response=paid,
+            request=retry,
+            prepared=prepared,
             request_id=request_id,
-            reservation_id=reservation_id,
-            reservation_expires=expires,
+            reservation=reservation,
+            attempt=attempt,
         )
 
     def close(self) -> None:
@@ -597,8 +1000,9 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
         )
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        request_id = _request_id(self._core.clock())
-        body, host = await self._core.prepare_async(request, request_id)
+        core = self._core
+        request_id = _request_id(core.clock())
+        body, host = await core.prepare_async(request, request_id)
         try:
             response = await self._inner.handle_async_request(request)
         except httpx.HTTPError as error:
@@ -606,101 +1010,75 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
         if response.status_code != 402:
             return response
         await response.aread()
-        payment_required = self._core.decode(response, request, request_id)
-        decision = self._core.decide(payment_required, request_id, host)
-        item, network, asset, address, plan = await asyncio.to_thread(
-            self._core.evm_inputs, decision, request_id
-        )
-        pool = EvmRpcPool(network["rpcUrls"], transport=self._core.rpc_transport)
-        try:
-            reading = await pool.read_balance_async(
-                chain_id=plan.chain_id,
-                token=plan.verifying_contract,
-                owner=address,
-            )
-        except EvmRpcError as error:
-            raise TransportError(
-                "Base RPC is unavailable for route planning",
-                context=Tx402ErrorContext(request_id=request_id, phase="route"),
-                details={"causeCategory": error.failure},
-                cause=error,
-            ) from error
-        if reading.balance_atomic < int(item.requirement["amountAtomic"]):
-            raise InsufficientLiquidityError(
-                "No offered route has sufficient balance",
-                context=Tx402ErrorContext(request_id=request_id, phase="route"),
-                details={
-                    "deficits": [
-                        {
-                            "network": item.requirement["network"],
-                            "requiredAtomic": item.requirement["amountAtomic"],
-                            "availableAtomic": str(reading.balance_atomic),
-                        }
-                    ]
-                },
-            )
-        signature, reservation_id, expires = await asyncio.to_thread(
-            self._core.reserve_and_sign,
-            request=request,
-            captured_body=body,
-            host=host,
+        prepared = _Prepared(request, body, host)
+        challenge = core.decode(response, request, request_id)
+
+        attempt = 1
+        while True:
+            outcome = await self._attempt(prepared, request_id, challenge, attempt)
+            if isinstance(outcome, _Delivered):
+                return outcome.response
+            challenge = outcome.challenge
+            attempt += 1
+
+    async def _attempt(
+        self,
+        prepared: _Prepared,
+        request_id: str,
+        challenge: Mapping[str, Any],
+        attempt: int,
+    ) -> _Delivered | _Rechallenged:
+        core = self._core
+        decision = core.decide(challenge, request_id, prepared.host)
+        selection = await core.plan_async(decision, request_id, core.clock())
+        reservation, request_hash = core.reserve(
+            selection=selection,
+            prepared=prepared,
             request_id=request_id,
-            item=item,
-            asset=asset,
-            address=address,
-            plan=plan,
-            challenge_hash=payment_required["headerHash"],
-        )
-        retry = _retry_request(
-            request, _fresh_body(request, body, request_id), signature, request_id
+            challenge_hash=challenge["headerHash"],
         )
         try:
-            paid = await _with_deadline_async(
+            signature = await core.sign_async(
+                selection=selection,
+                prepared=prepared,
+                request_id=request_id,
+                request_hash=request_hash,
+            )
+            retry = _retry_request(
+                prepared.request,
+                _fresh_body(prepared.request, prepared.body, request_id),
+                signature,
+                request_id,
+                disable_request_id_header=core.disable_request_id_header,
+            )
+        except BaseException:
+            core.release_quietly(reservation.reservation_id)
+            raise
+
+        try:
+            paid = await with_deadline_async(
                 self._inner.handle_async_request(retry),
-                self._core.payment_retry_timeout_ms,
+                core.payment_retry_timeout_ms,
             )
-        except TimeoutError as error:
-            raise AmbiguousPaymentError(
-                "Paid request timed out",
-                context=Tx402ErrorContext(
-                    request_id=request_id,
-                    phase="retry",
-                    paid="unknown",
-                    reservation_id=reservation_id,
-                ),
-                details={
-                    "reservationExpiresAtEpochMs": expires,
-                    "causeCategory": "timeout",
-                },
+        except (TimeoutError, httpx.HTTPError) as error:
+            raise core.transmission_failed(
+                request_id=request_id,
+                reservation=reservation,
+                attempt=attempt,
                 cause=error,
             ) from error
-        except httpx.HTTPError as error:
-            raise AmbiguousPaymentError(
-                "Paid request transport failed",
-                context=Tx402ErrorContext(
-                    request_id=request_id,
-                    phase="retry",
-                    paid="unknown",
-                    reservation_id=reservation_id,
-                ),
-                details={
-                    "reservationExpiresAtEpochMs": expires,
-                    "causeCategory": "transport",
-                },
-                cause=error,
-            ) from error
-        return self._core.complete(
-            paid,
+        await paid.aread()
+        return core.settle(
+            response=paid,
+            request=retry,
+            prepared=prepared,
             request_id=request_id,
-            reservation_id=reservation_id,
-            reservation_expires=expires,
+            reservation=reservation,
+            attempt=attempt,
         )
 
     async def aclose(self) -> None:
         await self._inner.aclose()
-
-
-ClientT = TypeVar("ClientT", bound="Tx402Client")
 
 
 class Tx402Client:
@@ -709,41 +1087,39 @@ class Tx402Client:
     def __init__(
         self,
         *,
-        evm_signer: EvmSigner | None = None,
+        evm_signer: object = None,
+        solana_signer: object = None,
         policy: Policy | None = None,
         routing: RoutingPolicy | None = None,
         spend_store: MemorySpendStore | None = None,
         transport: httpx.BaseTransport | None = None,
         evm_rpc_transport: httpx.BaseTransport | None = None,
+        solana_rpc_transport: httpx.BaseTransport | None = None,
         manifest: Mapping[str, Any] = BUNDLED_MANIFEST,
         clock: Clock = _system_clock,
         allow_insecure_localhost: bool = False,
         payment_retry_timeout_ms: int = _PAYMENT_RETRY_TIMEOUT_MS,
+        disable_request_id_header: bool = False,
     ) -> None:
-        verified = assert_valid_release_manifest(
-            manifest,
-            context=Tx402ErrorContext(request_id="configuration", phase="initial"),
-            now_epoch_ms=clock(),
-        )
-        if (
-            isinstance(payment_retry_timeout_ms, bool)
-            or not isinstance(payment_retry_timeout_ms, int)
-            or payment_retry_timeout_ms < _MIN_PAYMENT_RETRY_TIMEOUT_MS
-        ):
-            raise _configuration("payment_retry_timeout_ms", "below-minimum")
-        self._store = spend_store or MemorySpendStore()
-        engine = PolicyEngine(verified, policy, routing)
-        core = _Core(
+        core, store = _build_core(
             evm_signer=evm_signer,
-            policy=engine,
-            spend_store=self._store,
-            manifest=verified,
+            solana_signer=solana_signer,
+            policy=policy,
+            routing=routing,
+            spend_store=spend_store,
+            manifest=manifest,
             clock=clock,
-            rpc_transport=evm_rpc_transport,
+            evm_rpc_transport=evm_rpc_transport,
+            solana_rpc_transport=solana_rpc_transport,
             allow_insecure_localhost=allow_insecure_localhost,
             payment_retry_timeout_ms=payment_retry_timeout_ms,
+            disable_request_id_header=disable_request_id_header,
         )
+        self._core = core
+        self._store = store
         self._transport = Tx402Transport(transport or httpx.HTTPTransport(), core)
+        # Redirects are surfaced rather than followed so a cross-origin `Location` is
+        # refused before a second request could carry the signature elsewhere (SEC-005).
         self._client = httpx.Client(transport=self._transport, follow_redirects=False)
 
     def request(
@@ -754,13 +1130,7 @@ class Tx402Client:
         body_factory: BodyFactory | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
-        if body_factory is not None:
-            if any(key in kwargs for key in ("content", "data", "files", "json")):
-                raise TypeError("body_factory cannot be combined with another request body")
-            kwargs["content"] = body_factory()
-        request = self._client.build_request(method, url, **kwargs)
-        if body_factory is not None:
-            request.extensions[_BODY_FACTORY_EXTENSION] = body_factory
+        request = _build_request(self._client, method, url, body_factory, kwargs)
         return self._client.send(request)
 
     def inspect(self, method: str, url: str, **kwargs: Any) -> PaymentInspection:
@@ -774,6 +1144,10 @@ class Tx402Client:
             asset_id=asset_id,
             now_epoch_ms=_system_clock() if now_epoch_ms is None else now_epoch_ms,
         )
+
+    def reset_health(self) -> None:
+        """Clears in-memory health metrics; does not clear the spend ledger (SPEC §4.1)."""
+        self._core.reset_health()
 
     def get(self, url: str, **kwargs: Any) -> httpx.Response:
         return self.request("GET", url, **kwargs)
@@ -791,49 +1165,42 @@ class Tx402Client:
         self.close()
 
 
-AsyncClientT = TypeVar("AsyncClientT", bound="AsyncTx402Client")
-
-
 class AsyncTx402Client:
     """Asynchronous HTTPX-compatible buyer client."""
 
     def __init__(
         self,
         *,
-        evm_signer: EvmSigner | None = None,
+        evm_signer: object = None,
+        solana_signer: object = None,
         policy: Policy | None = None,
         routing: RoutingPolicy | None = None,
         spend_store: MemorySpendStore | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         evm_rpc_transport: httpx.AsyncBaseTransport | None = None,
+        solana_rpc_transport: httpx.AsyncBaseTransport | None = None,
         manifest: Mapping[str, Any] = BUNDLED_MANIFEST,
         clock: Clock = _system_clock,
         allow_insecure_localhost: bool = False,
         payment_retry_timeout_ms: int = _PAYMENT_RETRY_TIMEOUT_MS,
+        disable_request_id_header: bool = False,
     ) -> None:
-        verified = assert_valid_release_manifest(
-            manifest,
-            context=Tx402ErrorContext(request_id="configuration", phase="initial"),
-            now_epoch_ms=clock(),
-        )
-        if (
-            isinstance(payment_retry_timeout_ms, bool)
-            or not isinstance(payment_retry_timeout_ms, int)
-            or payment_retry_timeout_ms < _MIN_PAYMENT_RETRY_TIMEOUT_MS
-        ):
-            raise _configuration("payment_retry_timeout_ms", "below-minimum")
-        self._store = spend_store or MemorySpendStore()
-        engine = PolicyEngine(verified, policy, routing)
-        core = _Core(
+        core, store = _build_core(
             evm_signer=evm_signer,
-            policy=engine,
-            spend_store=self._store,
-            manifest=verified,
+            solana_signer=solana_signer,
+            policy=policy,
+            routing=routing,
+            spend_store=spend_store,
+            manifest=manifest,
             clock=clock,
-            rpc_transport=evm_rpc_transport,
+            evm_rpc_transport=evm_rpc_transport,
+            solana_rpc_transport=solana_rpc_transport,
             allow_insecure_localhost=allow_insecure_localhost,
             payment_retry_timeout_ms=payment_retry_timeout_ms,
+            disable_request_id_header=disable_request_id_header,
         )
+        self._core = core
+        self._store = store
         self._transport = AsyncTx402Transport(transport or httpx.AsyncHTTPTransport(), core)
         self._client = httpx.AsyncClient(transport=self._transport, follow_redirects=False)
 
@@ -845,13 +1212,7 @@ class AsyncTx402Client:
         body_factory: BodyFactory | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
-        if body_factory is not None:
-            if any(key in kwargs for key in ("content", "data", "files", "json")):
-                raise TypeError("body_factory cannot be combined with another request body")
-            kwargs["content"] = body_factory()
-        request = self._client.build_request(method, url, **kwargs)
-        if body_factory is not None:
-            request.extensions[_BODY_FACTORY_EXTENSION] = body_factory
+        request = _build_request(self._client, method, url, body_factory, kwargs)
         return await self._client.send(request)
 
     async def inspect(self, method: str, url: str, **kwargs: Any) -> PaymentInspection:
@@ -868,6 +1229,9 @@ class AsyncTx402Client:
             now_epoch_ms=_system_clock() if now_epoch_ms is None else now_epoch_ms,
         )
 
+    def reset_health(self) -> None:
+        self._core.reset_health()
+
     async def get(self, url: str, **kwargs: Any) -> httpx.Response:
         return await self.request("GET", url, **kwargs)
 
@@ -882,3 +1246,36 @@ class AsyncTx402Client:
 
     async def __aexit__(self, *args: object) -> None:
         await self.aclose()
+
+
+def _build_request(
+    client: httpx.Client | httpx.AsyncClient,
+    method: str,
+    url: str,
+    body_factory: BodyFactory | None,
+    kwargs: dict[str, Any],
+) -> httpx.Request:
+    """Builds the initial request, capturing a replayable body before it is sent.
+
+    SPEC §6.1 requires the replayable representation to exist *before* the first send —
+    discovering after a 402 that the body cannot be replayed would mean the caller's stream
+    was already gone.
+    """
+    if body_factory is not None:
+        if any(key in kwargs for key in ("content", "data", "files", "json")):
+            raise TypeError("body_factory cannot be combined with another request body")
+        kwargs["content"] = body_factory()
+    request = client.build_request(method, url, **kwargs)
+    if body_factory is not None:
+        request.extensions[_BODY_FACTORY_EXTENSION] = body_factory
+    return request
+
+
+__all__: Sequence[str] = [
+    "AsyncTx402Client",
+    "AsyncTx402Transport",
+    "BodyFactory",
+    "PaymentInspection",
+    "Tx402Client",
+    "Tx402Transport",
+]

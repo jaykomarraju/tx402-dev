@@ -21,6 +21,7 @@ ADR-008 onward are new decisions taken during implementation.
 | [010](010-upstream-envelope-reconciliation.md)    | Upstream envelope reconciliation          | Accepted | Clarifies SPEC §5.1, §7.1, §7.2  |
 | [011](011-error-taxonomy-concretization.md)       | Error taxonomy concretization             | Accepted | Concretizes SPEC §8, §4.2        |
 | [012](012-manifest-signing-envelope.md)           | Release manifest signing envelope         | Accepted | Concretizes SPEC §5.4            |
+| [013](013-python-svm-transaction-construction.md) | Python SVM transaction construction       | Accepted | Narrows SPEC §7.2 (Python only)  |
 
 ## Format
 

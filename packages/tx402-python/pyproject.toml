@@ -39,7 +39,11 @@ dependencies = [
 
 [project.optional-dependencies]
 evm = ["x402[evm]>=2.17,<2.18"]
-svm = ["x402[svm]>=2.17,<2.18"]
+# `solders` is declared directly rather than relied on transitively: tx402 compiles and
+# validates the SPL transfer itself (ADR-013), so the SPL primitives it uses are a
+# first-party dependency of this package, not an implementation detail of x402's extra.
+# The same reasoning put `@solana-program/token` in the TypeScript optional peers at S6.
+svm = ["x402[svm]>=2.17,<2.18", "solders>=0.27,<1"]
 all = ["tx402[evm,svm]"]
 
 [project.scripts]

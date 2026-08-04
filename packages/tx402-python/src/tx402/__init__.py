@@ -20,18 +20,41 @@ Example::
 
     response = client.post(url, json={"prompt": "Hello"})
 
-Status: implemented through M3 against the frozen cross-language conformance fixtures.
+Chain support lives behind extras and is *not* re-exported here: ``tx402.solana`` imports
+``solders``, so importing it from this module would make the core install depend on a chain
+library. Reach it as ``from tx402.solana import SolanaSigner`` after installing
+``tx402[svm]`` — the same split the TypeScript package draws with its ``tx402/solana``
+subpath export (ADR-009).
+
+Status: implemented through M6 against the frozen cross-language conformance fixtures.
 """
 
 from __future__ import annotations
 
 from tx402.bundled_manifest import BUNDLED_MANIFEST
+from tx402.chain import (
+    MAX_AUTHORIZATION_SECONDS,
+    MAX_PROVIDERS_PER_NETWORK,
+    ChainAdapter,
+    ChainAuthorization,
+    ChainAuthorizationRequest,
+    ChainRoute,
+    ChainRouteRequest,
+    chain_family,
+    load_chain_adapter,
+)
 from tx402.client import (
     AsyncTx402Client,
     AsyncTx402Transport,
     PaymentInspection,
     Tx402Client,
     Tx402Transport,
+)
+from tx402.completion import (
+    MAX_PAID_ATTEMPTS_REASON,
+    PaidAttemptDisposition,
+    PaidAttemptResult,
+    classify_paid_attempt,
 )
 from tx402.errors import (
     TX402_ERROR_CODES,
@@ -58,6 +81,7 @@ from tx402.errors import (
     is_tx402_error,
 )
 from tx402.evm import (
+    EvmChainAdapter,
     EvmRpcError,
     EvmRpcPool,
     EvmSigner,
@@ -65,9 +89,16 @@ from tx402.evm import (
     EvmTypedDataRequest,
     ExactEvmPlan,
     create_evm_authorization,
+    create_evm_chain_adapter,
     encode_balance_of_call_data,
     plan_exact_evm_authorization,
     resolve_evm_address,
+)
+from tx402.health import (
+    HEALTH_NEW_ENDPOINT_SCORE,
+    HEALTH_OPEN_MS,
+    EndpointHealth,
+    HealthIndex,
 )
 from tx402.ledger import (
     RESERVATION_TTL_MS,
@@ -105,11 +136,23 @@ from tx402.policy import (
     PolicyRequirement,
     RoutingPolicy,
 )
+from tx402.routing import (
+    RouteCandidate,
+    RoutePlan,
+    order_route_candidates,
+    plan_routes,
+    plan_routes_async,
+)
 from tx402.trusted_keys import MANIFEST_SIGNING_DOMAIN, TRUSTED_MANIFEST_KEYS
 
 __all__ = [
     "BUNDLED_MANIFEST",
+    "HEALTH_NEW_ENDPOINT_SCORE",
+    "HEALTH_OPEN_MS",
     "MANIFEST_SIGNING_DOMAIN",
+    "MAX_AUTHORIZATION_SECONDS",
+    "MAX_PAID_ATTEMPTS_REASON",
+    "MAX_PROVIDERS_PER_NETWORK",
     "PACKAGE_NAME",
     "PROJECT_URLS",
     "PROTOCOL_HEADERS",
@@ -127,21 +170,31 @@ __all__ = [
     "AsyncTx402Transport",
     "BudgetExceededError",
     "BudgetState",
+    "ChainAdapter",
+    "ChainAuthorization",
+    "ChainAuthorizationRequest",
+    "ChainRoute",
+    "ChainRouteRequest",
     "ClockSkewError",
     "ConfigurationError",
     "DomainNotAllowedError",
+    "EndpointHealth",
+    "EvmChainAdapter",
     "EvmRpcError",
     "EvmRpcPool",
     "EvmSigner",
     "EvmSignerPresentation",
     "EvmTypedDataRequest",
     "ExactEvmPlan",
+    "HealthIndex",
     "InsufficientLiquidityError",
     "InvalidPaymentRequiredError",
     "MemorySpendStore",
     "MoneyAssetMetadata",
     "MoneyParseError",
     "NonReplayableRequestError",
+    "PaidAttemptDisposition",
+    "PaidAttemptResult",
     "PaidRedirectBlockedError",
     "PaymentInspection",
     "Policy",
@@ -150,6 +203,8 @@ __all__ = [
     "PolicyRequirement",
     "ReservedHeaderError",
     "ResourceDeliveryError",
+    "RouteCandidate",
+    "RoutePlan",
     "RoutingPolicy",
     "SignerError",
     "SpendEntry",
@@ -163,13 +218,20 @@ __all__ = [
     "UnsupportedProtocolError",
     "UnsupportedSchemeError",
     "assert_valid_release_manifest",
+    "chain_family",
+    "classify_paid_attempt",
     "create_evm_authorization",
+    "create_evm_chain_adapter",
     "encode_balance_of_call_data",
     "format_money_decimal",
     "is_tx402_error",
+    "load_chain_adapter",
+    "order_route_candidates",
     "parse_money_atomic",
     "parse_positive_money_atomic",
     "plan_exact_evm_authorization",
+    "plan_routes",
+    "plan_routes_async",
     "require_network",
     "resolve_evm_address",
     "resolve_network",

@@ -351,15 +351,15 @@ def test_signer_failure_releases_reservation() -> None:
     assert [reservation.state for reservation in state.reservations] == ["released"]
 
 
-@pytest.mark.parametrize("status", [403, 402])
-def test_definitive_merchant_refusal_releases(status: int) -> None:
+def test_definitive_merchant_refusal_releases() -> None:
     store = MemorySpendStore()
     with (
-        client(Merchant(paid_status=status), store=store) as sdk,
+        client(Merchant(paid_status=403), store=store) as sdk,
         pytest.raises(ResourceDeliveryError) as raised,
     ):
         sdk.get(URL)
     assert raised.value.context.paid is False
+    assert raised.value.details["reason"] == "paid-request-rejected"
     assert [
         item.state
         for item in store.get_budget_state(
@@ -371,7 +371,7 @@ def test_definitive_merchant_refusal_releases(status: int) -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "category"), [(503, "merchant-server-error"), (307, "redirect-not-followed")]
+    ("status", "category"), [(503, "server-error"), (307, "redirect-not-followed")]
 )
 def test_ambiguous_status_retains_reservation(status: int, category: str) -> None:
     store = MemorySpendStore()
@@ -415,16 +415,22 @@ def test_initial_and_paid_transport_failures_are_distinct() -> None:
     merchant = Merchant(paid_exception=httpx.ConnectError("secret"))
     with client(merchant) as sdk, pytest.raises(AmbiguousPaymentError) as paid_raised:
         sdk.get(URL)
-    assert paid_raised.value.details["causeCategory"] == "transport"
+    assert paid_raised.value.details["causeCategory"] == "transport-after-signature"
 
 
 def test_paid_retry_timeout_is_owned_by_tx402() -> None:
+    """A deadline and a reset are the same fact about settlement (SPEC §6.7).
+
+    Both report ``transport-after-signature``: the signature is on the wire either way, and
+    the frozen ``completion.paid-attempt`` vectors give a transmission that never completed
+    exactly one category in both languages.
+    """
     with (
         client(Merchant(paid_delay_ms=1_100), payment_retry_timeout_ms=1_000) as sdk,
         pytest.raises(AmbiguousPaymentError) as raised,
     ):
         sdk.get(URL)
-    assert raised.value.details["causeCategory"] == "timeout"
+    assert raised.value.details["causeCategory"] == "transport-after-signature"
 
 
 @pytest.mark.asyncio
@@ -437,7 +443,7 @@ async def test_async_paid_retry_transport_failure_and_timeout() -> None:
     ) as sdk:
         with pytest.raises(AmbiguousPaymentError) as raised:
             await sdk.get(URL)
-    assert raised.value.details["causeCategory"] == "transport"
+    assert raised.value.details["causeCategory"] == "transport-after-signature"
 
     release = asyncio.Event()
     cancellation_seen = asyncio.Event()
@@ -462,7 +468,7 @@ async def test_async_paid_retry_transport_failure_and_timeout() -> None:
         async def assert_sdk_deadline() -> None:
             with pytest.raises(AmbiguousPaymentError) as raised:
                 await sdk.get(URL)
-            assert raised.value.details["causeCategory"] == "timeout"
+            assert raised.value.details["causeCategory"] == "transport-after-signature"
 
         await asyncio.wait_for(assert_sdk_deadline(), timeout=2)
         await asyncio.sleep(0)

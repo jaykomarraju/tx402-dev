@@ -18,15 +18,15 @@ payment route across offered chains, signs an authorization, and retries the req
 of 50 discards all upstream work. Existing clients hard-wire one facilitator and one chain. The
 protocol layer is settled (x402 v2); the gap is resilience and developer ergonomics.
 
-**Current state:** _(updated end of S8)_ **the TypeScript SDK is feature-complete for v0.1.** M6
-landed SPEC §6.7's re-challenge loop: a repeated 402 is parsed from scratch, re-planned,
-re-reserved, and re-signed with a fresh nonce, bounded by `policy.maxPaidAttempts`, with the
-reservation released only where the merchant proves no settlement occurred and retained to its TTL
-on anything ambiguous. Those rules are one pure function — `core/completion.ts` — that the request
-path consults and six conformance vectors pin, so Python inherits the money rule rather than
-re-deriving it. T-001 through T-013, T-018, and T-020 are green. **The 65-vector fixture set is
-frozen** (see O27); Python still claims M2 and catches up at S9/S10, written against these files.
-What remains for 0.1.0 is Python parity, the CLI and docs, and release hardening.
+**Current state:** _(updated end of S10)_ **both SDKs are feature-complete for v0.1 and are at
+behavioral parity.** The TypeScript reference finished at S8; Python caught up across S9 and S10
+and now owns the same request path end to end — sync and async HTTPX transports, strict v2 decode,
+integer-only policy, an atomic rolling ledger, the Base and Solana adapters, deterministic routing
+over one shared `HealthIndex`, and SPEC §6.7's completion semantics. **T-016 is green:** both
+runners execute all 65 frozen vectors at Stage B with `IMPLEMENTED_THROUGH = "M6"`, so normalized
+output, route ordering, error codes, and the money rule are proven identical by the same files
+rather than asserted. The fixture set stays frozen (O27). What remains for 0.1.0 is the CLI and
+docs (S11) and release hardening (S12).
 
 **Sources of truth, in precedence order:**
 
@@ -42,18 +42,19 @@ metadata (repo URLs, badges) behind a single constant so the move is a one-file 
 
 ## 2. Locked Decisions (from this planning session)
 
-| #   | Decision                                                                                                                                                                                                          | Consequence                                                                                                                                                                                                                                                                                             |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **Package name is `tx402`, unscoped, on both npm and PyPI.** No `@tx402` org.                                                                                                                                     | Every `@tx402/sdk` reference in SPEC.md §4.1, §13, §16 reads `tx402`. Requires **ADR-009**.                                                                                                                                                                                                             |
-| D2  | **One npm package `tx402`** exposing the SDK at `.` and the CLI via a `bin` entry.                                                                                                                                | `npx tx402 call ...` works with zero extra install. Merges SPEC §3.1's separate `/packages/cli`. Covered by **ADR-009**. CLI code lives outside the core import path so it does not count against the size gate.                                                                                        |
-| D3  | **Reserve both names by publishing a `0.0.0` placeholder.** npm immediately (already authed as `jay.komarraju`); PyPI as soon as an API token exists.                                                             | npm has no true reservation — publishing is the only hold. Placeholder is public; npm unpublish is only possible within 72h.                                                                                                                                                                            |
-| D4  | **Bundle-size gate re-baselined.** Blocking gate: tx402's **own emitted code** < 25 KiB gzipped. Informational: total core-path footprint incl. `@x402/core` + zod, ceiling frozen from a real measurement at M1. | SPEC §12.3's literal "<25 KiB core import path" is unreachable — measured `@x402/core` ESM at ~27 KiB gzipped alone, plus zod ~13 KiB. Requires **ADR-008**.                                                                                                                                            |
-| D5  | **TypeScript first through M6, then Python catches up against frozen conformance fixtures.**                                                                                                                      | Matches SPEC ADR-005 (TS is the reference implementation). Python inherits a settled design instead of tracking churn.                                                                                                                                                                                  |
-| D6  | **`retryable` is derived from a six-value `retryability` classification; per-error data lives in `details`, not in the closed `Tx402ErrorContext`.**                                                              | SPEC §8's Retryable column has six values while §4.2 names one boolean. Requires **ADR-011**. Only `TransportError` reports `retryable: true`.                                                                                                                                                          |
-| D7  | **Manifests are signed over domain-separated tx402 canonical JSON; trusted keys are compiled into each package.**                                                                                                 | SPEC §5.4 defines the signature member but not the bytes it covers. Requires **ADR-012**. Adds `cryptography` to the Python core install — CPython has no Ed25519 and SPEC §3.2 forbids writing one.                                                                                                    |
-| D8  | **ADR-008's total-core size ceiling is 28 KiB from the measured M2 baseline; the independent 25 KiB own-code limit is unchanged.**                                                                                | M2's policy/ledger are necessarily reachable from `createTx402Client`. Measured 25.79 KiB total / 10.99 KiB own; explicit ADR-008 amendment, no dependency change. **Superseded by D9.**                                                                                                                |
-| D9  | **Chain adapters are reached through a lazy `import()` from the core path, and the total-core ceiling becomes a tracking number re-baselined by ADR amendment (30 KiB at M3).**                                   | Keeps SPEC §4.1's `signers: { evm, solana }` config exactly as written while `@x402/evm` and `viem` stay off the size-gated core path. Amends **ADR-008**; the blocking own-code gate stays at 25 KiB and never moves.                                                                                  |
-| D10 | **The circuit breaker exists exactly once, in `core/health.ts`.** RPC pools hold endpoint lists and failure classification; they hold no circuit state.                                                           | Closes O19 and O22 structurally. `EvmRpcPool` and `SvmRpcPool` consult and report into the client's single `HealthIndex`, and `CIRCUIT_OPEN_MS` re-exports `HEALTH_OPEN_MS`. No ADR needed — SPEC §6.5 describes one health index; M3/M4's per-pool circuits were the deviation, and this removes them. |
+| #   | Decision                                                                                                                                                                                                          | Consequence                                                                                                                                                                                                                                                                                                                |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **Package name is `tx402`, unscoped, on both npm and PyPI.** No `@tx402` org.                                                                                                                                     | Every `@tx402/sdk` reference in SPEC.md §4.1, §13, §16 reads `tx402`. Requires **ADR-009**.                                                                                                                                                                                                                                |
+| D2  | **One npm package `tx402`** exposing the SDK at `.` and the CLI via a `bin` entry.                                                                                                                                | `npx tx402 call ...` works with zero extra install. Merges SPEC §3.1's separate `/packages/cli`. Covered by **ADR-009**. CLI code lives outside the core import path so it does not count against the size gate.                                                                                                           |
+| D3  | **Reserve both names by publishing a `0.0.0` placeholder.** npm immediately (already authed as `jay.komarraju`); PyPI as soon as an API token exists.                                                             | npm has no true reservation — publishing is the only hold. Placeholder is public; npm unpublish is only possible within 72h.                                                                                                                                                                                               |
+| D4  | **Bundle-size gate re-baselined.** Blocking gate: tx402's **own emitted code** < 25 KiB gzipped. Informational: total core-path footprint incl. `@x402/core` + zod, ceiling frozen from a real measurement at M1. | SPEC §12.3's literal "<25 KiB core import path" is unreachable — measured `@x402/core` ESM at ~27 KiB gzipped alone, plus zod ~13 KiB. Requires **ADR-008**.                                                                                                                                                               |
+| D5  | **TypeScript first through M6, then Python catches up against frozen conformance fixtures.**                                                                                                                      | Matches SPEC ADR-005 (TS is the reference implementation). Python inherits a settled design instead of tracking churn.                                                                                                                                                                                                     |
+| D6  | **`retryable` is derived from a six-value `retryability` classification; per-error data lives in `details`, not in the closed `Tx402ErrorContext`.**                                                              | SPEC §8's Retryable column has six values while §4.2 names one boolean. Requires **ADR-011**. Only `TransportError` reports `retryable: true`.                                                                                                                                                                             |
+| D7  | **Manifests are signed over domain-separated tx402 canonical JSON; trusted keys are compiled into each package.**                                                                                                 | SPEC §5.4 defines the signature member but not the bytes it covers. Requires **ADR-012**. Adds `cryptography` to the Python core install — CPython has no Ed25519 and SPEC §3.2 forbids writing one.                                                                                                                       |
+| D8  | **ADR-008's total-core size ceiling is 28 KiB from the measured M2 baseline; the independent 25 KiB own-code limit is unchanged.**                                                                                | M2's policy/ledger are necessarily reachable from `createTx402Client`. Measured 25.79 KiB total / 10.99 KiB own; explicit ADR-008 amendment, no dependency change. **Superseded by D9.**                                                                                                                                   |
+| D9  | **Chain adapters are reached through a lazy `import()` from the core path, and the total-core ceiling becomes a tracking number re-baselined by ADR amendment (30 KiB at M3).**                                   | Keeps SPEC §4.1's `signers: { evm, solana }` config exactly as written while `@x402/evm` and `viem` stay off the size-gated core path. Amends **ADR-008**; the blocking own-code gate stays at 25 KiB and never moves.                                                                                                     |
+| D10 | **The circuit breaker exists exactly once, in `core/health.ts`.** RPC pools hold endpoint lists and failure classification; they hold no circuit state.                                                           | Closes O19 and O22 structurally. `EvmRpcPool` and `SvmRpcPool` consult and report into the client's single `HealthIndex`, and `CIRCUIT_OPEN_MS` re-exports `HEALTH_OPEN_MS`. No ADR needed — SPEC §6.5 describes one health index; M3/M4's per-pool circuits were the deviation, and this removes them.                    |
+| D11 | **The Python SDK compiles the SVM transaction itself; TypeScript still delegates to `@x402/svm`.**                                                                                                                | PyPI `x402`'s `ExactSvmScheme` requires a raw `Keypair` (violating SEC-001 and SPEC §7.2) and cannot be imported against `solana` 0.40. Requires **ADR-013**. The wire bytes, instruction layout, and signature slots are reproduced exactly, and the frozen vectors plus T-016 hold the two languages to the same output. |
 
 ---
 
@@ -479,6 +480,54 @@ signer boundary validates the complete EIP-712 authorization before delegating t
 Solana adapter, routing + health, completion semantics.
 _Exit:_ **T-016 — 100 % fixture parity** with TS on selected route, error code, normalized output.
 
+### S10 — Python M4–M6 (delivered)
+
+Complete 2026-08-03. Python now executes **all 65 frozen vectors at Stage B**, matching
+TypeScript exactly, and `IMPLEMENTED_THROUGH` is `M6` in both runners. No fixture, schema, or
+index file changed.
+
+The parts worth recording are the two places where "port it" was the wrong answer.
+
+**The Solana adapter could not delegate to upstream, and an ADR says why.** PyPI `x402`'s
+`ExactSvmScheme` reads `signer.keypair` and calls `keypair.sign_message(...)` — its signer
+contract _is_ a raw Ed25519 key pair, which SEC-001 forbids the core from requiring and SPEC
+§7.2's "without exporting secret material" forbids outright. There is no shim that satisfies
+both, because a KMS or hardware wallet has no keypair object to hand over. Independently, the
+module cannot even be imported: it does `from solana.rpc.api import Client`, and `solana` 0.40
+removed that module. So Python compiles the transfer itself from `solders` primitives, and
+**ADR-013** records the decision, the byte-level layout it must reproduce, and the constraint
+that no primitive is re-implemented — base58, Ed25519, SHA-256, and PDA derivation all come
+from the same audited library upstream builds on. TypeScript still delegates to `@x402/svm`;
+the divergence is in _how_ the transaction is produced, never in _what_ is produced, and the
+frozen vectors plus T-016 are what hold that line.
+
+`_validate_transaction` decodes the **serialized** message rather than inspecting the builder's
+own objects. That is the whole point: a validator that reads the builder's output agrees with a
+construction bug instead of catching it. Six parameterized mutations drive a transaction that
+left the plan past the builder and assert the signer is never reached.
+
+**Four S9 client tests were wrong, and the frozen M6 vectors are what proved it.** S9's
+approximation reported `causeCategory: "merchant-server-error"` where the vectors say
+`"server-error"`, treated a paid 402 as a definitive refusal rather than a re-challenge, and
+split a paid-retry timeout out as `"timeout"` while TypeScript reports
+`transport-after-signature` for it. That last one is the interesting one: a deadline and a reset
+are the same fact about settlement, so both now reach the disposition table as one input and
+share its category. Per O27 the diagnosis came before any edit, and in all four cases the defect
+was in Python, not in the fixture — the tests were updated and the fixtures were not touched.
+
+Two structural fixes came with the port. `EvmRpcPool` no longer carries a private failover
+loop: like the new `SvmRpcPool`, it asks the client's single `HealthIndex` whether an endpoint
+may be used and reports the outcome, so Python has the same one-circuit property S7 gave
+TypeScript by deletion (O19/O22). And `tx402/__init__.py` deliberately does **not** re-export
+anything from `tx402.solana`: that module imports `solders`, so re-exporting it would make every
+core install depend on a chain library, and the failure would land as an `ImportError` on
+`import tx402` for a user who installed exactly what the README told them to. A subprocess-based
+package-contract test now asserts that importing `tx402` loads no chain library at all.
+
+Deadlines moved to `tx402/deadline.py` so both RPC pools and both transports share one
+primitive. Nothing about the rule changed: the work is _raced_, cancellation is requested but
+never trusted, and the timeout is enforced by tx402 returning control to its caller (O24).
+
 ### S11 — M7: CLI + Docs
 
 - `npx tx402 call` with `--dry-run` (never invokes a signer), `--json`, `--max-spend`, `--network`,
@@ -511,19 +560,21 @@ _Exit:_ **T-016 — 100 % fixture parity** with TS on selected route, error code
 | S7      | M5 TS routing/health     | ✅ Complete    | 2026-08-03. Deterministic RoutePlanner, one shared HealthIndex subsuming both RPC circuits, concurrent deduped balances. T-004/T-005/T-008/T-020 green; 59 vectors.         |
 | S8      | M6 TS completion         | ✅ Complete    | 2026-08-03. Re-challenge loop under `maxPaidAttempts` over one pure SPEC §6.7 disposition table. T-010/T-011/T-012 green; 65 vectors, fixtures frozen. TS feature-complete. |
 | S9      | Python M1–M3             | ✅ Complete    | 2026-08-03. Sync/async HTTPX transports, strict protocol, integer policy, atomic ledger, and Base adapter. Python executes all 49 M0–M3 vectors at Stage B.                 |
-| S10     | Python M4–M6             | ⬜ Not started |                                                                                                                                                                             |
+| S10     | Python M4–M6             | ✅ Complete    | 2026-08-03. Solana adapter (ADR-013), deterministic routing over one shared HealthIndex, and SPEC §6.7 completion. **T-016 green: both languages run all 65 at Stage B.**   |
 | S11     | M7 CLI + docs            | ⬜ Not started |                                                                                                                                                                             |
 | S12     | M8 hardening + release   | ⬜ Not started |                                                                                                                                                                             |
 
 Legend: ⬜ not started · 🟨 in progress · ✅ complete · 🟥 blocked
 
-**Normative test status (SPEC §12.2):** T-001 through T-014, T-017, T-018, and T-020 are ✅ green —
-T-010, T-011, and T-012 were claimed at S8 through the full re-challenge loop, not through S5's
-partial coverage. T-014 and T-017 now also run through Python's real client construction and
-transport boundaries. T-015, T-016, and T-019 remain ⬜ because their Python logging, full M6
-parity, and release milestones have not landed. The test merchant carries scenarios for every claimed test plus
-`rechallenge-malformed` (added at S8), refused-retry, corrupt-response, and
-unsuccessful-settlement.
+**Normative test status (SPEC §12.2):** T-001 through T-014 and T-016 through T-018 and T-020 are
+✅ green. **T-016 is claimed at S10:** both runners execute all 65 frozen vectors at Stage B with
+`IMPLEMENTED_THROUGH = "M6"`, so normalized output, selected route ordering, error codes, and the
+SPEC §6.7 disposition table are proven identical across the two languages by the same fixtures.
+T-003, T-004, T-005, T-010, T-011, T-012, and T-020 now also run through Python's real client and
+transport boundaries, not only TypeScript's. T-015 and T-019 remain ⬜: Python has no structured
+logger yet (it is M7 work, S11), and the public-testnet legs are M8/S12 and blocked on O2. The
+test merchant carries scenarios for every claimed test plus `rechallenge-malformed` (added at S8),
+refused-retry, corrupt-response, and unsuccessful-settlement.
 
 **Name reservation:** npm `tx402` ✅ `0.0.0` published 2026-08-02 (maintainer `jay.komarraju`,
 Apache-2.0, `bin` resolves so `npx tx402` works) · PyPI `tx402` ✅ `0.0.0` published 2026-08-03
@@ -890,6 +941,47 @@ conformance parity. The run also passed frozen-lockfile install, lint, format, t
 conformance-index, manifest-signature, coverage, package builds, and size gates. This result was
 written only after the workflow completed.
 
+---
+
+**Session 10 verification results (all local gates green):**
+
+| Check                        | Result                                                                              |
+| ---------------------------- | ----------------------------------------------------------------------------------- |
+| `pnpm lint` / format / types | clean; strict TypeScript remains green                                              |
+| `pnpm conformance:check`     | frozen 65-vector index unchanged — 24 M0 + 12 M1 + 6 M2 + 7 M3 + 4 M4 + 6 M5 + 6 M6 |
+| `pnpm manifest:verify`       | signed manifest valid; 4 networks; expires 2027-08-02 (362 days)                    |
+| TypeScript tests             | 419 passed / 419, 3 skipped (Base Sepolia + Solana Devnet opt-in live legs)         |
+| TS coverage                  | 94.09 % statements / 90.60 % branch — 90 % gate enforced                            |
+| Python lint / format / mypy  | clean; strict mypy over 37 source/test files                                        |
+| Python tests + coverage      | 393 passed / 393; 92.93 % branch-inclusive coverage                                 |
+| Python package               | `uv lock --check` clean; sdist and wheel build clean                                |
+| `pnpm build`                 | clean                                                                               |
+| `pnpm size`                  | own 16.34 / 25 KiB; total 31.03 / 32 KiB — unchanged, no Python effect              |
+| **T-016**                    | **65 / 65 vectors at Stage B in both languages; 12 kinds, no missing handler**      |
+| T-003 / SEC-002              | one reservation before one SVM signer call; one paid retry; one commit              |
+| T-004 / T-005                | preference wins when both are viable; viability outranks preference                 |
+| T-010                        | re-priced re-challenge paid on attempt 2; distinct nonces and header digests        |
+| T-011 / T-012                | 5xx, same-origin 3xx, and a blocked cross-origin redirect all retain the TTL        |
+| T-020                        | dark primary RPC contacted 5 times, then never again — its circuit is open          |
+| NUL-byte scan (O25)          | 227 tracked files scanned, none contains a NUL; every changed file diffs            |
+
+Conformance suite composition is unchanged at 24 M0 + 12 M1 + 6 M2 + 7 M3 + 4 M4 + 6 M5 + 6 M6.
+**Both runners now execute all 65 at Stage B**, which is what closes the two-stage contract that
+has been open since S3: there are no Stage-A-only vectors left in either language. The S8 fixture
+freeze was respected — `git status core-spec/` is clean, and `pnpm conformance:check` re-verifies
+every per-file SHA-256 against the index.
+
+One new ADR: **ADR-013**, recording why Python compiles the SVM transaction itself rather than
+delegating to PyPI `x402`'s `ExactSvmScheme`, and what that decision is bounded by. It narrows
+SPEC §7.2 for Python only and weakens no MUST — it is what makes SEC-001 and §7.2's
+"without exporting secret material" simultaneously satisfiable in this language.
+
+`solders` is now a directly declared dependency of the `tx402[svm]` extra (`>=0.27,<1`) rather
+than a transitive one, for the same reason S6 declared `@solana-program/token` directly on the
+TypeScript side: tx402's own pre-sign validator depends on it, so it must not rely on another
+package's resolution. It stays off the core install path, and a subprocess-based package-contract
+test asserts that `import tx402` loads no chain library at all.
+
 ## 8. Session Protocol (how this stays a living document)
 
 **At the start of every session,** the agent MUST:
@@ -920,7 +1012,7 @@ Read these first, in order:
   1. PLAN.md   — living plan, status board in §7, open items in §9
   2. SPEC.md   — authoritative implementation spec (governs; PRD never overrides it)
   3. PRD.md    — product intent only
-  4. adr/      — all ADRs, especially ADR-008/009/010 (deviations from SPEC)
+  4. adr/      — all ADRs, especially ADR-008/009/010/013 (deviations from SPEC)
 
 Where we are:
   Last completed session: S<N> — <milestone name>
@@ -989,6 +1081,9 @@ with the code, and emit the next handoff prompt.
 | O26 | **SPEC §6.1 permits following a same-origin redirect on a paid retry; v0.1 does not follow one.** S8 fixed the money half — a 3xx is no longer treated as a definitive refusal, so the reservation is retained rather than released (`causeCategory: "redirect-not-followed"`) — but the call still fails where SPEC allows it to succeed. Implementing the follow means re-transmitting one authorization to a second URL, plus the per-status method/body rewrite rules and a hop bound, which is a new replay surface deserving its own design and tests. Note SEC-005's acceptance wording ("fail **before transmitting** PAYMENT-SIGNATURE") reads as though the block guards that second transmission, which supports following. Decide at S11 with the CLI's redirect behaviour, or defer to v0.2 with an ADR. | Agent            | 🟨 Deferred S11                              |
 | O27 | The conformance fixture set is **frozen at 65 vectors** as of S8 (2026-08-03) and Python is written against it at S9/S10. Adding a vector remains ordinary work; changing or removing one is a contract change. When a Python run disagrees with a frozen vector, establish whether the defect is in Python, in TypeScript, or in the vector's reading of SPEC **before** editing any file — editing the fixture first is how a cross-language contract quietly becomes a record of whatever the two implementations happen to do. Rules and rationale: `core-spec/conformance/README.md`.                                                                                                                                                                                                                            | Agent            | ⬜ Standing rule from S8                     |
 | O28 | **S9 open-item audit.** The frozen fixtures passed unchanged, and no new specification deviation was found. PyPI `x402` is pinned to the inspected 2.17.* line and agrees with npm's 2.20.0 v2 envelope at the tx402 boundary (O6 remains ongoing). Python owns deadlines explicitly and its test transports preserve the original HTTPX request, satisfying O21/O24. O2, O10, O12, O17, O25, and O26 retain their existing owners and dates: wallets/trusted publishing/NUL guard at S12, security/contribution docs and redirect decision at S11, and the manifest-key backup needed from the user now. O27 continues to govern S10.                                                                                                                                                                                | Agent / **User** | 🟨 Re-deferred to recorded milestones        |
+| O29 | **`openedAtEpochMs == 0` is the "circuit closed" sentinel in both SDKs**, so an endpoint whose circuit opened at exactly epoch 0 reads as closed. Unreachable in production — a real clock is never 0 — and the frozen `health.circuit` vectors use a plausible instant, so the two languages agree. It was found by a Python unit test that opened a circuit at `0` and is recorded rather than fixed one-sidedly: giving Python a different sentinel would break the parity the vectors exist to hold. Fix in both languages together at S12 by making the field optional, or accept and document it.                                                                                                                                                                                                               | Agent            | 🟨 Convention, revisit S12                   |
+| O30 | **`ExactSvmScheme` in PyPI `x402` is unusable by tx402 on two counts** — its signer contract is a raw `Keypair` (SEC-001, SPEC §7.2) and the module fails to import against `solana` 0.40, which removed `solana.rpc.api`. ADR-013 records the resulting decision to compile the transaction from `solders`. This is the specific thing O6 must re-check on every PyPI `x402` bump: if a later release accepts a signing interface and imports cleanly, delegating becomes possible again and ADR-013 should be revisited. The TypeScript side is unaffected — `@x402/svm` takes an interface.                                                                                                                                                                                                                        | Agent            | ⬜ Ongoing, tied to O6                       |
+| O31 | **S10 open-item audit.** The frozen fixtures passed unchanged and no new specification deviation was found beyond ADR-013. Four S9 Python client tests encoded a pre-M6 approximation and were corrected against the vectors, not the reverse (O27 followed). O19/O22's one-circuit property now holds in Python too. O24's rule was followed: the new test transports forward the original request, and deadlines are raced in tx402's own control flow. O25's scan is clean across all 227 tracked files. O2, O10, O12, O17, and O26 retain their existing owners and dates: wallets and trusted publishing at S12, the manifest-key backup needed from the user now, security/contribution docs and the redirect decision at S11.                                                                                  | Agent / **User** | 🟨 Re-deferred to recorded milestones        |
 
 ---
 

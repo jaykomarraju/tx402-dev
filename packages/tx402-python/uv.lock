@@ -2731,12 +2731,16 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "solders", version = "0.27.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "solders", version = "0.28.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "x402", extra = ["evm", "svm"] },
 ]
 evm = [
     { name = "x402", extra = ["evm"] },
 ]
 svm = [
+    { name = "solders", version = "0.27.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "solders", version = "0.28.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "x402", extra = ["svm"] },
 ]
 
@@ -2756,6 +2760,7 @@ dev = [
 requires-dist = [
     { name = "cryptography", specifier = ">=42" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "solders", marker = "extra == 'svm'", specifier = ">=0.27,<1" },
     { name = "tx402", extras = ["evm", "svm"], marker = "extra == 'all'" },
     { name = "x402", specifier = ">=2.17,<2.18" },
     { name = "x402", extras = ["evm"], marker = "extra == 'evm'", specifier = ">=2.17,<2.18" },

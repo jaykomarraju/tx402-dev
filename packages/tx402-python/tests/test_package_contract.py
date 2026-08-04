@@ -7,6 +7,7 @@ drift, and they are expensive to get wrong after publish.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -93,3 +94,29 @@ class TestCrossLanguageParity:
         assert f"export const X402_PROTOCOL_VERSION = {X402_PROTOCOL_VERSION}" in ts_meta
         for header in PROTOCOL_HEADERS.values():
             assert f'"{header}"' in ts_meta
+
+
+class TestExtrasBoundary:
+    """The core install must not pull a chain library (ADR-009).
+
+    ``tx402.solana`` imports ``solders`` at module scope, so a re-export from
+    ``tx402/__init__.py`` would silently make every core install depend on it — and the
+    failure would surface as an ImportError on ``import tx402`` for a user who installed
+    exactly what the README told them to.
+    """
+
+    def test_importing_tx402_loads_no_chain_library(self) -> None:
+        probe = (
+            "import sys, tx402; "
+            "print(sorted(m for m in ('solders', 'solana', 'web3', 'eth_account') "
+            "if m in sys.modules))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+        )
+        assert result.stdout.strip() == "[]"
+
+    def test_the_svm_extra_declares_the_spl_primitives_it_uses_directly(self) -> None:
+        """ADR-013: tx402 builds the transaction, so solders is first-party here."""
+        svm = PYPROJECT["project"]["optional-dependencies"]["svm"]
+        assert any(item.startswith("solders") for item in svm)

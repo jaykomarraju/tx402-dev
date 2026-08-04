@@ -2,31 +2,38 @@
 
 from __future__ import annotations
 
-import asyncio
-import queue
 import re
-import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import suppress
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, Literal, Protocol, TypeVar, runtime_checkable
+from typing import Any, Final, Literal, Protocol, runtime_checkable
 
 import httpx
 from x402.schemas import PaymentRequirements
 
+from tx402.chain import (
+    MAX_AUTHORIZATION_SECONDS,
+    MAX_PROVIDERS_PER_NETWORK,
+    ChainAuthorization,
+    ChainAuthorizationRequest,
+    ChainRoute,
+    ChainRouteRequest,
+)
+from tx402.deadline import with_deadline, with_deadline_async
 from tx402.errors import (
+    ConfigurationError,
     InvalidPaymentRequiredError,
     SignerError,
+    TransportError,
     Tx402ErrorContext,
     UnsupportedSchemeError,
 )
+from tx402.health import HealthIndex
 from tx402.money import format_money_decimal
+from tx402.routing import BALANCE_KEY_SEPARATOR
 
 BALANCE_OF_SELECTOR: Final = "0x70a08231"
 SUPPORTED_ASSET_TRANSFER_METHOD: Final = "eip3009"
-MAX_AUTHORIZATION_SECONDS: Final = 60
-MAX_PROVIDERS_PER_NETWORK: Final = 2
 RPC_TIMEOUT_MS: Final = 600
 
 _ADDRESS: Final = re.compile(r"^0x[0-9a-fA-F]{40}$")
@@ -221,59 +228,58 @@ class EvmRpcError(Exception):
 class EvmBalanceReading:
     balance_atomic: int
     chain_id: int
+    #: Host only. The full URL may carry a provider API key and never leaves this module.
     endpoint: str
+    #: Health-index key of the endpoint that answered, for route scoring.
+    endpoint_id: str = ""
 
 
-T = TypeVar("T")
+#: Deadlines moved to :mod:`tx402.deadline` at M5 so the Solana pool shares one primitive.
+#: Re-exported under their original private names because the M3 tests name them, and a
+#: rename would make an unrelated diff look like a behaviour change.
+_with_deadline = with_deadline
+_with_deadline_async = with_deadline_async
 
 
-def _with_deadline(call: Callable[[], T], timeout_ms: int) -> T:
-    """Race a sync operation on a daemon thread; the SDK owns the deadline."""
-    result: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
+@dataclass(frozen=True, slots=True)
+class _Endpoint:
+    url: str
+    label: str
+    #: ``<caip2>|<host>`` — this endpoint's key in the shared health index.
+    health_id: str
 
-    def run() -> None:
-        try:
-            result.put((True, call()))
-        except BaseException as error:
-            result.put((False, error))
 
-    threading.Thread(target=run, daemon=True).start()
+def _safe_host(url: str) -> str:
     try:
-        succeeded, value = result.get(timeout=timeout_ms / 1_000)
-    except queue.Empty as error:
-        raise TimeoutError("tx402 operation deadline elapsed") from error
-    if succeeded:
-        return value  # type: ignore[return-value]
-    raise value  # type: ignore[misc]
-
-
-async def _with_deadline_async(awaitable: Awaitable[T], timeout_ms: int) -> T:
-    """Race an async operation without relying on its cancellation propagation."""
-    operation = asyncio.ensure_future(awaitable)
-    done, _ = await asyncio.wait({operation}, timeout=timeout_ms / 1_000)
-    if operation not in done:
-        operation.cancel()
-
-        def consume_result(completed: asyncio.Future[T]) -> None:
-            with suppress(BaseException):
-                completed.result()
-
-        operation.add_done_callback(consume_result)
-        raise TimeoutError("tx402 operation deadline elapsed")
-    return operation.result()
+        return httpx.URL(url).netloc.decode()
+    except Exception:
+        return "invalid-rpc-url"
 
 
 class EvmRpcPool:
-    """At most two manifest RPCs; chain identity is checked before every balance read."""
+    """At most two manifest RPCs; chain identity is checked before every balance read.
+
+    The pool holds no circuit state of its own (PLAN.md O19). It asks the client's shared
+    :class:`~tx402.health.HealthIndex` whether an endpoint may be used and reports what
+    happened, so one provider cannot be simultaneously open here and closed elsewhere.
+    """
 
     def __init__(
         self,
         rpc_urls: Sequence[str],
         *,
+        network_id: str = "eip155",
+        health: HealthIndex | None = None,
         transport: httpx.BaseTransport | httpx.AsyncBaseTransport | None = None,
         timeout_ms: int = RPC_TIMEOUT_MS,
     ) -> None:
-        self._urls = tuple(rpc_urls[:MAX_PROVIDERS_PER_NETWORK])
+        self._endpoints = tuple(
+            _Endpoint(
+                url, _safe_host(url), HealthIndex.endpoint_id(network_id, _safe_host(url))
+            )
+            for url in rpc_urls[:MAX_PROVIDERS_PER_NETWORK]
+        )
+        self._health = health or HealthIndex()
         self._transport = transport
         if (
             isinstance(timeout_ms, bool)
@@ -283,6 +289,10 @@ class EvmRpcPool:
             raise TypeError("timeout_ms must be a positive integer")
         self._timeout_ms = timeout_ms
         self._request_id = 0
+
+    def reset_health(self) -> None:
+        for endpoint in self._endpoints:
+            self._health.forget(endpoint.health_id)
 
     def _payload(self, method: str, params: list[Any]) -> dict[str, Any]:
         self._request_id += 1
@@ -309,10 +319,12 @@ class EvmRpcPool:
             raise EvmRpcError("protocol", f"{method} returned an invalid envelope")
         return document["result"]
 
-    def _call(self, client: httpx.Client, url: str, method: str, params: list[Any]) -> Any:
+    def _call(
+        self, client: httpx.Client, endpoint: _Endpoint, method: str, params: list[Any]
+    ) -> Any:
         try:
-            response = _with_deadline(
-                lambda: client.post(url, json=self._payload(method, params)),
+            response = with_deadline(
+                lambda: client.post(endpoint.url, json=self._payload(method, params)),
                 self._timeout_ms,
             )
         except TimeoutError as error:
@@ -322,11 +334,11 @@ class EvmRpcPool:
         return self._result(response, method)
 
     async def _call_async(
-        self, client: httpx.AsyncClient, url: str, method: str, params: list[Any]
+        self, client: httpx.AsyncClient, endpoint: _Endpoint, method: str, params: list[Any]
     ) -> Any:
         try:
-            response = await _with_deadline_async(
-                client.post(url, json=self._payload(method, params)),
+            response = await with_deadline_async(
+                client.post(endpoint.url, json=self._payload(method, params)),
                 self._timeout_ms,
             )
         except TimeoutError as error:
@@ -352,80 +364,158 @@ class EvmRpcPool:
             raise EvmRpcError("balance-unreadable", "RPC returned a malformed balance")
         return int(raw, 16)
 
-    def read_balance(self, *, chain_id: int, token: str, owner: str) -> EvmBalanceReading:
+    @staticmethod
+    def _balance_params(token: str, owner: str) -> list[Any]:
+        return [{"to": token, "data": encode_balance_of_call_data(owner)}, "latest"]
+
+    def _order(
+        self, now_epoch_ms: int, attempted: set[str]
+    ) -> tuple[list[_Endpoint], bool]:
+        """Usable endpoints, and whether every remaining one is open.
+
+        SPEC §6.5: an open endpoint is a last resort, permitted only when all of them are.
+        """
+        available = [item for item in self._endpoints if item.url not in attempted]
+        usable = [
+            item
+            for item in available
+            if self._health.state(item.health_id, now_epoch_ms) != "open"
+        ]
+        last_resort = not usable
+        return (available if last_resort else usable), last_resort
+
+    def _record_endpoint_failure(
+        self, endpoint: _Endpoint, error: EvmRpcError, now_epoch_ms: int
+    ) -> None:
+        if error.failure == "chain-id-mismatch":
+            # SPEC §7.1: a mismatch is not a reliability sample to average into a window.
+            # It says the endpoint is serving another chain, and the clause requires moving
+            # to the next RPC now.
+            self._health.open(endpoint.health_id, now_epoch_ms)
+        else:
+            self._health.record_failure(endpoint.health_id, now_epoch_ms)
+
+    def _guard(self, chain_id: int, token: str, owner: str) -> None:
         if _ADDRESS.fullmatch(token) is None or _ADDRESS.fullmatch(owner) is None:
             raise EvmRpcError("protocol", "Token and owner must be 20-byte addresses")
-        if not self._urls:
+        if not self._endpoints:
             raise EvmRpcError("transport", "No RPC endpoint is configured")
-        last: EvmRpcError = EvmRpcError("transport", "No RPC endpoint answered")
-        sync_transport = self._transport
-        if sync_transport is not None and not isinstance(
-            sync_transport, httpx.BaseTransport
-        ):
+
+    def read_balance(
+        self,
+        *,
+        chain_id: int,
+        token: str,
+        owner: str,
+        now_epoch_ms: int | None = None,
+    ) -> EvmBalanceReading:
+        """Proves ``eth_chainId`` and reads ``balanceOf`` on the same endpoint (SPEC §7.1).
+
+        Both calls go to one endpoint on purpose: a balance is only meaningful once the
+        endpoint that served it has said which chain it speaks for.
+        """
+        self._guard(chain_id, token, owner)
+        transport = self._transport
+        if transport is not None and not isinstance(transport, httpx.BaseTransport):
             raise TypeError("Sync balance reads require an httpx.BaseTransport")
-        with httpx.Client(transport=sync_transport) as client:
-            for url in self._urls:
-                try:
-                    observed = self._chain_id(self._call(client, url, "eth_chainId", []))
-                    if observed != chain_id:
-                        last = EvmRpcError("chain-id-mismatch", "RPC serves another chain")
+        now = int(time.time() * 1_000) if now_epoch_ms is None else now_epoch_ms
+        last = EvmRpcError("transport", "No RPC endpoint answered")
+        attempted: set[str] = set()
+        with httpx.Client(transport=transport) as client:
+            while len(attempted) < len(self._endpoints):
+                order, last_resort = self._order(now, attempted)
+                for endpoint in order:
+                    attempted.add(endpoint.url)
+                    if (
+                        not last_resort
+                        and self._health.admit(endpoint.health_id, now) == "open"
+                    ):
+                        last = EvmRpcError("transport", "Base RPC circuit is open")
                         continue
-                    raw = self._call(
-                        client,
-                        url,
-                        "eth_call",
-                        [
-                            {"to": token, "data": encode_balance_of_call_data(owner)},
-                            "latest",
-                        ],
+                    started = time.monotonic()
+                    try:
+                        observed = self._chain_id(
+                            self._call(client, endpoint, "eth_chainId", [])
+                        )
+                        if observed != chain_id:
+                            raise EvmRpcError(
+                                "chain-id-mismatch", "RPC serves another chain"
+                            )
+                        balance = self._balance(
+                            self._call(
+                                client,
+                                endpoint,
+                                "eth_call",
+                                self._balance_params(token, owner),
+                            )
+                        )
+                    except EvmRpcError as error:
+                        self._record_endpoint_failure(endpoint, error, now)
+                        last = error
+                        continue
+                    self._health.record_success(
+                        endpoint.health_id, (time.monotonic() - started) * 1_000, now
                     )
-                    return EvmBalanceReading(self._balance(raw), observed, _safe_host(url))
-                except EvmRpcError as error:
-                    last = error
+                    return EvmBalanceReading(
+                        balance, observed, endpoint.label, endpoint.health_id
+                    )
         raise last
 
     async def read_balance_async(
-        self, *, chain_id: int, token: str, owner: str
+        self,
+        *,
+        chain_id: int,
+        token: str,
+        owner: str,
+        now_epoch_ms: int | None = None,
     ) -> EvmBalanceReading:
-        if _ADDRESS.fullmatch(token) is None or _ADDRESS.fullmatch(owner) is None:
-            raise EvmRpcError("protocol", "Token and owner must be 20-byte addresses")
-        if not self._urls:
-            raise EvmRpcError("transport", "No RPC endpoint is configured")
-        last: EvmRpcError = EvmRpcError("transport", "No RPC endpoint answered")
-        async_transport = self._transport
-        if async_transport is not None and not isinstance(
-            async_transport, httpx.AsyncBaseTransport
-        ):
+        """Asynchronous counterpart to :meth:`read_balance`, with identical failover."""
+        self._guard(chain_id, token, owner)
+        transport = self._transport
+        if transport is not None and not isinstance(transport, httpx.AsyncBaseTransport):
             raise TypeError("Async balance reads require an httpx.AsyncBaseTransport")
-        async with httpx.AsyncClient(transport=async_transport) as client:
-            for url in self._urls:
-                try:
-                    observed = self._chain_id(
-                        await self._call_async(client, url, "eth_chainId", [])
-                    )
-                    if observed != chain_id:
-                        last = EvmRpcError("chain-id-mismatch", "RPC serves another chain")
+        now = int(time.time() * 1_000) if now_epoch_ms is None else now_epoch_ms
+        last = EvmRpcError("transport", "No RPC endpoint answered")
+        attempted: set[str] = set()
+        async with httpx.AsyncClient(transport=transport) as client:
+            while len(attempted) < len(self._endpoints):
+                order, last_resort = self._order(now, attempted)
+                for endpoint in order:
+                    attempted.add(endpoint.url)
+                    if (
+                        not last_resort
+                        and self._health.admit(endpoint.health_id, now) == "open"
+                    ):
+                        last = EvmRpcError("transport", "Base RPC circuit is open")
                         continue
-                    raw = await self._call_async(
-                        client,
-                        url,
-                        "eth_call",
-                        [
-                            {"to": token, "data": encode_balance_of_call_data(owner)},
-                            "latest",
-                        ],
+                    started = time.monotonic()
+                    try:
+                        observed = self._chain_id(
+                            await self._call_async(client, endpoint, "eth_chainId", [])
+                        )
+                        if observed != chain_id:
+                            raise EvmRpcError(
+                                "chain-id-mismatch", "RPC serves another chain"
+                            )
+                        balance = self._balance(
+                            await self._call_async(
+                                client,
+                                endpoint,
+                                "eth_call",
+                                self._balance_params(token, owner),
+                            )
+                        )
+                    except EvmRpcError as error:
+                        self._record_endpoint_failure(endpoint, error, now)
+                        last = error
+                        continue
+                    self._health.record_success(
+                        endpoint.health_id, (time.monotonic() - started) * 1_000, now
                     )
-                    return EvmBalanceReading(self._balance(raw), observed, _safe_host(url))
-                except EvmRpcError as error:
-                    last = error
+                    return EvmBalanceReading(
+                        balance, observed, endpoint.label, endpoint.health_id
+                    )
         raise last
-
-
-def _safe_host(url: str) -> str:
-    try:
-        return httpx.URL(url).netloc.decode()
-    except Exception:
-        return "invalid-rpc-url"
 
 
 def resolve_evm_address(signer: EvmSigner, context: Tx402ErrorContext) -> str:
@@ -680,3 +770,188 @@ def create_evm_authorization(
             details={"signerKind": "evm", "causeCategory": "unexpected-signature-count"},
         )
     return payload, adapter.expires_at_epoch_ms
+
+
+# ----------------------------------------------------------------------------------------
+# Chain adapter
+# ----------------------------------------------------------------------------------------
+
+
+def _require_evm_signer(signer: object, context: Tx402ErrorContext) -> EvmSigner:
+    if not (
+        getattr(signer, "kind", None) == "evm"
+        and callable(getattr(signer, "get_address", None))
+        and callable(getattr(signer, "sign_typed_data", None))
+    ):
+        raise ConfigurationError(
+            "A Base route requires an EvmSigner",
+            context=context,
+            details={"configPath": "signers.evm", "reason": "missing-evm-signer"},
+        )
+    return signer  # type: ignore[return-value]
+
+
+class EvmChainAdapter:
+    """The Base implementation of the two questions core asks (SPEC §7.1)."""
+
+    family = "eip155"
+
+    def __init__(self, *, health: HealthIndex, rpc_transport: object = None) -> None:
+        self._health = health
+        self._rpc_transport = rpc_transport
+        self._pools: dict[str, EvmRpcPool] = {}
+
+    def _pool(self, network_id: str, network: Mapping[str, Any]) -> EvmRpcPool:
+        pool = self._pools.get(network_id)
+        if pool is None:
+            pool = EvmRpcPool(
+                network["rpcUrls"],
+                network_id=network_id,
+                health=self._health,
+                transport=self._rpc_transport,  # type: ignore[arg-type]
+            )
+            self._pools[network_id] = pool
+        return pool
+
+    def _prepare(
+        self,
+        request: ChainRouteRequest | ChainAuthorizationRequest,
+        phase: str,
+    ) -> tuple[Tx402ErrorContext, EvmSigner, str, ExactEvmPlan]:
+        offer = request.requirement.requirement
+        context = Tx402ErrorContext(
+            request_id=request.request_id,
+            phase=phase,  # type: ignore[arg-type]
+            network=request.network_id,
+            scheme=offer["scheme"],
+            amount_atomic=offer["amountAtomic"],
+            asset_id=request.requirement.asset_id,
+        )
+        signer = _require_evm_signer(request.signer, context)
+        address = resolve_evm_address(signer, context)
+        plan = plan_exact_evm_authorization(
+            requirement=offer,
+            network_id=request.network_id,
+            network=request.network,
+            asset=request.asset,
+            payer=address,
+            now_epoch_ms=request.now_epoch_ms,
+            context=context,
+        )
+        return context, signer, address, plan
+
+    @staticmethod
+    def _transport_error(error: EvmRpcError, context: Tx402ErrorContext) -> TransportError:
+        return TransportError(
+            "Base RPC is unavailable for payment planning",
+            context=context,
+            details={"causeCategory": error.failure},
+            cause=error,
+        )
+
+    def _route(
+        self, request: ChainRouteRequest, address: str, reading: EvmBalanceReading
+    ) -> ChainRoute:
+        offer = request.requirement.requirement
+        viable = reading.balance_atomic >= int(offer["amountAtomic"])
+        return ChainRoute(
+            requirement_index=offer["index"],
+            network_id=request.network_id,
+            scheme=offer["scheme"],
+            asset_id=request.requirement.asset_id,
+            amount_atomic=offer["amountAtomic"],
+            signer_id=f"evm:{address}",
+            balance_atomic=str(reading.balance_atomic),
+            viable=viable,
+            rejection_reasons=() if viable else ("insufficient-balance",),
+            # The merchant bears settlement gas for the exact scheme, so the buyer's
+            # expected fee in the payment asset is zero (SPEC §7.1).
+            estimated_fee_atomic="0",
+            endpoint_id=reading.endpoint_id,
+        )
+
+    def plan_route(self, request: ChainRouteRequest) -> ChainRoute:
+        context, _signer, address, plan = self._prepare(request, "route")
+        pool = self._pool(request.network_id, request.network)
+        key = BALANCE_KEY_SEPARATOR.join(
+            [request.network_id, plan.verifying_contract, address]
+        )
+
+        def read() -> EvmBalanceReading:
+            return pool.read_balance(
+                chain_id=plan.chain_id,
+                token=plan.verifying_contract,
+                owner=address,
+                now_epoch_ms=request.now_epoch_ms,
+            )
+
+        try:
+            reading = (
+                read() if request.balances is None else request.balances.read(key, read)
+            )
+        except EvmRpcError as error:
+            raise self._transport_error(error, context) from error
+        return self._route(request, address, reading)
+
+    async def plan_route_async(self, request: ChainRouteRequest) -> ChainRoute:
+        context, _signer, address, plan = self._prepare(request, "route")
+        pool = self._pool(request.network_id, request.network)
+        key = BALANCE_KEY_SEPARATOR.join(
+            [request.network_id, plan.verifying_contract, address]
+        )
+
+        def read() -> Any:
+            return pool.read_balance_async(
+                chain_id=plan.chain_id,
+                token=plan.verifying_contract,
+                owner=address,
+                now_epoch_ms=request.now_epoch_ms,
+            )
+
+        try:
+            reading = (
+                await read()
+                if request.balances is None
+                else await request.balances.read_async(key, read)
+            )
+        except EvmRpcError as error:
+            raise self._transport_error(error, context) from error
+        return self._route(request, address, reading)
+
+    def create_authorization(
+        self, request: ChainAuthorizationRequest
+    ) -> ChainAuthorization:
+        context, signer, address, plan = self._prepare(request, "sign")
+        payload, expires = create_evm_authorization(
+            signer=signer,
+            address=address,
+            plan=plan,
+            requirement=request.requirement.requirement,
+            asset=request.asset,
+            resource_host=request.resource_host,
+            request_hash=request.request_hash,
+            context=context,
+        )
+        return ChainAuthorization(
+            x402_version=2,
+            payload=payload,
+            expires_at_epoch_ms=expires,
+            signer_id=f"evm:{address}",
+        )
+
+    async def create_authorization_async(
+        self, request: ChainAuthorizationRequest
+    ) -> ChainAuthorization:
+        # Upstream's EVM scheme is synchronous and CPU-bound around one signer call; the
+        # caller runs it off the event loop rather than this adapter pretending otherwise.
+        return self.create_authorization(request)
+
+    def reset_health(self) -> None:
+        for pool in self._pools.values():
+            pool.reset_health()
+
+
+def create_evm_chain_adapter(
+    *, health: HealthIndex, rpc_transport: object = None
+) -> EvmChainAdapter:
+    return EvmChainAdapter(health=health, rpc_transport=rpc_transport)
