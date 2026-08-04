@@ -11,6 +11,7 @@ import { createEvmRpcStub, type EvmRpcStub } from "@tx402-dev/evm-rpc-stub";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { CIRCUIT_OPEN_MS } from "../src/core/chain.js";
+import { HealthIndex } from "../src/core/health.js";
 import { EvmRpcError, EvmRpcPool } from "../src/evm/rpc.js";
 
 const TOKEN = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -134,16 +135,29 @@ describe("EvmRpcPool", () => {
   it("uses an open endpoint only when every endpoint is open", async () => {
     const first = await stub({ mode: "http-error" });
     const second = await stub({ mode: "http-error" });
-    const pool = new EvmRpcPool([first.url, second.url]);
+    const health = new HealthIndex();
+    const pool = new EvmRpcPool([first.url, second.url], {
+      health,
+      networkId: "eip155:8453",
+    });
 
-    await expect(
-      pool.readBalance({ chainId: 8453, token: TOKEN, owner: OWNER, nowEpochMs: NOW }),
-    ).rejects.toBeInstanceOf(EvmRpcError);
+    // A single transport failure does not open a circuit — SPEC §6.5's thresholds are five
+    // consecutive failures or half of at least ten samples. It takes five rounds.
+    for (let round = 0; round < 5; round += 1) {
+      await expect(
+        pool.readBalance({ chainId: 8453, token: TOKEN, owner: OWNER, nowEpochMs: NOW }),
+      ).rejects.toBeInstanceOf(EvmRpcError);
+    }
+    for (const endpoint of pool.endpointLabels) {
+      expect(health.state(HealthIndex.endpointId("eip155:8453", endpoint), NOW)).toBe(
+        "open",
+      );
+    }
 
     first.setMode("ok");
     first.setBalance(OWNER, "42");
-    // Both circuits are open now. SPEC §6.5 permits a last-resort attempt rather than
-    // failing outright while the window runs.
+    // Now both circuits really are open, and SPEC §6.5 permits a last-resort attempt rather
+    // than failing outright while the window runs.
     const reading = await pool.readBalance({
       chainId: 8453,
       token: TOKEN,
@@ -153,13 +167,47 @@ describe("EvmRpcPool", () => {
     expect(reading.balanceAtomic).toBe(42n);
   });
 
+  it("reports the endpoint it read from into the shared health index", async () => {
+    const rpc = await stub({ balances: { [OWNER]: "9" } });
+    const health = new HealthIndex();
+    const pool = new EvmRpcPool([rpc.url], { health, networkId: "eip155:8453" });
+
+    const reading = await pool.readBalance({
+      chainId: 8453,
+      token: TOKEN,
+      owner: OWNER,
+      nowEpochMs: NOW,
+    });
+
+    // The route planner scores the candidate from this key, so the pool must report the one
+    // endpoint that actually answered rather than the network as a whole.
+    expect(reading.endpointId).toBe(
+      HealthIndex.endpointId("eip155:8453", `127.0.0.1:${rpc.port}`),
+    );
+    expect(health.inspect(reading.endpointId, NOW).sampleCount).toBe(1);
+    expect(health.score(reading.endpointId, NOW)).toBeGreaterThan(0.8);
+  });
+
   it("consults at most two providers per network and can be reset", async () => {
     const rpc = await stub({ balances: { [OWNER]: "7" } });
-    const pool = new EvmRpcPool([rpc.url, "http://127.0.0.1:1/", "http://127.0.0.1:2/"]);
+    const health = new HealthIndex();
+    const pool = new EvmRpcPool([rpc.url, "http://127.0.0.1:1/", "http://127.0.0.1:2/"], {
+      health,
+      networkId: "eip155:8453",
+    });
     expect(pool.endpointLabels).toHaveLength(2);
 
     await pool.readBalance({ chainId: 8453, token: TOKEN, owner: OWNER, nowEpochMs: NOW });
+    expect(health.size).toBe(1);
+
+    // Resetting one pool forgets only its own endpoints; a shared index keeps the rest.
+    health.recordFailure(
+      HealthIndex.endpointId("solana:mainnet", "other.example.com"),
+      NOW,
+    );
     pool.resetHealth();
+    expect(health.size).toBe(1);
+
     await expect(
       pool.readBalance({ chainId: 8453, token: TOKEN, owner: OWNER, nowEpochMs: NOW }),
     ).resolves.toMatchObject({ balanceAtomic: 7n });

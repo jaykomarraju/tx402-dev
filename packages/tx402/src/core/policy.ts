@@ -32,6 +32,14 @@ export interface PolicyConfig {
 
 export interface RoutingPolicyConfig {
   readonly maxQuoteAgeMs?: number;
+  /**
+   * Tie-break preference only (SPEC §4.3). Listing a network here cannot make it payable —
+   * it must still be offered by the merchant, allowed by policy, present in the manifest, and
+   * backed by a sufficient balance. Aliases are accepted and normalized to canonical CAIP-2,
+   * because a preference expressed as `solana:mainnet` must match a candidate identified by
+   * its genesis hash (ADR-010 decision 4).
+   */
+  readonly preferNetworks?: readonly string[];
 }
 
 export interface PolicyRequirement extends NormalizedPaymentRequirement {
@@ -153,6 +161,8 @@ export class PolicyEngine {
   readonly #assets = new Map<string, PreparedAsset>();
   readonly #maxQuoteAgeMs: number;
   readonly maxPaidAttempts: number;
+  /** Canonical CAIP-2, in the caller's stated order (SPEC §6.4 step 18). */
+  readonly preferNetworks: readonly string[];
 
   constructor(
     manifest: ReleaseManifest,
@@ -206,6 +216,26 @@ export class PolicyEngine {
     if (!Number.isInteger(this.#maxQuoteAgeMs) || this.#maxQuoteAgeMs < 0) {
       throw configuration("routing.maxQuoteAgeMs", "expected-non-negative-integer");
     }
+
+    const configuredPreference = routing.preferNetworks ?? [];
+    if (!Array.isArray(configuredPreference)) {
+      throw configuration("routing.preferNetworks", "expected-array");
+    }
+    // Resolved through the manifest, so an unknown or misspelled network is a construction
+    // error rather than a preference that silently never matches anything.
+    this.preferNetworks = Object.freeze(
+      configuredPreference.map((network, index) => {
+        if (typeof network !== "string") {
+          throw configuration(`routing.preferNetworks[${index}]`, "expected-string");
+        }
+        return requireNetwork(
+          manifest,
+          network,
+          configContext(),
+          `routing.preferNetworks[${index}]`,
+        );
+      }),
+    );
 
     for (const networkId of this.#allowedNetworks) {
       const network = manifest.networks[networkId];

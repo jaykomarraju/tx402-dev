@@ -18,14 +18,15 @@ payment route across offered chains, signs an authorization, and retries the req
 of 50 discards all upstream work. Existing clients hard-wire one facilitator and one chain. The
 protocol layer is settled (x402 v2); the gap is resilience and developer ergonomics.
 
-**Current state:** _(updated end of S6)_ **the TypeScript SDK completes paid calls on both Base and
-Solana through faithful local chain harnesses.** M4 landed the SPEC §7.2 `SolanaSigner` contract,
-the adapter onto upstream's `TransactionSigner`, genesis-hash verification, canonical SPL ATA
-balance reads, and pre-sign inspection of the complete versioned transaction. T-003 is green end to
-end: policy, plan, reserve, validate, sign, retry, commit, with no caller signer invocation before
-the reservation. The TypeScript runner executes all 53 shared vectors through M4; Python still
-claims M2 and catches up at S9/S10. Routing preference, shared health scoring, concurrent candidate
-balances, and the re-challenge loop remain intentionally unwritten (M5, M6).
+**Current state:** _(updated end of S7)_ **the TypeScript SDK chooses between Base and Solana
+deterministically and pays on the one it chose.** M5 landed the SPEC §6.4 RoutePlanner and the
+SPEC §6.5 HealthIndex: candidates are scored concurrently, one balance query per unique
+network/asset/owner, ordered by a total key cascade that is a pure function of the candidates, and
+the winner is paid. The two per-adapter circuits M3 and M4 carried are **gone** — there is now one
+health index per client, shared by both RPC pools, and `client.resetHealth()` clears it in one call.
+T-004, T-005, T-008, and T-020 are green. The TypeScript runner executes all 59 shared vectors
+through M5; Python still claims M2 and catches up at S9/S10. Only the re-challenge loop and
+`maxPaidAttempts` remain unwritten (M6).
 
 **Sources of truth, in precedence order:**
 
@@ -41,17 +42,18 @@ metadata (repo URLs, badges) behind a single constant so the move is a one-file 
 
 ## 2. Locked Decisions (from this planning session)
 
-| #   | Decision                                                                                                                                                                                                          | Consequence                                                                                                                                                                                                            |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **Package name is `tx402`, unscoped, on both npm and PyPI.** No `@tx402` org.                                                                                                                                     | Every `@tx402/sdk` reference in SPEC.md §4.1, §13, §16 reads `tx402`. Requires **ADR-009**.                                                                                                                            |
-| D2  | **One npm package `tx402`** exposing the SDK at `.` and the CLI via a `bin` entry.                                                                                                                                | `npx tx402 call ...` works with zero extra install. Merges SPEC §3.1's separate `/packages/cli`. Covered by **ADR-009**. CLI code lives outside the core import path so it does not count against the size gate.       |
-| D3  | **Reserve both names by publishing a `0.0.0` placeholder.** npm immediately (already authed as `jay.komarraju`); PyPI as soon as an API token exists.                                                             | npm has no true reservation — publishing is the only hold. Placeholder is public; npm unpublish is only possible within 72h.                                                                                           |
-| D4  | **Bundle-size gate re-baselined.** Blocking gate: tx402's **own emitted code** < 25 KiB gzipped. Informational: total core-path footprint incl. `@x402/core` + zod, ceiling frozen from a real measurement at M1. | SPEC §12.3's literal "<25 KiB core import path" is unreachable — measured `@x402/core` ESM at ~27 KiB gzipped alone, plus zod ~13 KiB. Requires **ADR-008**.                                                           |
-| D5  | **TypeScript first through M6, then Python catches up against frozen conformance fixtures.**                                                                                                                      | Matches SPEC ADR-005 (TS is the reference implementation). Python inherits a settled design instead of tracking churn.                                                                                                 |
-| D6  | **`retryable` is derived from a six-value `retryability` classification; per-error data lives in `details`, not in the closed `Tx402ErrorContext`.**                                                              | SPEC §8's Retryable column has six values while §4.2 names one boolean. Requires **ADR-011**. Only `TransportError` reports `retryable: true`.                                                                         |
-| D7  | **Manifests are signed over domain-separated tx402 canonical JSON; trusted keys are compiled into each package.**                                                                                                 | SPEC §5.4 defines the signature member but not the bytes it covers. Requires **ADR-012**. Adds `cryptography` to the Python core install — CPython has no Ed25519 and SPEC §3.2 forbids writing one.                   |
-| D8  | **ADR-008's total-core size ceiling is 28 KiB from the measured M2 baseline; the independent 25 KiB own-code limit is unchanged.**                                                                                | M2's policy/ledger are necessarily reachable from `createTx402Client`. Measured 25.79 KiB total / 10.99 KiB own; explicit ADR-008 amendment, no dependency change. **Superseded by D9.**                               |
-| D9  | **Chain adapters are reached through a lazy `import()` from the core path, and the total-core ceiling becomes a tracking number re-baselined by ADR amendment (30 KiB at M3).**                                   | Keeps SPEC §4.1's `signers: { evm, solana }` config exactly as written while `@x402/evm` and `viem` stay off the size-gated core path. Amends **ADR-008**; the blocking own-code gate stays at 25 KiB and never moves. |
+| #   | Decision                                                                                                                                                                                                          | Consequence                                                                                                                                                                                                                                                                                             |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **Package name is `tx402`, unscoped, on both npm and PyPI.** No `@tx402` org.                                                                                                                                     | Every `@tx402/sdk` reference in SPEC.md §4.1, §13, §16 reads `tx402`. Requires **ADR-009**.                                                                                                                                                                                                             |
+| D2  | **One npm package `tx402`** exposing the SDK at `.` and the CLI via a `bin` entry.                                                                                                                                | `npx tx402 call ...` works with zero extra install. Merges SPEC §3.1's separate `/packages/cli`. Covered by **ADR-009**. CLI code lives outside the core import path so it does not count against the size gate.                                                                                        |
+| D3  | **Reserve both names by publishing a `0.0.0` placeholder.** npm immediately (already authed as `jay.komarraju`); PyPI as soon as an API token exists.                                                             | npm has no true reservation — publishing is the only hold. Placeholder is public; npm unpublish is only possible within 72h.                                                                                                                                                                            |
+| D4  | **Bundle-size gate re-baselined.** Blocking gate: tx402's **own emitted code** < 25 KiB gzipped. Informational: total core-path footprint incl. `@x402/core` + zod, ceiling frozen from a real measurement at M1. | SPEC §12.3's literal "<25 KiB core import path" is unreachable — measured `@x402/core` ESM at ~27 KiB gzipped alone, plus zod ~13 KiB. Requires **ADR-008**.                                                                                                                                            |
+| D5  | **TypeScript first through M6, then Python catches up against frozen conformance fixtures.**                                                                                                                      | Matches SPEC ADR-005 (TS is the reference implementation). Python inherits a settled design instead of tracking churn.                                                                                                                                                                                  |
+| D6  | **`retryable` is derived from a six-value `retryability` classification; per-error data lives in `details`, not in the closed `Tx402ErrorContext`.**                                                              | SPEC §8's Retryable column has six values while §4.2 names one boolean. Requires **ADR-011**. Only `TransportError` reports `retryable: true`.                                                                                                                                                          |
+| D7  | **Manifests are signed over domain-separated tx402 canonical JSON; trusted keys are compiled into each package.**                                                                                                 | SPEC §5.4 defines the signature member but not the bytes it covers. Requires **ADR-012**. Adds `cryptography` to the Python core install — CPython has no Ed25519 and SPEC §3.2 forbids writing one.                                                                                                    |
+| D8  | **ADR-008's total-core size ceiling is 28 KiB from the measured M2 baseline; the independent 25 KiB own-code limit is unchanged.**                                                                                | M2's policy/ledger are necessarily reachable from `createTx402Client`. Measured 25.79 KiB total / 10.99 KiB own; explicit ADR-008 amendment, no dependency change. **Superseded by D9.**                                                                                                                |
+| D9  | **Chain adapters are reached through a lazy `import()` from the core path, and the total-core ceiling becomes a tracking number re-baselined by ADR amendment (30 KiB at M3).**                                   | Keeps SPEC §4.1's `signers: { evm, solana }` config exactly as written while `@x402/evm` and `viem` stay off the size-gated core path. Amends **ADR-008**; the blocking own-code gate stays at 25 KiB and never moves.                                                                                  |
+| D10 | **The circuit breaker exists exactly once, in `core/health.ts`.** RPC pools hold endpoint lists and failure classification; they hold no circuit state.                                                           | Closes O19 and O22 structurally. `EvmRpcPool` and `SvmRpcPool` consult and report into the client's single `HealthIndex`, and `CIRCUIT_OPEN_MS` re-exports `HEALTH_OPEN_MS`. No ADR needed — SPEC §6.5 describes one health index; M3/M4's per-pool circuits were the deviation, and this removes them. |
 
 ---
 
@@ -340,6 +342,62 @@ returned the canonical full genesis hash in a live probe and is now the signed m
   30 s open, 1 half-open probe, 128-entry LRU, 30 min idle retention.
 - _Exit:_ T-004, T-005, T-008 (<150 ms p95 decision overhead), T-020 green.
 
+### S7 — M5 (delivered)
+
+Landed the RoutePlanner and the HealthIndex, and — the part that mattered more — **deleted** the
+two circuits they replace. `EvmRpcPool` and `SvmRpcPool` no longer hold `openUntilEpochMs` or a
+failure count; they ask one `HealthIndex` whether an endpoint may be used and report what happened.
+That closes O19 and O22 structurally rather than by convention: there is no second place for the
+state to live, so two layers cannot disagree about the same provider. `client.resetHealth()` is now
+a single call that needs no adapter loaded or awaited.
+
+`core/routing.ts` implements SPEC §6.4 as written. Every requirement becomes a candidate — including
+one with no configured signer, which is a `no-signer-configured` candidate rather than a silent skip
+— probes run together under `Promise.all`, and a `BalanceProbeCache` collapses requirements sharing a
+network, asset, and owner onto one query (O20). **Every probe is awaited before anything is
+ordered.** A "first viable candidate wins" shortcut would make the selection depend on which RPC
+answered first, which is exactly what step 19 forbids; a test drives the preferred network to answer
+last and asserts it still wins.
+
+Ordering is a total key cascade: viability, then open-circuit, then policy preference, then buyer
+fee, then health score, then observed latency, then requirement index. The open-circuit key is
+deliberately above preference. SPEC §6.5 says an open endpoint "is ranked last", which is a stronger
+statement than a low health score — a large enough preference bonus would outrank a score — so it
+cannot be folded into step 17's number. A conformance vector pins exactly that case.
+
+The HealthIndex is SPEC §6.5's table and nothing more: EWMA α=0.20 on both latency and success rate,
+a 20-observation window, opening at five consecutive failures **or** ≥50 % of ≥10 samples, 30 s open,
+one half-open probe, closing on one successful probe, 128-entry LRU, 30-minute idle retention. Two
+details are worth recording. A successful probe **discards** the failure history that opened the
+circuit, or a recovered endpoint would re-open on its next single failure. And `open()` exists
+alongside the thresholds for chain-identity failures only: SPEC §7.1's `eth_chainId` mismatch and
+§7.2's genesis mismatch are not reliability observations to average into a window, they say the
+endpoint is serving another chain, and both clauses require moving on immediately.
+
+Scores are rounded to four decimals with an explicit `floor(x * 10000 + 0.5) / 10000`. `Math.round`
+and Python's `round` disagree at a half, and S10 has to reproduce these numbers exactly.
+
+Six new vectors: four `routing.candidate-order` (preference over index, viability over preference,
+open-circuit last, and a cascade where each remaining key decides exactly one pair) and two
+`health.circuit`. The health expectations were derived from a reference implementation written
+independently from the SPEC §6.5 table rather than read out of `src/core/health.ts`, and the
+`failure-rate` vector opens a circuit at twelve samples with a consecutive count of two — reachable
+only through the rate rule, so an implementation that collapsed the two thresholds into one would
+pass the other vector and fail this one. That closes O15.
+
+T-008 and T-020 are driven by a stub that accepts the connection and never answers — the observable
+behaviour of total packet loss — behind the manifest's first Base RPC host, with the second healthy.
+The decision-overhead figure is measured exactly as SPEC §12.3 defines it, from the moment the
+complete 402 is handed back to tx402 to the moment before the signer is invoked, warmed. Warming is
+the property under test here, not a convenience: sustained loss costs the primary's deadline five
+times and then never again, because its circuit is open.
+
+One test-harness defect is worth carrying forward, because it is the S5 lesson in a new place. The
+first failover harness rebuilt the outbound RPC request as `new Request(input, init)` before
+forwarding it, which dropped the pool's per-provider deadline signal, and the suite hung until it was
+killed. Against a stub that never answers, a broken abort-follow chain is not a slow test — it is no
+deadline at all. Test transports must forward `init` by identity.
+
 ### S8 — M6: TS Completion Semantics
 
 - Paid retry: exactly one `PAYMENT-SIGNATURE`, `X-TX402-REQUEST-ID` (UUIDv7, disableable),
@@ -381,26 +439,26 @@ _Exit:_ **T-016 — 100 % fixture parity** with TS on selected route, error code
 
 ## 7. Status Board _(update every session)_
 
-| Session | Milestone                | Status         | Notes                                                                                                                                                             |
-| ------- | ------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S1      | Bootstrap & Reserve      | ✅ Complete    | 2026-08-02. Workspace, ADR-001..010, both package scaffolds, size gate, CI. npm name reserved; PyPI blocked on O1.                                                |
-| S2      | M0 Spec fixtures         | ✅ Complete    | 2026-08-02. Names frozen. Schemas, signed manifest, 35 conformance vectors, error taxonomy, test merchant. ADR-011/012.                                           |
-| S3      | M1 TS transport/protocol | ✅ Complete    | 2026-08-02. First request + inspect, strict v2 decode, replay safety, diagnostics; 36 vectors execute in both languages.                                          |
-| S4      | M2 TS policy/ledger      | ✅ Complete    | 2026-08-03. Integer money, ordered policy, atomic TTL ledger, fingerprints; 42 vectors execute in both languages.                                                 |
-| S5      | M3 TS Base adapter       | ✅ Complete    | 2026-08-03. EvmSigner + adapter, chain-ID verification, USDC balance, paid call. T-002 green; 49 vectors, TS runs M3. Three defects found via CI and fixed (O21). |
-| S6      | M4 TS Solana adapter     | ✅ Complete    | 2026-08-03. SolanaSigner→TransactionSigner, genesis/ATA balance, exact SPL USDC, pre-sign transaction validation. T-003 local green; Devnet live skipped for O2.  |
-| S7      | M5 TS routing/health     | ⬜ Not started |                                                                                                                                                                   |
-| S8      | M6 TS completion         | ⬜ Not started |                                                                                                                                                                   |
-| S9      | Python M1–M3             | ⬜ Not started |                                                                                                                                                                   |
-| S10     | Python M4–M6             | ⬜ Not started |                                                                                                                                                                   |
-| S11     | M7 CLI + docs            | ⬜ Not started |                                                                                                                                                                   |
-| S12     | M8 hardening + release   | ⬜ Not started |                                                                                                                                                                   |
+| Session | Milestone                | Status         | Notes                                                                                                                                                               |
+| ------- | ------------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1      | Bootstrap & Reserve      | ✅ Complete    | 2026-08-02. Workspace, ADR-001..010, both package scaffolds, size gate, CI. npm name reserved; PyPI blocked on O1.                                                  |
+| S2      | M0 Spec fixtures         | ✅ Complete    | 2026-08-02. Names frozen. Schemas, signed manifest, 35 conformance vectors, error taxonomy, test merchant. ADR-011/012.                                             |
+| S3      | M1 TS transport/protocol | ✅ Complete    | 2026-08-02. First request + inspect, strict v2 decode, replay safety, diagnostics; 36 vectors execute in both languages.                                            |
+| S4      | M2 TS policy/ledger      | ✅ Complete    | 2026-08-03. Integer money, ordered policy, atomic TTL ledger, fingerprints; 42 vectors execute in both languages.                                                   |
+| S5      | M3 TS Base adapter       | ✅ Complete    | 2026-08-03. EvmSigner + adapter, chain-ID verification, USDC balance, paid call. T-002 green; 49 vectors, TS runs M3. Three defects found via CI and fixed (O21).   |
+| S6      | M4 TS Solana adapter     | ✅ Complete    | 2026-08-03. SolanaSigner→TransactionSigner, genesis/ATA balance, exact SPL USDC, pre-sign transaction validation. T-003 local green; Devnet live skipped for O2.    |
+| S7      | M5 TS routing/health     | ✅ Complete    | 2026-08-03. Deterministic RoutePlanner, one shared HealthIndex subsuming both RPC circuits, concurrent deduped balances. T-004/T-005/T-008/T-020 green; 59 vectors. |
+| S8      | M6 TS completion         | ⬜ Not started |                                                                                                                                                                     |
+| S9      | Python M1–M3             | ⬜ Not started |                                                                                                                                                                     |
+| S10     | Python M4–M6             | ⬜ Not started |                                                                                                                                                                     |
+| S11     | M7 CLI + docs            | ⬜ Not started |                                                                                                                                                                     |
+| S12     | M8 hardening + release   | ⬜ Not started |                                                                                                                                                                     |
 
 Legend: ⬜ not started · 🟨 in progress · ✅ complete · 🟥 blocked
 
-**Normative test status (SPEC §12.2):** T-001, T-002, T-003, T-006, T-007, T-009, T-013, and T-018
-are ✅ green. T-004, T-005, T-008, T-010…T-012, and T-014…T-020 remain ⬜ because their routing,
-completion, Python-parity, or release milestones have not landed. T-011 and T-012 have partial S5 coverage — the
+**Normative test status (SPEC §12.2):** T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008,
+T-009, T-013, T-018, and T-020 are ✅ green. T-010…T-012 and T-014…T-017 and T-019 remain ⬜ because
+their completion, Python-parity, or release milestones have not landed. T-011 and T-012 have partial S5 coverage — the
 ambiguous-outcome and blocked-redirect behaviours are implemented and tested — but neither is
 claimed until M6 exercises them through the full re-challenge loop. The test merchant now carries
 scenarios for T-010, T-011, T-012, and T-017, plus refused-retry, corrupt-response, and
@@ -643,6 +701,38 @@ TypeScript on Node 20 and 22, Python on CPython 3.10/3.11/3.12/3.13, and TS↔Py
 parity. The run also passed frozen-lockfile install, lint, format, typecheck, conformance-index,
 manifest-signature, coverage, build, and size gates.
 
+---
+
+**Session 7 verification results (all local gates green):**
+
+| Check                        | Result                                                                       |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `pnpm lint` / format / types | clean; strict TypeScript remains green                                       |
+| `pnpm conformance:check`     | 59 vectors; 24 M0 + 12 M1 + 6 M2 + 7 M3 + 4 M4 + 6 M5                        |
+| `pnpm manifest:verify`       | signed manifest valid; 4 networks; expires 2027-08-02 (362 days)             |
+| TypeScript tests             | 394 passed / 394, 3 skipped (Base Sepolia + Solana Devnet opt-in live legs)  |
+| TS coverage                  | 93.95 % statements / 90.40 % branch — 90 % gate enforced                     |
+| Python lint / format / mypy  | clean; strict mypy over 20 source files                                      |
+| Python tests + coverage      | 174 passed / 174; 92.16 % branch-inclusive coverage                          |
+| `pnpm build`                 | clean                                                                        |
+| `pnpm size`                  | own 15.89 / 25 KiB; total 30.58 / re-baselined 32 KiB; adapters 6.42 / 6.90  |
+| T-004 / T-005                | Base and Solana both offered; preference and viability each decide correctly |
+| T-008                        | secondary used on a dark primary; warmed decision p95 well under 150 ms      |
+| T-020                        | 8/8 paid calls funded through the backup; primary contacted 5 times total    |
+
+`pnpm size` failed at first: the total core-path figure reached 30.55 KiB against the 30 KiB M3
+ceiling. This is the re-baseline the ADR-008 M3 amendment explicitly anticipated for M5 and it was
+applied under the policy that amendment states — an **M5 amendment** recording the measurement, the
+milestone, and what was added, moving the tracking ceiling to 32 KiB. No dependency was added, no
+chain adapter entered the core path, and the blocking own-code gate stayed at 25 KiB with 9.12 KiB
+of headroom. One re-baseline remains anticipated, at M6.
+
+Conformance suite composition at S7: 24 M0 + 12 M1 + 6 M2 + 7 M3 + 4 M4 + 6 M5. **The TypeScript
+runner executes all 59 at Stage B; Python executes 42 and validates the other seventeen at
+Stage A** — the two-stage contract working as designed, with Python's `IMPLEMENTED_THROUGH` still at
+`M2` until S9. Two new vector kinds were added to the frozen schema: `routing.candidate-order` and
+`health.circuit`.
+
 ## 8. Session Protocol (how this stays a living document)
 
 **At the start of every session,** the agent MUST:
@@ -728,15 +818,16 @@ with the code, and emit the next handoff prompt.
 | O12 | The release manifest signing key `tx402-release-1` was generated locally at S2. The private half is gitignored at `core-spec/manifests/keys/tx402-release-1.private.pem` and **exists only on this machine — back it up.** Before `0.1.0` a release key must be generated in a secure environment and held in CI OIDC or a secret manager (SPEC §13); the dev key must not sign a published release. Runbook: `docs/operations/release-manifest.md`.                                                                                                                                                                                                                                                                     | **User** / Agent | 🟥 Open, backup needed now; rotation due S12 |
 | O13 | Solana RPC redundancy. **Resolved at S6.** Mainnet already had the independent keyless `https://rpc.solanatracker.io/public`. A live `getGenesisHash` probe against OnFinality's keyless `https://solana-devnet.api.onfinality.io/public` returned Devnet's canonical `EtWTR...PkrZBG` full hash, so it is now the signed manifest's second Devnet RPC. The SVM pool caps use at two providers, proves genesis on each, fails over on deadline, mismatch, malformed ATA, and transport/protocol failure, and never exposes URL paths or queries in diagnostics. Full HealthIndex scoring remains M5 rather than part of this item.                                                                                       | Agent            | ✅ Resolved S6                               |
 | O14 | The bundled manifest expires **2027-08-02**. After that no client can be constructed until it is re-issued. `manifest:verify` warns below 90 days remaining. Re-issue is a patch release (SPEC §15).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Agent            | ⬜ Informational, due 2027-05                |
-| O15 | Conformance gaps left at M0. **Partially resolved through S5:** oversized-header, three SEC-009 fingerprint goldens, three spend-ledger transition vectors, and seven `evm.authorization-plan` vectors are indexed. The seven M3 vectors execute in TypeScript and are Stage-A validated in Python until S9. Only route-candidate/order vectors remain, due with M5/S7.                                                                                                                                                                                                                                                                                                                                                  | Agent            | 🟨 Only route vectors remain S7              |
+| O15 | Conformance gaps left at M0. **Resolved at S7.** The remaining route-candidate and ordering vectors are indexed: four `routing.candidate-order` and two `health.circuit`, taking the suite to 59. The health expectations were derived from a reference implementation written independently from the SPEC §6.5 table rather than read out of the SDK, and the `failure-rate` vector opens a circuit through the rate rule alone — twelve samples, consecutive count two — so an implementation that collapsed the two thresholds into one cannot pass both vectors.                                                                                                                                                     | Agent            | ✅ Resolved S7                               |
 | O16 | GitHub Actions' deprecated Node 20 action runtime. **Resolved at S4 and verified in CI #6:** CI now uses official `actions/checkout@v7`, `actions/setup-node@v7`, `pnpm/action-setup@v6`, and immutable `astral-sh/setup-uv@v9.0.0`, all on the Node 24 action runtime. setup-uv's prior cache pruning is explicit. The application matrix still tests Node 20 and 22.                                                                                                                                                                                                                                                                                                                                                   | Agent            | ✅ Resolved S4                               |
 | O17 | The S4 handoff asked to read root `SECURITY.md` and `CONTRIBUTING.md`, but neither file exists anywhere in the repository. No S4 implementation guidance was lost: SPEC §9 and the ADRs remain authoritative. Add both public-repository documents with the M7 documentation pass, before open-source migration.                                                                                                                                                                                                                                                                                                                                                                                                         | Agent            | 🟨 Deferred S11                              |
 | O18 | M6 work partially landed at S5 because T-002 could not be green without a paid retry, and a half-implemented retry would have been misleading about money. What exists now: one signature, one attempt, commit on delivery, release on any pre-transmission failure or definitive merchant refusal, and `AmbiguousPaymentError` with the reservation retained on anything ambiguous after transmission. What M6 still owes: the re-challenge loop with `maxPaidAttempts` (a repeated 402 is currently reported, not retried), fresh-challenge parsing on the second attempt, and T-010/T-011/T-012 claimed under that loop.                                                                                              | Agent            | 🟨 Scope note, due S8                        |
-| O19 | The EVM adapter carries a minimal per-endpoint circuit — open on failure, 30 s, last-resort use when every endpoint is open — because SPEC §7.1's chain-ID mismatch rule is a security boundary that could not wait for M5. It is deliberately the smaller half of SPEC §6.5: no EWMA, no 20-observation window, no 128-entry LRU, no health score. M5's HealthIndex must **subsume** `EvmRpcPool`'s state rather than sit beside it, or two circuits will disagree about the same endpoint.                                                                                                                                                                                                                             | Agent            | 🟨 Must be folded into M5/S7                 |
-| O20 | Balance reads are sequential across candidates. SPEC §6.4 step 15 requires them concurrent per unique network/asset, and SPEC §12.3 gates decision overhead at p95 < 150 ms (T-008). One EVM candidate makes this invisible today; a multi-network challenge would serialize. Fold into the M5 RoutePlanner together with the two-provider cap, which the RPC pool already enforces per network.                                                                                                                                                                                                                                                                                                                         | Agent            | 🟨 Due S7                                    |
+| O19 | **Resolved at S7 by deletion, not by layering.** `EvmRpcPool` no longer has `openUntilEpochMs` or `consecutiveFailures`; it asks the client's single `HealthIndex` whether an endpoint may be used and reports the outcome with a latency. `CIRCUIT_OPEN_MS` in `core/chain.ts` is now a re-export of `HEALTH_OPEN_MS`, so the 30-second figure exists once. There is no second place for circuit state to live, which makes the "two circuits disagree" failure mode unreachable rather than merely untested.                                                                                                                                                                                                           | Agent            | ✅ Resolved S7                               |
+| O20 | **Resolved at S7.** `planRoutes` runs every probe under one `Promise.all`, and a `BalanceProbeCache` memoizes on the in-flight promise keyed by network, asset, and owner, so requirements sharing all three join one query instead of racing two. The two-provider cap stays where it was, in each pool's constructor. A unit test asserts peak concurrency of three probes against two distinct reads, and T-008's warmed decision p95 is well inside the 150 ms gate.                                                                                                                                                                                                                                                 | Agent            | ✅ Resolved S7                               |
 | O21 | **Resolved at S5.** S5's three intermittent CI failures were three production defects in guard code: an EVM authorization clock-boundary race, a weakly held composed timeout signal, and a broken abort-follow chain across successive `Request` objects. Deadlines are now enforced by promise races in tx402 control flow, and authorization bounds are computed only after the values they constrain exist. Runs #13, #14, and #15 were all 7/7 green and the failing pair ran clean locally 100 consecutive times. The workflow's failure-annotation diagnostic is deliberately retained; read it before changing code on any future red run. S6 follows both rules in the Solana RPC and signer adapter.           | Agent            | ✅ Resolved S5                               |
-| O22 | The SVM adapter now carries the same minimal per-endpoint safety circuit as EVM: open 30 s on genesis mismatch, deadline, malformed account, or transport/protocol failure; last-resort use only when all compatible endpoints are open. This is intentionally below the full SPEC §6.5 HealthIndex. M5 must subsume **both** `EvmRpcPool` and `SvmRpcPool` state into one health model rather than layering a third, disagreeing circuit beside them.                                                                                                                                                                                                                                                                   | Agent            | 🟨 Due S7                                    |
+| O22 | **Resolved at S7 alongside O19.** `SvmRpcPool` lost its own `openUntilEpochMs` and reports into the same `HealthIndex` as the EVM pool, namespaced `<caip2>\|<host>` so a provider serving several chains is scored per chain. A genesis-hash mismatch still opens immediately, via `HealthIndex.open`, which is reserved for the SPEC §7.1/§7.2 chain-identity rules — those are not reliability samples to average into a window, and both clauses require moving to the next RPC now.                                                                                                                                                                                                                                 | Agent            | ✅ Resolved S7                               |
 | O23 | The PyPI upload token supplied for the one-time reservation was exposed in conversation. Revoke it immediately in PyPI account settings, then use a project-scoped `tx402` token only if needed before OIDC trusted publishing is configured. Do not store the replacement in chat, the repository, shell profiles, or `.pypirc`. Real releases remain CI-only under O10.                                                                                                                                                                                                                                                                                                                                                | **User**         | 🟥 Open — revoke credential now              |
+| O24 | A test transport that rebuilds an outbound request as `new Request(input, init)` **drops the per-provider deadline signal**, because a rebuilt Request only _follows_ the original's signal through a WeakRef. S7's first failover harness did exactly that and the suite hung until it was killed — against a stub that never answers, a broken follow chain is not a slow test, it is no deadline at all. This is S5's `withDeadline` lesson reappearing in test code. Shims must forward `init` by identity; worth a shared test helper at S12.                                                                                                                                                                       | Agent            | 🟨 Convention, revisit S12                   |
 
 ---
 

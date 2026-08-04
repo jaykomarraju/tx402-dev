@@ -124,3 +124,26 @@ planner and health index) and M6 (completion semantics). The rule, stated once:
   growth in own code that would breach the blocking gate — any of those is a design change and needs
   its own decision.
 - At M8 the ceiling is frozen against the finished implementation and stops moving.
+
+## M5 amendment — routing and health baseline (2026-08-03)
+
+The re-baseline the M3 amendment predicted for M5, applied under the policy it states.
+
+M5 adds `core/health.ts` (the SPEC §6.5 circuit breaker and health index) and `core/routing.ts` (the
+SPEC §6.4 route planner) to the core path. Neither can move behind an optional chain entry point:
+`createTx402Client` constructs the single `HealthIndex` at configuration time, and the planner runs
+before any adapter is loaded, deciding _which_ adapter to load. Putting either behind
+`import("../evm/…")` would mean the route ordering that chooses between EVM and Solana lives inside
+one of the two chains it chooses between.
+
+The two files are also, in part, a **deletion**: the per-endpoint circuit state that M3 and M4 each
+carried inside their RPC pool is gone, replaced by one shared index. That deletion lands in the
+optional adapters, which is why `tx402/evm` grew only 0.91 KiB and `tx402/solana` 0.99 KiB while
+absorbing the health-reporting call sites.
+
+With no dependency change, the measured total is **30.55 KiB gzipped** and tx402's own portion is
+**15.88 KiB gzipped** — 9.12 KiB of headroom against the unchanged 25 KiB blocking limit.
+
+The total core-path ceiling is amended to **32 KiB gzipped (32,768 bytes)**, leaving 1.45 KiB (4.7 %)
+over the M5 measurement. One re-baseline remains anticipated, at M6 for the completion semantics,
+after which M8 freezes the number for good.

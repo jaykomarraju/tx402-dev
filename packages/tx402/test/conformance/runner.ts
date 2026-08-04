@@ -38,7 +38,7 @@ const CONFORMANCE_DIR = path.join(REPO_ROOT, "core-spec/conformance");
  * Raising this constant is how a milestone is claimed, and it cannot be raised without
  * registering the handlers.
  */
-export const IMPLEMENTED_THROUGH: Milestone = "M4";
+export const IMPLEMENTED_THROUGH: Milestone = "M5";
 
 export type Milestone = "M0" | "M1" | "M2" | "M3" | "M4" | "M5" | "M6" | "M7" | "M8";
 

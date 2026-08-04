@@ -7,12 +7,13 @@
     "",
     "totalCorePathGzipBytes is a tracking ceiling, re-baselined only by an ADR-008 amendment that",
     "records the measurement and the milestone. M1 froze 24 KiB, M2 amended to 28 KiB, and the M3",
-    "amendment sets 30 KiB from a measured 28.39 KiB core. It is frozen for good at M8.",
+    "amendment sets 30 KiB from a measured 28.39 KiB core. The M5 amendment sets 32 KiB from a",
+    "measured 30.55 KiB core (route planner + health index). It is frozen for good at M8.",
     "",
     "Chain adapters (tx402/evm, tx402/solana) are measured and reported separately and are",
     "excluded from both figures, consistent with the SPEC §12.3 carve-out. That exclusion covers",
     "the lazy import() targets in src/core/chain.ts, which a real bundler code-splits."
   ],
   "ownCodeGzipBytes": { "limit": 25600, "enforced": true },
-  "totalCorePathGzipBytes": { "limit": 30720, "enforced": true }
+  "totalCorePathGzipBytes": { "limit": 32768, "enforced": true }
 }

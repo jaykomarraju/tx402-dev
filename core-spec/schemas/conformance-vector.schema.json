@@ -28,7 +28,9 @@
         "request.fingerprint",
         "spend-ledger.behavior",
         "evm.authorization-plan",
-        "svm.authorization-plan"
+        "svm.authorization-plan",
+        "routing.candidate-order",
+        "health.circuit"
       ]
     },
 
@@ -162,6 +164,32 @@
         "properties": {
           "input": { "$ref": "#/$defs/inputEvmAuthorizationPlan" },
           "expected": { "$ref": "#/$defs/expectedEvmAuthorizationPlan" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "routing.candidate-order" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "required": ["input"],
+        "properties": {
+          "input": { "$ref": "#/$defs/inputCandidateOrder" },
+          "expected": { "$ref": "#/$defs/expectedCandidateOrder" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "health.circuit" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "required": ["input"],
+        "properties": {
+          "input": { "$ref": "#/$defs/inputHealthCircuit" },
+          "expected": { "$ref": "#/$defs/expectedHealthCircuit" }
         }
       }
     }
@@ -593,6 +621,174 @@
           }
         }
       ]
+    },
+
+    "routeCandidateInput": {
+      "description": "A RouteCandidate as it exists *before* ordering. Deliberately not a `$ref` to route-candidate.schema.json: that schema requires `rank`, and a rank is precisely what these vectors are asking the implementation to compute. Every other field and constraint is kept identical, so a candidate that validates here validates there once ranked.",
+      "type": "object",
+      "required": [
+        "requirementIndex",
+        "network",
+        "scheme",
+        "assetId",
+        "amountAtomic",
+        "estimatedFeeAtomic",
+        "healthScore",
+        "circuitState",
+        "viable",
+        "rejectionReasons"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requirementIndex": { "type": "integer", "minimum": 0, "maximum": 31 },
+        "network": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/caip2"
+        },
+        "scheme": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/scheme"
+        },
+        "assetId": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/caip19"
+        },
+        "amountAtomic": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/positiveAtomicAmount"
+        },
+        "signerId": { "type": "string", "pattern": "^(evm|solana):[-_A-Za-z0-9]{1,64}$" },
+        "balanceAtomic": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/atomicAmount"
+        },
+        "estimatedFeeAtomic": {
+          "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/atomicAmount"
+        },
+        "healthScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "observedLatencyMs": { "type": "number", "minimum": 0 },
+        "circuitState": { "enum": ["closed", "open", "half-open"] },
+        "viable": { "type": "boolean" },
+        "rejectionReasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "no-signer-configured",
+              "scheme-unsupported",
+              "network-not-in-manifest",
+              "network-not-allowed-by-policy",
+              "asset-unsupported",
+              "environment-mismatch",
+              "insufficient-balance",
+              "balance-unavailable",
+              "chain-identity-mismatch",
+              "circuit-open"
+            ]
+          }
+        }
+      }
+    },
+
+    "inputCandidateOrder": {
+      "description": "A fully-scored candidate set, so ordering is pinned independently of any RPC, signer, or clock. Health scores are supplied rather than derived — `health.circuit` vectors pin the derivation.",
+      "type": "object",
+      "required": ["candidates"],
+      "additionalProperties": false,
+      "properties": {
+        "preferNetworks": {
+          "description": "`routing.preferNetworks`, already canonical (SPEC §4.3). Tie-break only.",
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/caip2"
+          }
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/routeCandidateInput" }
+        }
+      }
+    },
+
+    "expectedCandidateOrder": {
+      "type": "object",
+      "required": ["order"],
+      "additionalProperties": false,
+      "properties": {
+        "order": {
+          "description": "`requirementIndex` values in final rank order — rank 1 first. Every input candidate appears exactly once: SPEC §6.4 retains non-viable candidates rather than dropping them.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 0, "maximum": 31 }
+        },
+        "selected": {
+          "description": "`requirementIndex` of the highest-ranked viable candidate. Null when SPEC §6.4 step 20 applies and no route is payable.",
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 31
+        }
+      }
+    },
+
+    "inputHealthCircuit": {
+      "description": "A sequence of observations against one endpoint (SPEC §6.5). Latencies and clock readings are supplied so the EWMA arithmetic and the 30-second window are reproducible in both languages.",
+      "type": "object",
+      "required": ["endpointId", "operations"],
+      "additionalProperties": false,
+      "properties": {
+        "endpointId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["action", "nowEpochMs"],
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "description": "`success`/`failure` record a completed use; `open` is the forced chain-identity open of SPEC §7.1/§7.2; `inspect` observes without recording; `admit` claims the half-open probe.",
+                "enum": ["success", "failure", "open", "inspect", "admit"]
+              },
+              "latencyMs": { "type": "number", "minimum": 0 },
+              "nowEpochMs": {
+                "$ref": "https://tx402.dev/schemas/v1/common.schema.json#/$defs/epochMs"
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "expectedHealthCircuit": {
+      "type": "object",
+      "required": ["observations"],
+      "additionalProperties": false,
+      "properties": {
+        "observations": {
+          "description": "One entry per input operation, describing the index state immediately after it.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["circuitState", "healthScore"],
+            "additionalProperties": false,
+            "properties": {
+              "circuitState": { "enum": ["closed", "open", "half-open"] },
+              "healthScore": {
+                "description": "Rounded to four decimal places, half away from zero, so TypeScript and Python agree exactly (SPEC §6.4 step 19).",
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "consecutiveFailures": { "type": "integer", "minimum": 0 },
+              "sampleCount": { "type": "integer", "minimum": 0, "maximum": 20 },
+              "admission": { "enum": ["closed", "open", "half-open"] }
+            }
+          }
+        }
+      }
     },
 
     "expectedSpendLedger": {

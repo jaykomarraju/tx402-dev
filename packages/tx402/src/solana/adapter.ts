@@ -16,15 +16,23 @@ import {
   TransportError,
   type Tx402ErrorContext,
 } from "../core/errors.js";
+import type { HealthIndex } from "../core/health.js";
 import type { SvmManifestAsset, SvmManifestNetwork } from "../core/manifest.js";
 import { formatMoneyDecimal } from "../core/money.js";
 import { isSolanaSigner, type SolanaSigner } from "../core/signers.js";
 import { planExactSvmAuthorization } from "./plan.js";
-import { SvmRpcError, SvmRpcPool, type SvmRpcPoolOptions } from "./rpc.js";
+import {
+  SvmRpcError,
+  SvmRpcPool,
+  type SvmBalanceReading,
+  type SvmRpcPoolOptions,
+} from "./rpc.js";
 import { resolveSolanaPublicKey, toTransactionSigner } from "./signer.js";
 
 export interface SvmChainAdapterOptions {
   readonly rpc?: SvmRpcPoolOptions;
+  /** The client's shared health index (SPEC §6.5, O22). */
+  readonly health?: HealthIndex;
 }
 
 function requireNetwork(
@@ -78,7 +86,11 @@ export function createSvmChainAdapter(options: SvmChainAdapterOptions = {}): Cha
   const poolFor = (networkId: string, network: SvmManifestNetwork): SvmRpcPool => {
     let pool = pools.get(networkId);
     if (pool === undefined) {
-      pool = new SvmRpcPool(network.rpcUrls, options.rpc ?? {});
+      pool = new SvmRpcPool(network.rpcUrls, {
+        networkId,
+        ...(options.health === undefined ? {} : { health: options.health }),
+        ...options.rpc,
+      });
       pools.set(networkId, pool);
     }
     return pool;
@@ -114,20 +126,29 @@ export function createSvmChainAdapter(options: SvmChainAdapterOptions = {}): Cha
 
     async planRoute(request: ChainRouteRequest): Promise<ChainRoute> {
       const { context, network, asset, publicKey } = await prepare(request, "route");
-      let balanceAtomic: bigint;
+      let reading: SvmBalanceReading;
       try {
-        const reading = await poolFor(request.networkId, network).readBalance({
-          genesisHash: network.genesisHash,
-          mint: asset.mint,
-          owner: publicKey,
-          decimals: asset.decimals,
-          nowEpochMs: request.nowEpochMs,
-        });
-        balanceAtomic = reading.balanceAtomic;
+        const pool = poolFor(request.networkId, network);
+        const read = (): Promise<SvmBalanceReading> =>
+          pool.readBalance({
+            genesisHash: network.genesisHash,
+            mint: asset.mint,
+            owner: publicKey,
+            decimals: asset.decimals,
+            nowEpochMs: request.nowEpochMs,
+          });
+        // Deduped per unique network/asset/owner for the planning pass (SPEC §6.4 step 15).
+        reading =
+          request.balances === undefined
+            ? await read()
+            : await request.balances.read(
+                `${request.networkId} ${asset.mint} ${publicKey}`,
+                read,
+              );
       } catch (error) {
         throw transport(error, context);
       }
-      const viable = balanceAtomic >= BigInt(request.requirement.amountAtomic);
+      const viable = reading.balanceAtomic >= BigInt(request.requirement.amountAtomic);
       return Object.freeze({
         requirementIndex: request.requirement.index,
         networkId: request.networkId,
@@ -135,9 +156,13 @@ export function createSvmChainAdapter(options: SvmChainAdapterOptions = {}): Cha
         assetId: request.requirement.assetId,
         amountAtomic: request.requirement.amountAtomic,
         signerId: `solana:${publicKey}`,
-        balanceAtomic: balanceAtomic.toString(),
+        balanceAtomic: reading.balanceAtomic.toString(),
         viable,
         rejectionReasons: Object.freeze(viable ? [] : ["insufficient-balance"]),
+        // The facilitator is the fee payer for the SVM exact scheme (SPEC §7.2), so the
+        // buyer's expected fee in the payment asset is zero.
+        estimatedFeeAtomic: "0",
+        endpointId: reading.endpointId,
       });
     },
 

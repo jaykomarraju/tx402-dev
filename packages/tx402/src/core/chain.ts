@@ -14,8 +14,10 @@
  * paths external for exactly that reason.
  */
 
+import { HEALTH_OPEN_MS, type HealthIndex } from "./health.js";
 import type { ManifestAsset, ManifestNetwork } from "./manifest.js";
 import type { PolicyRequirement } from "./policy.js";
+import type { BalanceProbeCache } from "./routing.js";
 
 /**
  * Per-provider balance timeout (SPEC §6.4 step 15). Not configurable: it is a bound on the
@@ -35,8 +37,14 @@ export const MAX_PROVIDERS_PER_NETWORK = 2;
  */
 export const MAX_AUTHORIZATION_SECONDS = 60;
 
-/** Circuit open duration for an RPC endpoint (SPEC §6.5). */
-export const CIRCUIT_OPEN_MS = 30_000;
+/**
+ * Circuit open duration for an RPC endpoint (SPEC §6.5).
+ *
+ * Re-exported from `core/health.ts` rather than restated: since M5 the circuit lives entirely
+ * in the HealthIndex, and two copies of this number could drift apart without any test
+ * noticing which one an endpoint was actually using.
+ */
+export const CIRCUIT_OPEN_MS = HEALTH_OPEN_MS;
 
 /** Everything an adapter needs to score one policy-approved requirement. */
 export interface ChainRouteRequest {
@@ -49,13 +57,19 @@ export interface ChainRouteRequest {
   readonly requirement: PolicyRequirement;
   readonly signer: unknown;
   readonly nowEpochMs: number;
+  /**
+   * Deduplicates balance reads across requirements that share a network, asset, and owner
+   * (SPEC §6.4 step 15). Supplied by the RoutePlanner for the duration of one planning pass.
+   */
+  readonly balances?: BalanceProbeCache;
 }
 
 /**
- * A scored candidate (SPEC §5.2).
+ * What an adapter can observe about one requirement (SPEC §5.2).
  *
- * `healthScore` and `rank` are populated by the RoutePlanner at M5; an adapter reports only
- * what it can observe on-chain.
+ * `healthScore` and `rank` are **not** here: they are the RoutePlanner's, computed from the
+ * one shared {@link HealthIndex} rather than from anything an adapter keeps. An adapter
+ * reports which endpoint answered, and the planner scores it.
  */
 export interface ChainRoute {
   readonly requirementIndex: number;
@@ -69,6 +83,14 @@ export interface ChainRoute {
   readonly viable: boolean;
   /** Stable machine-readable reasons. Never a raw provider message (SEC-003). */
   readonly rejectionReasons: readonly string[];
+  /**
+   * Buyer-borne fee in atomic units of `assetId`. `"0"` for the exact scheme on both v0.1
+   * networks, where the merchant bears settlement cost — but it is an ordering key in SPEC
+   * §6.4 step 18, so it is carried explicitly rather than assumed.
+   */
+  readonly estimatedFeeAtomic?: string;
+  /** The health-index key of the endpoint that served the balance, `<caip2>|<host>`. */
+  readonly endpointId?: string;
 }
 
 /** A route that has been selected, reserved against, and is ready to sign. */
@@ -98,19 +120,29 @@ export interface ChainAuthorization {
 /**
  * A chain family's implementation of the two questions core asks.
  *
- * Adapters are stateful — they hold RPC circuit state — and one instance is retained per
- * client, so `client.resetHealth()` has something to clear (SPEC §4.1).
+ * One instance is retained per client so its RPC endpoint pools survive across requests. The
+ * *health* those pools consult is not theirs: it lives in the client's shared
+ * {@link HealthIndex}, which is what `client.resetHealth()` clears (SPEC §4.1).
  */
 export interface ChainAdapter {
   /** CAIP-2 namespace this adapter serves, for example `eip155`. */
   readonly family: string;
   planRoute(request: ChainRouteRequest): Promise<ChainRoute>;
   createAuthorization(request: ChainAuthorizationRequest): Promise<ChainAuthorization>;
-  /** Clears local health/circuit state. Never touches the spend ledger. */
+  /** Clears this adapter's endpoints from the health index. Never touches the ledger. */
   resetHealth(): void;
 }
 
-export type ChainAdapterLoader = (family: string) => Promise<ChainAdapter | undefined>;
+/** Wiring an adapter receives from core. Both members are optional for standalone use. */
+export interface ChainAdapterContext {
+  /** The client's single health index (SPEC §6.5). Adapters never create their own. */
+  readonly health?: HealthIndex;
+}
+
+export type ChainAdapterLoader = (
+  family: string,
+  context?: ChainAdapterContext,
+) => Promise<ChainAdapter | undefined>;
 
 /** The CAIP-2 namespace of a canonical network identifier. */
 export function chainFamily(networkId: string): string {
@@ -124,14 +156,15 @@ export function chainFamily(networkId: string): string {
  * the core import path. A missing optional peer dependency surfaces here as a rejected
  * promise; the caller turns it into a `ConfigurationError` naming the package to install.
  */
-export const loadChainAdapter: ChainAdapterLoader = async (family) => {
+export const loadChainAdapter: ChainAdapterLoader = async (family, context = {}) => {
+  const health = context.health === undefined ? {} : { health: context.health };
   if (family === "eip155") {
     const evm = await import("../evm/adapter.js");
-    return evm.createEvmChainAdapter();
+    return evm.createEvmChainAdapter(health);
   }
   if (family === "solana") {
     const svm = await import("../solana/adapter.js");
-    return svm.createSvmChainAdapter();
+    return svm.createSvmChainAdapter(health);
   }
   return undefined;
 };

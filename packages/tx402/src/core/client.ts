@@ -33,7 +33,6 @@ import {
 import {
   AmbiguousPaymentError,
   ConfigurationError,
-  InsufficientLiquidityError,
   InvalidPaymentRequiredError,
   NonReplayableRequestError,
   PaidRedirectBlockedError,
@@ -45,6 +44,7 @@ import {
   type Tx402ErrorContext,
 } from "./errors.js";
 import { fingerprintRequest } from "./fingerprint.js";
+import { HealthIndex } from "./health.js";
 import {
   MemorySpendStore,
   type BudgetState,
@@ -60,6 +60,12 @@ import {
   type RoutingPolicyConfig,
 } from "./policy.js";
 import { decodePaymentRequired, type NormalizedPaymentRequired } from "./protocol.js";
+import {
+  planRoutes,
+  type RouteProbeOutcome,
+  type RouteRejectionReason,
+  type RoutePlan,
+} from "./routing.js";
 import type { Tx402Signers } from "./signers.js";
 import { PROTOCOL_HEADERS, REQUEST_ID_HEADER, RESERVED_REQUEST_HEADERS } from "../meta.js";
 
@@ -448,6 +454,8 @@ interface ClientRuntime {
   readonly clock: Tx402Clock;
   readonly logger: Tx402Logger;
   readonly signers: Tx402Signers;
+  /** The one health index (SPEC §6.5). Every RPC pool in every adapter reports into it. */
+  readonly health: HealthIndex;
   readonly adapters: Map<string, Promise<ChainAdapter | undefined>>;
   readonly paymentRetryMs: number;
   readonly disableRequestIdHeader: boolean;
@@ -466,7 +474,7 @@ async function adapterFor(
 ): Promise<ChainAdapter | undefined> {
   let pending = runtime.adapters.get(family);
   if (pending === undefined) {
-    pending = loadChainAdapter(family);
+    pending = loadChainAdapter(family, { health: runtime.health });
     runtime.adapters.set(family, pending);
   }
   try {
@@ -489,86 +497,110 @@ interface SelectedRoute {
   readonly route: ChainRoute;
   readonly requirement: PolicyRequirement;
   readonly adapter: ChainAdapter;
+  readonly plan: RoutePlan;
+}
+
+/**
+ * Maps an adapter failure onto the candidate vocabulary the RouteCandidate schema allows.
+ *
+ * A `TransportError` from a chain adapter is an RPC that could not answer, which makes one
+ * candidate non-viable — not the whole plan fatal. Anything else (a missing optional peer
+ * dependency, a manifest inconsistency) is a configuration problem the caller has to see,
+ * and reporting it as "insufficient liquidity" would send them looking at their wallet.
+ */
+function classifyRouteFailure(error: unknown): RouteProbeOutcome {
+  if (!(error instanceof TransportError)) {
+    return { kind: "failed", reason: "balance-unavailable", error, fatal: true };
+  }
+  const category = error.details.causeCategory;
+  const reason: RouteRejectionReason =
+    category === "chain-id-mismatch" || category === "genesis-hash-mismatch"
+      ? "chain-identity-mismatch"
+      : category === "circuit-open"
+        ? "circuit-open"
+        : "balance-unavailable";
+  return { kind: "failed", reason, error, fatal: false };
 }
 
 /**
  * Plans routes over the policy-approved requirements and picks one (SPEC §6.4).
  *
- * M3 orders by the merchant's requirement index and takes the first viable candidate. The
- * full ordering — preference rank, expected fee, health score, latency — arrives with the
- * RoutePlanner at M5. What is already true, and must stay true, is that ordering is a pure
- * function of the inputs: identical challenges plan identically (SPEC §6.4 step 19).
+ * This function's only job is to turn one requirement into a {@link RouteProbeOutcome}; the
+ * ordering, the concurrency, and step 20's three failure cases live in `core/routing.ts`.
+ * The probes are handed to the planner unstarted so it can run them together — SPEC §6.4
+ * step 15 requires concurrent balance discovery, and a sequential loop here would put every
+ * offered network's round trip end to end inside the 150 ms decision budget (T-008).
  */
-async function planRoutes(
+async function planSelectedRoute(
   runtime: ClientRuntime,
   requirements: readonly PolicyRequirement[],
   requestId: string,
   nowEpochMs: number,
 ): Promise<SelectedRoute> {
   const errorContext = context(requestId, "route");
-  const candidates: SelectedRoute[] = [];
-  const deficits: {
-    network: string;
-    assetId: string;
-    required: string;
-    available: string;
-  }[] = [];
-  let firstFailure: Error | undefined;
-  let sawSigner = false;
 
-  for (const requirement of requirements) {
-    const family = chainFamily(requirement.network);
-    const signer = signerFor(runtime.signers, family);
-    if (signer === undefined) continue;
-
-    const adapter = await adapterFor(runtime, family, errorContext);
-    if (adapter === undefined) continue;
-    sawSigner = true;
-
-    const network = runtime.manifest.networks[requirement.network];
-    if (network === undefined) continue;
-
-    try {
-      const route = await adapter.planRoute({
-        requestId,
-        networkId: requirement.network,
-        network,
-        asset: requirement.manifestAsset,
-        requirement,
-        signer,
-        nowEpochMs,
-      });
-      if (route.viable) return { route, requirement, adapter };
-      candidates.push({ route, requirement, adapter });
-      deficits.push({
-        network: route.networkId,
-        assetId: route.assetId,
-        required: route.amountAtomic,
-        available: route.balanceAtomic,
-      });
-    } catch (error) {
-      firstFailure ??= error instanceof Error ? error : new Error(String(error));
-    }
-  }
-
-  if (!sawSigner) {
-    throw new UnsupportedSchemeError(
-      "No offered network has a configured signer and chain adapter",
-      {
-        context: errorContext,
-        details: {
-          offeredSchemes: [...new Set(requirements.map((item) => item.scheme))],
-          offeredNetworks: [...new Set(requirements.map((item) => item.network))],
-        },
-      },
-    );
-  }
-  if (candidates.length === 0 && firstFailure !== undefined) throw firstFailure;
-
-  throw new InsufficientLiquidityError("No offered route has sufficient balance", {
+  const plan = await planRoutes({
+    requirements,
+    preferNetworks: runtime.policyEngine.preferNetworks,
+    health: runtime.health,
+    nowEpochMs,
     context: errorContext,
-    details: { deficits },
+    probe: async (requirement, balances) => {
+      const family = chainFamily(requirement.network);
+      const signer = signerFor(runtime.signers, family);
+      if (signer === undefined) return { kind: "rejected", reason: "no-signer-configured" };
+
+      const adapter = await adapterFor(runtime, family, errorContext);
+      if (adapter === undefined) return { kind: "rejected", reason: "scheme-unsupported" };
+
+      const network = runtime.manifest.networks[requirement.network];
+      if (network === undefined) {
+        return { kind: "rejected", reason: "network-not-in-manifest" };
+      }
+
+      try {
+        return {
+          kind: "route",
+          route: await adapter.planRoute({
+            requestId,
+            networkId: requirement.network,
+            network,
+            asset: requirement.manifestAsset,
+            requirement,
+            signer,
+            nowEpochMs,
+            balances,
+          }),
+        };
+      } catch (error) {
+        return classifyRouteFailure(error);
+      }
+    },
   });
+
+  // Re-resolved rather than carried through the planner: the adapter is already loaded and
+  // cached by the probe above, so this is a map lookup, and keeping the planner free of an
+  // opaque payload keeps its ordering logic testable without a chain adapter in scope.
+  const adapter = await adapterFor(
+    runtime,
+    chainFamily(plan.selectedRequirement.network),
+    errorContext,
+  );
+  if (adapter === undefined) {
+    throw new UnsupportedSchemeError("Selected network lost its chain adapter", {
+      context: errorContext,
+      details: {
+        offeredSchemes: [plan.selectedRequirement.scheme],
+        offeredNetworks: [plan.selectedRequirement.network],
+      },
+    });
+  }
+  return {
+    route: plan.selectedRoute,
+    requirement: plan.selectedRequirement,
+    adapter,
+    plan,
+  };
 }
 
 function settlementIdHash(settlementId: string): string {
@@ -689,7 +721,7 @@ async function executePayment(
   });
 
   /* Route planning — balances may be queried only now (SPEC §6.3 step 13). */
-  const selected = await planRoutes(
+  const selected = await planSelectedRoute(
     runtime,
     decision.requirements,
     requestId,
@@ -699,9 +731,13 @@ async function executePayment(
   emit(runtime.logger, "info", {
     event: "route.planned",
     requestId,
-    candidateCount: decision.requirements.length,
+    candidateCount: selected.plan.candidates.length,
     selectedNetwork: selected.route.networkId,
     selectedScheme: selected.route.scheme,
+    // Redaction-safe by construction: the candidate carries public identifiers and atomic
+    // figures only, and never an RPC URL (SEC-003).
+    selectedHealthScore: selected.plan.selected.healthScore,
+    selectedRank: selected.plan.selected.rank,
   });
 
   /* Reservation — atomic, and strictly before the signer exists in this scope. */
@@ -995,6 +1031,7 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
     clock,
     logger,
     signers: config.signers ?? {},
+    health: new HealthIndex(),
     adapters: new Map(),
     paymentRetryMs,
     disableRequestIdHeader: config.disableRequestIdHeader ?? false,
@@ -1144,14 +1181,10 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
       }
     },
     getBudgetState: () => budgetState,
-    resetHealth: () => {
-      for (const pending of runtime.adapters.values()) {
-        void pending.then(
-          (adapter) => adapter?.resetHealth(),
-          () => undefined,
-        );
-      }
-    },
+    // One index, so one call clears everything — no adapter needs to be loaded or awaited,
+    // and there is no window in which one layer has forgotten an endpoint and another has
+    // not (SPEC §4.1; O19/O22).
+    resetHealth: () => runtime.health.reset(),
   };
   return Object.freeze(client);
 }

@@ -20,6 +20,7 @@ import {
   fingerprintRequest,
   normalizeFingerprintUrl,
 } from "../../src/core/fingerprint.js";
+import { HealthIndex } from "../../src/core/health.js";
 import { MemorySpendStore } from "../../src/core/ledger.js";
 import {
   resolveNetwork,
@@ -30,6 +31,7 @@ import {
   type SvmManifestNetwork,
 } from "../../src/core/manifest.js";
 import { decodePaymentRequired } from "../../src/core/protocol.js";
+import { orderRouteCandidates, type RouteCandidate } from "../../src/core/routing.js";
 import {
   planExactEvmAuthorization,
   type ExactEvmRequirementInput,
@@ -358,4 +360,67 @@ registerHandler("svm.authorization-plan", async (vector: ConformanceVector) => {
       reason: expected.reason,
     });
   }
+});
+
+/* M5 — route ordering and endpoint health (SPEC §6.4, §6.5). ---------------------------- */
+
+registerHandler("routing.candidate-order", (vector: ConformanceVector) => {
+  const input = vector.input as {
+    preferNetworks?: string[];
+    candidates: Omit<RouteCandidate, "rank">[];
+  };
+  const expected = vector.expected as { order: number[]; selected?: number | null };
+
+  // `rank` is what the ordering assigns, so the fixture supplies candidates without one and
+  // a placeholder goes in only to satisfy the type.
+  const ordered = orderRouteCandidates(
+    input.candidates.map((candidate) => ({ ...candidate, rank: 0 })),
+    input.preferNetworks ?? [],
+  );
+
+  expect(ordered.map((candidate) => candidate.requirementIndex)).toEqual(expected.order);
+  // Ranks are 1-based and dense: every considered candidate is ranked, viable or not.
+  expect(ordered.map((candidate) => candidate.rank)).toEqual(
+    ordered.map((_candidate, index) => index + 1),
+  );
+  if (expected.selected !== undefined) {
+    const selected = ordered.find((candidate) => candidate.viable);
+    expect(selected?.requirementIndex ?? null).toEqual(expected.selected);
+  }
+});
+
+registerHandler("health.circuit", (vector: ConformanceVector) => {
+  const input = vector.input as {
+    endpointId: string;
+    operations: { action: string; latencyMs?: number; nowEpochMs: number }[];
+  };
+  const expected = vector.expected as { observations: Record<string, unknown>[] };
+  const health = new HealthIndex();
+
+  const observed = input.operations.map((operation) => {
+    let admission: string | undefined;
+    if (operation.action === "success") {
+      health.recordSuccess(
+        input.endpointId,
+        operation.latencyMs ?? 0,
+        operation.nowEpochMs,
+      );
+    } else if (operation.action === "failure") {
+      health.recordFailure(input.endpointId, operation.nowEpochMs);
+    } else if (operation.action === "open") {
+      health.open(input.endpointId, operation.nowEpochMs);
+    } else if (operation.action === "admit") {
+      admission = health.admit(input.endpointId, operation.nowEpochMs);
+    }
+    const state = health.inspect(input.endpointId, operation.nowEpochMs);
+    return {
+      circuitState: state.circuitState,
+      healthScore: state.healthScore,
+      consecutiveFailures: state.consecutiveFailures,
+      sampleCount: state.sampleCount,
+      ...(admission === undefined ? {} : { admission }),
+    };
+  });
+
+  expect(observed).toEqual(expected.observations);
 });

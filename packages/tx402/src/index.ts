@@ -22,7 +22,9 @@
  * const response = await client.fetch(url, init);
  * ```
  *
- * Status: paid calls through the EVM and SVM adapters are implemented through M4.
+ * Status: implemented through M5 — paid calls on Base and Solana, with deterministic
+ * multi-route planning and a shared endpoint health index. The re-challenge loop and
+ * `maxPaidAttempts` land at M6.
  */
 
 export {
@@ -148,12 +150,49 @@ export {
 } from "./core/chain.js";
 export type {
   ChainAdapter,
+  ChainAdapterContext,
   ChainAdapterLoader,
   ChainAuthorization,
   ChainAuthorizationRequest,
   ChainRoute,
   ChainRouteRequest,
 } from "./core/chain.js";
+
+/**
+ * Endpoint health and route planning (SPEC §6.4, §6.5).
+ *
+ * One `HealthIndex` per client scores every RPC endpoint every adapter uses; there is no
+ * second circuit anywhere in the SDK. `client.resetHealth()` clears it.
+ */
+export {
+  HealthIndex,
+  HEALTH_EWMA_ALPHA,
+  HEALTH_FAILURE_WINDOW,
+  HEALTH_CONSECUTIVE_FAILURES_TO_OPEN,
+  HEALTH_MIN_SAMPLES_FOR_RATE,
+  HEALTH_FAILURE_RATE_TO_OPEN,
+  HEALTH_OPEN_MS,
+  HEALTH_IDLE_RETENTION_MS,
+  HEALTH_MAX_ENDPOINTS,
+  HEALTH_NEW_ENDPOINT_SCORE,
+  HEALTH_LATENCY_REFERENCE_MS,
+  HEALTH_LATENCY_PENALTY_MAX,
+} from "./core/health.js";
+export type { CircuitAdmission, CircuitState, EndpointHealth } from "./core/health.js";
+
+export {
+  orderRouteCandidates,
+  planRoutes,
+  createBalanceProbeCache,
+} from "./core/routing.js";
+export type {
+  BalanceProbeCache,
+  RouteCandidate,
+  RoutePlan,
+  RoutePlanRequest,
+  RouteProbeOutcome,
+  RouteRejectionReason,
+} from "./core/routing.js";
 
 export {
   parseMoneyAtomic,

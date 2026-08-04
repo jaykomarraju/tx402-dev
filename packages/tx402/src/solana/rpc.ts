@@ -3,7 +3,8 @@
 import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { address } from "@solana/kit";
 
-import { CIRCUIT_OPEN_MS, MAX_PROVIDERS_PER_NETWORK } from "../core/chain.js";
+import { MAX_PROVIDERS_PER_NETWORK } from "../core/chain.js";
+import { HealthIndex } from "../core/health.js";
 
 export type SvmRpcFailure =
   | "circuit-open"
@@ -29,13 +30,21 @@ export class SvmRpcError extends Error {
 interface Endpoint {
   readonly url: string;
   readonly label: string;
-  openUntilEpochMs: number;
+  /** `<caip2>|<host>` — this endpoint's key in the shared health index. */
+  readonly healthId: string;
 }
 
 export interface SvmRpcPoolOptions {
   readonly timeoutMs?: number;
   readonly fetchImpl?: typeof globalThis.fetch;
   readonly maxProviders?: number;
+  /**
+   * The client's shared health index (SPEC §6.5, O22). The Solana pool carried its own
+   * 30-second circuit at M4; it now reports into the same index as the EVM pool so one
+   * provider cannot be simultaneously open here and closed there.
+   */
+  readonly health?: HealthIndex;
+  readonly networkId?: string;
 }
 
 export interface SvmBalanceReading {
@@ -44,6 +53,8 @@ export interface SvmBalanceReading {
   readonly endpoint: string;
   /** Exact endpoint URL. Sensitive only inside the adapter; never placed in diagnostics. */
   readonly rpcUrl: string;
+  /** Health-index key of the endpoint that answered, for route scoring. */
+  readonly endpointId: string;
 }
 
 interface JsonRpcEnvelope {
@@ -97,18 +108,24 @@ export class SvmRpcPool {
   readonly #endpoints: Endpoint[];
   readonly #timeoutMs: number;
   readonly #fetch: typeof globalThis.fetch;
+  readonly #health: HealthIndex;
   #requestId = 0;
 
   constructor(rpcUrls: readonly string[], options: SvmRpcPoolOptions = {}) {
+    const networkId = options.networkId ?? "solana";
     this.#endpoints = rpcUrls
       .slice(0, options.maxProviders ?? MAX_PROVIDERS_PER_NETWORK)
-      .map((url) => ({ url, label: safeLabel(url), openUntilEpochMs: 0 }));
+      .map((url) => {
+        const label = safeLabel(url);
+        return { url, label, healthId: HealthIndex.endpointId(networkId, label) };
+      });
     this.#timeoutMs = options.timeoutMs ?? 600;
     this.#fetch = options.fetchImpl ?? globalThis.fetch;
+    this.#health = options.health ?? new HealthIndex();
   }
 
   resetHealth(): void {
-    for (const endpoint of this.#endpoints) endpoint.openUntilEpochMs = 0;
+    for (const endpoint of this.#endpoints) this.#health.forget(endpoint.healthId);
   }
 
   async readBalance(input: {
@@ -126,7 +143,7 @@ export class SvmRpcPool {
     const attempted = new Set<string>();
     let last = new SvmRpcError("transport", "No Solana RPC returned an ATA balance");
     while (attempted.size < this.#endpoints.length) {
-      const endpoint = await this.#withValidatedEndpoint(
+      const { endpoint, startedAt } = await this.#withValidatedEndpoint(
         input.genesisHash,
         input.nowEpochMs,
         attempted,
@@ -142,14 +159,20 @@ export class SvmRpcPool {
           input.mint,
           input.decimals,
         );
+        this.#health.recordSuccess(
+          endpoint.healthId,
+          performance.now() - startedAt,
+          input.nowEpochMs,
+        );
         return {
           balanceAtomic,
           tokenAccount: tokenAccount.toString(),
           endpoint: endpoint.label,
           rpcUrl: endpoint.url,
+          endpointId: endpoint.healthId,
         };
       } catch (error) {
-        this.#open(endpoint, input.nowEpochMs);
+        this.#health.recordFailure(endpoint.healthId, input.nowEpochMs);
         last =
           error instanceof SvmRpcError
             ? error
@@ -165,25 +188,53 @@ export class SvmRpcPool {
   async validatedRpcUrl(
     genesisHash: string,
     nowEpochMs: number,
-  ): Promise<{ readonly url: string; readonly endpoint: string }> {
-    const endpoint = await this.#withValidatedEndpoint(genesisHash, nowEpochMs);
-    return { url: endpoint.url, endpoint: endpoint.label };
+  ): Promise<{
+    readonly url: string;
+    readonly endpoint: string;
+    readonly endpointId: string;
+  }> {
+    const { endpoint, startedAt } = await this.#withValidatedEndpoint(
+      genesisHash,
+      nowEpochMs,
+    );
+    this.#health.recordSuccess(
+      endpoint.healthId,
+      performance.now() - startedAt,
+      nowEpochMs,
+    );
+    return { url: endpoint.url, endpoint: endpoint.label, endpointId: endpoint.healthId };
   }
 
+  /**
+   * Finds an endpoint that has just proved its cluster, leaving its health observation open.
+   *
+   * The caller records the outcome, because the useful latency figure spans the whole use —
+   * genesis proof plus whatever it was proved for — and an endpoint that answers
+   * `getGenesisHash` quickly and then stalls on the account read has not been healthy.
+   */
   async #withValidatedEndpoint(
     expectedGenesisHash: string,
     nowEpochMs: number,
     attempted: Set<string> = new Set(),
-  ): Promise<Endpoint> {
+  ): Promise<{ endpoint: Endpoint; startedAt: number }> {
     if (this.#endpoints.length === 0) {
       throw new SvmRpcError("transport", "No RPC endpoint is configured for this cluster");
     }
     const available = this.#endpoints.filter((endpoint) => !attempted.has(endpoint.url));
-    const closed = available.filter((endpoint) => endpoint.openUntilEpochMs <= nowEpochMs);
-    const order = closed.length > 0 ? closed : available;
+    const usable = available.filter(
+      (endpoint) => this.#health.state(endpoint.healthId, nowEpochMs) !== "open",
+    );
+    // SPEC §6.5: an open endpoint is a last resort, permitted only when all of them are.
+    const lastResort = usable.length === 0;
+    const order = lastResort ? available : usable;
     let last = new SvmRpcError("circuit-open", "Every Solana RPC endpoint is open");
     for (const endpoint of order) {
       attempted.add(endpoint.url);
+      if (!lastResort && this.#health.admit(endpoint.healthId, nowEpochMs) === "open") {
+        last = new SvmRpcError("circuit-open", "Solana RPC endpoint circuit is open");
+        continue;
+      }
+      const startedAt = performance.now();
       try {
         const observed = await this.#call(endpoint, "getGenesisHash", []);
         if (typeof observed !== "string" || observed.length === 0) {
@@ -193,16 +244,18 @@ export class SvmRpcPool {
           );
         }
         if (observed !== expectedGenesisHash) {
-          this.#open(endpoint, nowEpochMs);
+          // SPEC §7.2's counterpart to the EVM chain-ID rule: the wrong cluster is not a
+          // reliability signal to average, it is grounds to stop using this endpoint now.
+          this.#health.open(endpoint.healthId, nowEpochMs);
           last = new SvmRpcError(
             "genesis-hash-mismatch",
             "RPC serves a different Solana cluster",
           );
           continue;
         }
-        return endpoint;
+        return { endpoint, startedAt };
       } catch (error) {
-        this.#open(endpoint, nowEpochMs);
+        this.#health.recordFailure(endpoint.healthId, nowEpochMs);
         last =
           error instanceof SvmRpcError
             ? error
@@ -210,10 +263,6 @@ export class SvmRpcPool {
       }
     }
     throw last;
-  }
-
-  #open(endpoint: Endpoint, nowEpochMs: number): void {
-    endpoint.openUntilEpochMs = nowEpochMs + CIRCUIT_OPEN_MS;
   }
 
   async #call(endpoint: Endpoint, method: string, params: unknown[]): Promise<unknown> {

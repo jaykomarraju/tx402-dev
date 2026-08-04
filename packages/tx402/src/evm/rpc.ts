@@ -19,7 +19,8 @@
  * on the same endpoint that serves it.
  */
 
-import { CIRCUIT_OPEN_MS, MAX_PROVIDERS_PER_NETWORK } from "../core/chain.js";
+import { MAX_PROVIDERS_PER_NETWORK } from "../core/chain.js";
+import { HealthIndex } from "../core/health.js";
 import { encodeBalanceOfCallData } from "./plan.js";
 
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/u;
@@ -51,8 +52,8 @@ interface Endpoint {
   readonly url: string;
   /** Host only. The full URL may embed an API key, which is a secret (SEC-003). */
   readonly label: string;
-  openUntilEpochMs: number;
-  consecutiveFailures: number;
+  /** `<caip2>|<host>` — this endpoint's key in the shared health index. */
+  readonly healthId: string;
 }
 
 export interface EvmRpcPoolOptions {
@@ -61,6 +62,14 @@ export interface EvmRpcPoolOptions {
   /** Injected for tests; production always uses the platform `fetch`. */
   readonly fetchImpl?: typeof globalThis.fetch;
   readonly maxProviders?: number;
+  /**
+   * The client's shared health index (SPEC §6.5). A pool constructed without one gets a
+   * private index so it still behaves correctly in isolation — but inside a client every
+   * pool receives the same instance, which is the point of O19.
+   */
+  readonly health?: HealthIndex;
+  /** CAIP-2 identifier this pool serves, used to namespace health keys. */
+  readonly networkId?: string;
 }
 
 /** The outcome of a balance read, together with which endpoint answered. */
@@ -68,6 +77,8 @@ export interface EvmBalanceReading {
   readonly balanceAtomic: bigint;
   readonly chainId: number;
   readonly endpoint: string;
+  /** Health-index key of the endpoint that answered, for route scoring. */
+  readonly endpointId: string;
 }
 
 function hexToBigInt(value: string): bigint {
@@ -78,41 +89,40 @@ function hexToBigInt(value: string): bigint {
 }
 
 /**
- * An ordered set of RPC endpoints for one network, with per-endpoint circuit state.
+ * An ordered set of RPC endpoints for one network.
  *
- * The circuit here is deliberately the smaller half of SPEC §6.5 — open on failure, 30 s,
- * one probe on the far side. The EWMA scoring, the 20-observation window, and the 128-entry
- * LRU belong to the HealthIndex at M5, which will subsume this. What cannot wait for M5 is
- * SPEC §7.1's rule that a chain-ID mismatch opens the endpoint and moves to the next RPC:
- * that is a security boundary, not a performance heuristic.
+ * **The pool holds no circuit state of its own.** M3 shipped one here because SPEC §7.1's
+ * chain-ID rule is a security boundary that could not wait for the HealthIndex; M5 moved it,
+ * so `openUntil` and `consecutiveFailures` no longer exist on an endpoint. Every open/closed
+ * decision and every observation goes through the index the client shares with the Solana
+ * pool, which is what stops two circuits from disagreeing about the same provider (O19).
  */
 export class EvmRpcPool {
   readonly #endpoints: Endpoint[];
   readonly #timeoutMs: number;
   readonly #fetch: typeof globalThis.fetch;
+  readonly #health: HealthIndex;
   #requestId = 0;
 
   constructor(rpcUrls: readonly string[], options: EvmRpcPoolOptions = {}) {
     const limit = options.maxProviders ?? MAX_PROVIDERS_PER_NETWORK;
-    this.#endpoints = rpcUrls.slice(0, limit).map((url) => ({
-      url,
-      label: safeLabel(url),
-      openUntilEpochMs: 0,
-      consecutiveFailures: 0,
-    }));
+    const networkId = options.networkId ?? "eip155";
+    this.#endpoints = rpcUrls.slice(0, limit).map((url) => {
+      const label = safeLabel(url);
+      return { url, label, healthId: HealthIndex.endpointId(networkId, label) };
+    });
     this.#timeoutMs = options.timeoutMs ?? 600;
     this.#fetch = options.fetchImpl ?? globalThis.fetch;
+    this.#health = options.health ?? new HealthIndex();
   }
 
   get endpointLabels(): readonly string[] {
     return this.#endpoints.map((endpoint) => endpoint.label);
   }
 
+  /** Forgets only this pool's endpoints, so a shared index keeps other networks' history. */
   resetHealth(): void {
-    for (const endpoint of this.#endpoints) {
-      endpoint.openUntilEpochMs = 0;
-      endpoint.consecutiveFailures = 0;
-    }
+    for (const endpoint of this.#endpoints) this.#health.forget(endpoint.healthId);
   }
 
   /**
@@ -136,19 +146,30 @@ export class EvmRpcPool {
       throw new EvmRpcError("transport", "No RPC endpoint is configured for this network");
     }
 
-    const closed = this.#endpoints.filter(
-      (endpoint) => endpoint.openUntilEpochMs <= input.nowEpochMs,
+    const usable = this.#endpoints.filter(
+      (endpoint) => this.#health.state(endpoint.healthId, input.nowEpochMs) !== "open",
     );
-    const order = closed.length > 0 ? closed : this.#endpoints;
+    // SPEC §6.5: an open endpoint may still be used, but only when every one of them is.
+    const lastResort = usable.length === 0;
+    const order = lastResort ? this.#endpoints : usable;
 
     let last: EvmRpcError = new EvmRpcError("circuit-open", "Every RPC endpoint is open");
     for (const endpoint of order) {
+      if (
+        !lastResort &&
+        this.#health.admit(endpoint.healthId, input.nowEpochMs) === "open"
+      ) {
+        // The single half-open probe is already in flight elsewhere.
+        last = new EvmRpcError("circuit-open", "RPC endpoint circuit is open");
+        continue;
+      }
+      const startedAt = performance.now();
       try {
         const observed = await this.#chainId(endpoint);
         if (observed !== input.chainId) {
           // SPEC §7.1: a mismatch is not a slow endpoint, it is the wrong chain. Open it
           // and move on rather than reading a balance that would describe another network.
-          this.#open(endpoint, input.nowEpochMs);
+          this.#health.open(endpoint.healthId, input.nowEpochMs);
           last = new EvmRpcError(
             "chain-id-mismatch",
             `RPC reported chain ${observed}, expected ${input.chainId}`,
@@ -162,14 +183,20 @@ export class EvmRpcPool {
         if (typeof raw !== "string") {
           throw new EvmRpcError("balance-unreadable", "RPC returned a non-string balance");
         }
-        endpoint.consecutiveFailures = 0;
+        const balanceAtomic = hexToBigInt(raw === "0x" ? "0x0" : raw);
+        this.#health.recordSuccess(
+          endpoint.healthId,
+          performance.now() - startedAt,
+          input.nowEpochMs,
+        );
         return {
-          balanceAtomic: hexToBigInt(raw === "0x" ? "0x0" : raw),
+          balanceAtomic,
           chainId: observed,
           endpoint: endpoint.label,
+          endpointId: endpoint.healthId,
         };
       } catch (error) {
-        this.#open(endpoint, input.nowEpochMs);
+        this.#health.recordFailure(endpoint.healthId, input.nowEpochMs);
         last =
           error instanceof EvmRpcError
             ? error
@@ -177,11 +204,6 @@ export class EvmRpcPool {
       }
     }
     throw last;
-  }
-
-  #open(endpoint: Endpoint, nowEpochMs: number): void {
-    endpoint.consecutiveFailures += 1;
-    endpoint.openUntilEpochMs = nowEpochMs + CIRCUIT_OPEN_MS;
   }
 
   async #chainId(endpoint: Endpoint): Promise<number> {

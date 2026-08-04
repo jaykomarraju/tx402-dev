@@ -107,6 +107,20 @@
       "sha256": "sha256:193e0ec6cc27ca8edbd638dc76865979e20bd4c14beb7d88b0b30445e1a372bb"
     },
     {
+      "id": "health.circuit.consecutive-failures",
+      "kind": "health.circuit",
+      "milestone": "M5",
+      "file": "vectors/health/circuit-consecutive-failures.json",
+      "sha256": "sha256:7ded36027752f33f9b615183cd9e42b8762cc9c34540ee42ef47cd5a173884ed"
+    },
+    {
+      "id": "health.circuit.failure-rate",
+      "kind": "health.circuit",
+      "milestone": "M5",
+      "file": "vectors/health/circuit-failure-rate.json",
+      "sha256": "sha256:6244e6bfff1436d8b814dcc69c423d6f98e4d65297f431ff0d4b8b9b77d9241c"
+    },
+    {
       "id": "manifest.network-resolution.alias",
       "kind": "manifest.network-resolution",
       "milestone": "M0",
@@ -322,6 +336,34 @@
       "milestone": "M2",
       "file": "vectors/fingerprint/unicode.json",
       "sha256": "sha256:c053434286dfa89eb5de23b3fea30993349ffe49c89bbaf72fdf637fb1dfeb2d"
+    },
+    {
+      "id": "routing.candidate-order.full-key-cascade",
+      "kind": "routing.candidate-order",
+      "milestone": "M5",
+      "file": "vectors/routing/order-full-key-cascade.json",
+      "sha256": "sha256:5015986e819bd3ede3fc882066702f7b9e30a40fd8f4e0e57a845f481df74153"
+    },
+    {
+      "id": "routing.candidate-order.open-circuit-ranked-last",
+      "kind": "routing.candidate-order",
+      "milestone": "M5",
+      "file": "vectors/routing/order-open-circuit-ranked-last.json",
+      "sha256": "sha256:41f973c58705e5e8daf7d93b70cea9febcf2620c3e66da4fac911aebdf0ed3ac"
+    },
+    {
+      "id": "routing.candidate-order.preference-outranks-index",
+      "kind": "routing.candidate-order",
+      "milestone": "M5",
+      "file": "vectors/routing/order-preference-outranks-index.json",
+      "sha256": "sha256:fafb23190ba20d4130c9b1266ef88f8ab0eb21960d067e0eeb5d7d2abcf2772d"
+    },
+    {
+      "id": "routing.candidate-order.viability-outranks-preference",
+      "kind": "routing.candidate-order",
+      "milestone": "M5",
+      "file": "vectors/routing/order-viability-outranks-preference.json",
+      "sha256": "sha256:fe5dca90e7c01fb07877ca1f2a48d24103d44515968172beaf05c2e941aff278"
     },
     {
       "id": "spend-ledger.behavior.atomic-cap",
