@@ -2,9 +2,11 @@
  * Package and project identity.
  *
  * Development happens in the private `tx402-dev` repository; the public open-source
- * repository is a later migration (PLAN.md open item O3). Every outward-facing URL is
- * routed through this module so that the migration is a single-file change and no repo
- * URL is ever hardcoded at a call site.
+ * repository is `neogeeks/tx402` (PLAN.md open item O3, resolved S11). Every outward-facing
+ * URL is routed through this module so that the migration is a single-file change and no
+ * repo URL is ever hardcoded at a call site. The git remote itself moves at S12; these
+ * constants lead it, because published package metadata must name the public repository
+ * from the first release rather than a private one nobody can open.
  */
 
 /** npm and PyPI package name. Unscoped and identical on both registries — see ADR-009. */
@@ -21,14 +23,21 @@ export const X402_PROTOCOL_VERSION = 2;
 /**
  * Public project URLs.
  *
- * `repository` and `issues` currently point at the eventual public location. They are
- * intentionally the only place these strings appear.
+ * Intentionally the only place these strings appear in TypeScript. `security` is the
+ * GitHub Private Vulnerability Reporting inbox, which is the sole disclosure channel —
+ * SECURITY.md deliberately publishes no email address, because a repository-scoped
+ * advisory is authenticated and an inbox is not.
+ *
+ * Python mirrors these in `packages/tx402-python/src/tx402/meta.py`, and
+ * `TestCrossLanguageParity` reads this file as text to pin the two together (ADR-005).
+ * Changing a URL here without changing it there fails that test.
  */
 export const PROJECT_URLS = {
   homepage: "https://tx402.dev",
-  repository: "https://github.com/tx402/tx402",
-  issues: "https://github.com/tx402/tx402/issues",
+  repository: "https://github.com/neogeeks/tx402",
+  issues: "https://github.com/neogeeks/tx402/issues",
   documentation: "https://tx402.dev/docs",
+  security: "https://github.com/neogeeks/tx402/security/advisories/new",
 } as const;
 
 /**

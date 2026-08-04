@@ -52,8 +52,9 @@ tx402 = "tx402.cli:run"
 [project.urls]
 Homepage = "https://tx402.dev"
 Documentation = "https://tx402.dev/docs"
-Repository = "https://github.com/tx402/tx402"
-Issues = "https://github.com/tx402/tx402/issues"
+Repository = "https://github.com/neogeeks/tx402"
+Issues = "https://github.com/neogeeks/tx402/issues"
+Security = "https://github.com/neogeeks/tx402/security/advisories/new"
 
 [dependency-groups]
 dev = [

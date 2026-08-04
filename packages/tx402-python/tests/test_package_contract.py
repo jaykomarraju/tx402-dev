@@ -7,6 +7,7 @@ drift, and they are expensive to get wrong after publish.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ else:  # pragma: no cover - exercised only on the 3.10 CI leg
 
 from tx402 import (
     PACKAGE_NAME,
+    PROJECT_URLS,
     PROTOCOL_HEADERS,
     RESERVED_REQUEST_HEADERS,
     X402_PROTOCOL_VERSION,
@@ -94,6 +96,53 @@ class TestCrossLanguageParity:
         assert f"export const X402_PROTOCOL_VERSION = {X402_PROTOCOL_VERSION}" in ts_meta
         for header in PROTOCOL_HEADERS.values():
             assert f'"{header}"' in ts_meta
+
+    def test_project_urls_match_the_typescript_reference(self) -> None:
+        """O3: the public repository is named in four files; they move together.
+
+        Package metadata is the one thing a user cannot correct locally — a wrong
+        ``repository`` URL is baked into a published artifact and is only fixable by
+        another release. So every place the repository is named is pinned to the single
+        Python ``PROJECT_URLS`` source, in both languages and in both manifests.
+        """
+        root = Path(__file__).parents[3]
+        ts_meta = (root / "packages" / "tx402" / "src" / "meta.ts").read_text()
+        npm_pkg: dict[str, Any] = json.loads(
+            (root / "packages" / "tx402" / "package.json").read_text()
+        )
+
+        # Every URL Python declares must appear verbatim in the TypeScript reference.
+        for url in PROJECT_URLS.values():
+            assert f'"{url}"' in ts_meta, f"{url} missing from meta.ts"
+
+        # ...and the two package manifests must agree with it rather than drift quietly.
+        assert PYPROJECT["project"]["urls"]["Repository"] == PROJECT_URLS["repository"]
+        assert PYPROJECT["project"]["urls"]["Issues"] == PROJECT_URLS["issues"]
+        assert PYPROJECT["project"]["urls"]["Homepage"] == PROJECT_URLS["homepage"]
+        assert PYPROJECT["project"]["urls"]["Security"] == PROJECT_URLS["security"]
+        assert npm_pkg["homepage"] == PROJECT_URLS["homepage"]
+        assert npm_pkg["bugs"]["url"] == PROJECT_URLS["issues"]
+        assert (
+            npm_pkg["repository"]["url"] == f"git+{PROJECT_URLS['repository']}.git"
+        ), "npm repository URL must be the git+ form of the canonical repository"
+
+    def test_no_placeholder_repository_url_survives(self) -> None:
+        """The pre-S11 placeholder was ``github.com/tx402/tx402``.
+
+        Pinned by hand because the assertions above only prove the four files agree with
+        each other — they would all still pass if every one of them was left on the
+        placeholder.
+        """
+        root = Path(__file__).parents[3]
+        for relative in (
+            "packages/tx402/src/meta.ts",
+            "packages/tx402/package.json",
+            "packages/tx402-python/src/tx402/meta.py",
+            "packages/tx402-python/pyproject.toml",
+        ):
+            assert "github.com/tx402/tx402" not in (root / relative).read_text(), (
+                f"{relative} still carries the placeholder repository URL"
+            )
 
 
 class TestExtrasBoundary:

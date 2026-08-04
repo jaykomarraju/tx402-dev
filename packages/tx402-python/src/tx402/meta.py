@@ -5,8 +5,10 @@ cross-language contract enforced by the conformance suite (ADR-005), so the two 
 must be changed together.
 
 Development happens in the private ``tx402-dev`` repository; the public open-source
-repository is a later migration (PLAN.md open item O3). Every outward-facing URL is
-routed through this module so the migration is a single-file change.
+repository is ``neogeeks/tx402`` (PLAN.md open item O3, resolved S11). Every outward-facing
+URL is routed through this module so the migration is a single-file change. The git remote
+itself moves at S12; these constants lead it, because published package metadata must name
+the public repository from the first release rather than a private one nobody can open.
 """
 
 from __future__ import annotations
@@ -22,12 +24,20 @@ PACKAGE_NAME: Final = "tx402"
 #: fall back to heuristic parsing — see ADR-004.
 X402_PROTOCOL_VERSION: Final = 2
 
-#: Public project URLs. Intentionally the only place these strings appear.
+#: Public project URLs. Intentionally the only place these strings appear in Python.
+#:
+#: ``security`` is the GitHub Private Vulnerability Reporting inbox, which is the sole
+#: disclosure channel — SECURITY.md deliberately publishes no email address, because a
+#: repository-scoped advisory is authenticated and an inbox is not.
+#:
+#: These must stay identical to ``PROJECT_URLS`` in ``packages/tx402/src/meta.ts``;
+#: ``TestCrossLanguageParity`` reads that file as text and fails if they drift (ADR-005).
 PROJECT_URLS: Final[dict[str, str]] = {
     "homepage": "https://tx402.dev",
-    "repository": "https://github.com/tx402/tx402",
-    "issues": "https://github.com/tx402/tx402/issues",
+    "repository": "https://github.com/neogeeks/tx402",
+    "issues": "https://github.com/neogeeks/tx402/issues",
     "documentation": "https://tx402.dev/docs",
+    "security": "https://github.com/neogeeks/tx402/security/advisories/new",
 }
 
 #: Diagnostic request-ID header attached to paid retries.

@@ -3,6 +3,14 @@
   "version": "0.0.0",
   "description": "Resilient x402 buyer SDK \u2014 deterministic multi-chain payment routing, local spend guardrails, and a drop-in fetch wrapper for autonomous agents.",
   "license": "Apache-2.0",
+  "homepage": "https://tx402.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neogeeks/tx402.git"
+  },
+  "bugs": {
+    "url": "https://github.com/neogeeks/tx402/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=20.19.0"
