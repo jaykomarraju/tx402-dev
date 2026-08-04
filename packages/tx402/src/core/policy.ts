@@ -103,7 +103,25 @@ function configuration(path: string, reason: string, cause?: unknown): Configura
   });
 }
 
+/**
+ * The canonical policy host of `url` (ADR-018, amended S15d).
+ *
+ * The canonical form is the **A-label (ASCII) host**: what a WHATWG URL parser produces,
+ * lowercased, with one trailing root dot removed. `https://bücher.example/x` and
+ * `https://xn--bcher-kva.example/x` are therefore one merchant with one ledger and one
+ * allowlist entry, in both languages — Python's `normalize_policy_host` returns the same
+ * string for the same input, and its parity is pinned by a shared table of hosts.
+ *
+ * `new URL` does the ToASCII conversion, which is deliberate: it is the same parser
+ * `fetch` uses to decide which host the signature is actually sent to, so the ledger key
+ * cannot describe a different host from the one that was paid.
+ *
+ * @throws {TypeError} if `url` is not a parseable absolute URL.
+ */
 export function normalizePolicyHost(url: string | URL): string {
+  // One dot, not every dot: `a.test.` is `a.test`, and `a.test..` keeps the inner one. The
+  // root-label host `.` normalizes to the empty string — an accepted, non-routable edge
+  // that matches only the `"*"` pattern, which already permits every host (O43).
   return new URL(url).hostname.toLowerCase().replace(/\.$/u, "");
 }
 
@@ -121,7 +139,9 @@ function normalizeDomainPattern(value: string, index: number): string {
   }
   let host: string;
   try {
-    host = new URL(`https://${candidate}`).hostname.toLowerCase().replace(/\.$/u, "");
+    // Through the same normalization the request host gets, so a Unicode allowlist entry
+    // and a Unicode request URL land on one string (ADR-018 amendment, O58).
+    host = normalizePolicyHost(`https://${candidate}`);
   } catch (error) {
     throw configuration(`policy.allowedDomains[${index}]`, "invalid-domain-pattern", error);
   }

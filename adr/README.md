@@ -31,7 +31,7 @@ added together with this line.
 | [015](015-caller-supplied-rpc-endpoints.md)                | Caller-supplied RPC endpoints                | Accepted               | Extends SPEC §6.4, §4.3            |
 | [016](016-settlement-evidence-outranks-the-status-line.md) | Settlement evidence outranks the status line | Accepted               | Implements SPEC §5.3; narrows §6.7 |
 | [017](017-spend-store-failure-semantics.md)                | Spend-store failure semantics                | Accepted               | Fills a gap in SPEC §5.3, §8       |
-| [018](018-policy-scope-is-the-normalized-merchant-host.md) | Policy scope is the normalized merchant host | Accepted               | Fixes SPEC §5.3 conformance        |
+| [018](018-policy-scope-is-the-normalized-merchant-host.md) | Policy scope is the normalized merchant host | Accepted, amended S15d | Fixes SPEC §5.3 conformance        |
 
 ## Format
 

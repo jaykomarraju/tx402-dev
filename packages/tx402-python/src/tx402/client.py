@@ -47,6 +47,7 @@ from tx402.chain import (
     load_chain_adapter,
 )
 from tx402.completion import (
+    MALFORMED_SETTLEMENT_CAUSE,
     MAX_PAID_ATTEMPTS_REASON,
     PaidAttemptDisposition,
     PaidAttemptResult,
@@ -328,15 +329,19 @@ def _origin(url: httpx.URL) -> str:
     return f"{parsed.scheme}://{parsed.netloc}".lower()
 
 
+#: Diagnostic reason for a merchant that sent no settlement metadata at all.
+SETTLEMENT_ABSENT_REASON: Final = "payment-response-absent"
+
+#: Diagnostic reason for a merchant whose settlement metadata does not decode.
+SETTLEMENT_UNPARSEABLE_REASON: Final = "payment-response-unparseable"
+
+
 def _read_payment_response(
     response: httpx.Response,
-    *,
-    logger: Tx402Logger,
-    request_id: str,
 ) -> tuple[SettlementEvidence, str | None]:
     """Reads PAYMENT-RESPONSE, on **every** status (SPEC §5.3, ADR-016).
 
-    Two things about this function are load-bearing and were both wrong before S15b:
+    Three things about this function are load-bearing, and each was wrong once:
 
     - It is called whatever the merchant's status line says. A 403 or a 500 carrying a
       successful settlement is exactly the case SPEC §5.3 legislates for, and it cannot be
@@ -344,38 +349,21 @@ def _read_payment_response(
     - Absent and undecodable are **different** evidence values. Upstream marks the header
       optional, so absent is forgiven; a header that is present and does not decode is a
       protocol violation and is evidence of nothing (O53).
-
-    Both cases are logged at ``warn``, and with distinct reasons: "the merchant sent no
-    settlement metadata" and "the merchant sent metadata I could not parse" point at
-    different bugs on the merchant's side, and an operator reconciling against a merchant
-    ledger needs to know which one happened.
+    - **It emits nothing.** Evidence is not an outcome. Until S15d the absent branch logged
+      ``payment.completed`` with ``paid=True`` from here, which is only true when that
+      evidence later reaches the table's commit row — a headerless 403 refusal and a
+      headerless 402 re-challenge both produced a paid-success event for a call that paid
+      nothing (O57). The reader now returns evidence and the disposition decides what, if
+      anything, is reported. The two reasons stay distinct wherever they are reported:
+      "the merchant sent no settlement metadata" and "the merchant sent metadata I could
+      not parse" point at different bugs on the merchant's side.
     """
     header = response.headers.get(PROTOCOL_HEADERS["payment_response"])
     if not header:
-        emit(
-            logger,
-            "warn",
-            {
-                "event": "payment.completed",
-                "requestId": request_id,
-                "paid": True,
-                "reason": "payment-response-absent",
-            },
-        )
         return "absent", None
     try:
         settlement = decode_payment_response_header(header)
     except (ValueError, TypeError):
-        emit(
-            logger,
-            "warn",
-            {
-                "event": "payment.completed",
-                "requestId": request_id,
-                "paid": "unknown",
-                "reason": "payment-response-unparseable",
-            },
-        )
         return "malformed", None
     if not settlement.success:
         return "unsuccessful", None
@@ -1137,9 +1125,7 @@ class _Core:
         # check after the fact, and gating the read on 2xx is what hid O44.
         settlement: SettlementEvidence
         settlement_id: str | None
-        settlement, settlement_id = _read_payment_response(
-            response, logger=self.logger, request_id=request_id
-        )
+        settlement, settlement_id = _read_payment_response(response)
 
         disposition = classify_paid_attempt(
             attempt=attempt,
@@ -1150,6 +1136,21 @@ class _Core:
         )
 
         if disposition.kind == "ambiguous":
+            # Reported here rather than at the read site, because "the merchant's
+            # settlement metadata does not decode" only becomes a completion once the table
+            # has said the money is retained and the outcome unknown (O57). ``"unknown"``
+            # is the honest value and it is what this disposition means.
+            if disposition.cause_category == MALFORMED_SETTLEMENT_CAUSE:
+                emit(
+                    self.logger,
+                    "warn",
+                    {
+                        "event": "payment.completed",
+                        "requestId": request_id,
+                        "paid": "unknown",
+                        "reason": SETTLEMENT_UNPARSEABLE_REASON,
+                    },
+                )
             raise self.unresolved(
                 request_id=request_id,
                 reservation=reservation,
@@ -1231,18 +1232,26 @@ class _Core:
             settlement_id=settlement_id,
             status=response.status_code,
         )
+        # The one place a payment really did complete, and therefore the only place an
+        # absent header may be reported as a completed payment (O57). SPEC §6.7 forgives the
+        # missing metadata — the pinned protocol marks it optional — so the money is
+        # unaffected and only the severity moves: ``warn`` and a ``reason``, because a
+        # merchant that never sends it cannot be reconciled against, and an operator should
+        # be able to see that from the log stream alone.
         completed: dict[str, object] = {
             "event": "payment.completed",
             "requestId": request_id,
             "paid": True,
         }
+        if settlement == "absent":
+            completed["reason"] = SETTLEMENT_ABSENT_REASON
         if settlement_id is not None:
             # Hashed, never raw: see `settlement_id_hash`. The key is absent rather than
             # null when the merchant supplied no identifier, matching the TypeScript
             # reference's conditional spread so both streams have the same shape.
             completed["settlementIdHash"] = settlement_id_hash(settlement_id)
         completed["totalSdkOverheadMs"] = elapsed_ms(self.monotonic, prepared.started_at)
-        emit(self.logger, "info", completed)
+        emit(self.logger, "warn" if settlement == "absent" else "info", completed)
         return _Delivered(response)
 
 

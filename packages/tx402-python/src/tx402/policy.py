@@ -9,6 +9,8 @@ from types import MappingProxyType
 from typing import Any, Final
 from urllib.parse import urlsplit
 
+import httpx
+
 from tx402.errors import (
     BudgetExceededError,
     ClockSkewError,
@@ -97,10 +99,41 @@ def _configuration(
 
 
 def normalize_policy_host(url: str) -> str:
+    """The canonical policy host of ``url`` (ADR-018, amended S15d).
+
+    The canonical form is the **A-label (ASCII) host**: what a WHATWG URL parser produces,
+    lowercased, with one trailing root dot removed. ``https://bücher.example/x`` and
+    ``https://xn--bcher-kva.example/x`` are therefore one merchant with one ledger and one
+    allowlist entry, in both languages.
+
+    Punycoding is delegated to ``httpx`` rather than reimplemented, and that is the whole
+    point: the same parser converts the host of every request this SDK sends. Until S15d
+    this function returned the U-label the caller happened to type while the client stored
+    the punycoded host httpx had already produced, so a caller following the documented API
+    queried a ledger the client had never written to, and a Unicode ``allowed_domains``
+    entry could never match a real request host (O57's sibling finding, O58). Deriving both
+    from one parser makes that class of drift unrepresentable rather than merely fixed.
+
+    :raises ValueError: if ``url`` has no host, or its host is not a valid IDN.
+    """
     parsed = urlsplit(url)
     if parsed.hostname is None:
         raise ValueError("Policy URL must be absolute")
-    return parsed.hostname.lower().rstrip(".")
+    try:
+        host = httpx.URL(url).raw_host.decode("ascii").lower()
+    except (httpx.InvalidURL, UnicodeDecodeError, UnicodeError) as error:
+        raise ValueError(f"Policy URL host is not a valid IDN: {parsed.hostname!r}") from (
+            error
+        )
+    # An IPv6 literal keeps its brackets, because that is the host a WHATWG parser reports
+    # and the scope has to be one string in both languages. httpx strips them; TypeScript
+    # does not.
+    if parsed.netloc.rpartition("@")[2].startswith("["):
+        host = f"[{host}]"
+    # One dot, not every dot: `a.test.` is `a.test`, and `a.test..` keeps the inner one,
+    # matching TypeScript's single-anchor strip. The root-label host `.` normalizes to the
+    # empty string in both languages — an accepted, non-routable edge (O43).
+    return host[:-1] if host.endswith(".") else host
 
 
 def _normalize_domain_pattern(value: str, index: int) -> str:

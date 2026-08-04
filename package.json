@@ -6,13 +6,14 @@
   "type": "module",
   "packageManager": "pnpm@10.34.5",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "build": "pnpm --filter \"!tx402-docs\" -r build",
-    "check": "pnpm build && pnpm lint && pnpm format:check && pnpm typecheck && pnpm nul-check && pnpm workflow-lint && pnpm version:check && pnpm install-contract && pnpm conformance:check && pnpm manifest:verify && pnpm test && pnpm size && pnpm fuzz && pnpm docs:check && pnpm docs:live:selftest && pnpm supply-chain:selftest && pnpm docs:build",
+    "check": "pnpm toolchain:check && pnpm build && pnpm lint && pnpm format:check && pnpm typecheck && pnpm nul-check && pnpm workflow-lint && pnpm version:check && pnpm install-contract && pnpm conformance:check && pnpm conformance:selftest && pnpm manifest:verify && pnpm test && pnpm size && pnpm fuzz && pnpm docs:check && pnpm docs:live:selftest && pnpm supply-chain:selftest && pnpm toolchain:selftest && pnpm docs:build",
     "conformance:build": "node tools/conformance/index.js build",
     "conformance:check": "node tools/conformance/index.js check",
+    "conformance:selftest": "node tools/conformance/index.js selftest",
     "docs:build": "pnpm --filter tx402-docs build",
     "docs:check": "node tools/docs-gen/index.js check",
     "docs:dev": "pnpm --filter tx402-docs dev",
@@ -35,6 +36,8 @@
     "supply-chain": "node tools/supply-chain/index.js audit",
     "supply-chain:selftest": "node tools/supply-chain/index.js selftest",
     "test": "pnpm -r test",
+    "toolchain:check": "node tools/toolchain-check/index.js check",
+    "toolchain:selftest": "node tools/toolchain-check/index.js selftest",
     "typecheck": "pnpm --filter \"!tx402-docs\" -r typecheck",
     "version:check": "node tools/version-sync/index.js check",
     "version:sync": "node tools/version-sync/index.js build",

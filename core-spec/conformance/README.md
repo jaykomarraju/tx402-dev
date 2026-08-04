@@ -141,8 +141,9 @@ machine-generated blob part of code review.
 ## Frozen at M6 (2026-08-03)
 
 The TypeScript reference implementation is feature-complete for v0.1, and **this fixture set
-is frozen against it**: 65 vectors across M0–M6. The gaps recorded here after M1 — route
-ordering, ledger arithmetic, and request-fingerprint goldens — are all closed.
+is frozen against it**: 67 vectors across M0–M6 — 65 at the freeze, plus the two ADR-016
+added at S15b. The gaps recorded here after M1 — route ordering, ledger arithmetic, and
+request-fingerprint goldens — are all closed.
 
 Frozen means the Python SDK is written to pass these files as they stand, at S9 and S10.
 It does not mean the set can never grow; it means a change to an existing vector is a change

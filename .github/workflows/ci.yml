@@ -71,8 +71,12 @@ jobs:
       - name: Workflow validity (O37)
         run: pnpm workflow-lint
 
+      # `check` also fails when release-facing prose claims a different vector count from
+      # the index, and `selftest` proves that half can fail (PLAN.md O59).
       - name: Conformance index integrity (SEC-007)
-        run: pnpm conformance:check
+        run: |
+          pnpm conformance:check
+          pnpm conformance:selftest
 
       - name: Release manifest signature (SEC-007)
         run: pnpm manifest:verify
@@ -235,6 +239,15 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      # Runs here because this is the only job on the runtime the aggregate local gate
+      # declares. It checks that the workspace floor, the docs package, the installed
+      # Astro, the published SDK floor and this workflow's own Node matrix still describe
+      # one coherent contract (PLAN.md O60).
+      - name: Toolchain contract
+        run: |
+          pnpm toolchain:check
+          pnpm toolchain:selftest
 
       # The generated pages are built from the package's own exports, so the package has to
       # exist before they can be checked.

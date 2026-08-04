@@ -127,10 +127,13 @@ export const SCENARIOS = {
 
   "corrupt-payment-response": {
     description:
-      "Accepts payment and delivers, but the PAYMENT-RESPONSE header does not decode. The " +
-      "buyer cannot read it as evidence in either direction, so the resource is delivered " +
-      "with a diagnostic warning rather than being treated as a failure.",
-    covers: ["SPEC §6.7"],
+      "Answers the paid attempt with 200 and a PAYMENT-RESPONSE header that does not " +
+      "decode. A present header the buyer cannot read is evidence in neither direction, so " +
+      "the outcome is ambiguous: the resource is *not* delivered, and the reservation is " +
+      "retained to its TTL rather than committed or released (ADR-016). Deliberately the " +
+      "twin of missing-payment-response, which omits the header entirely and does deliver " +
+      "— the pair is what stops 'absent' and 'unparseable' being restated as one another.",
+    covers: ["SPEC §6.7", "ADR-016"],
     next: ({ hasSignature }) =>
       hasSignature
         ? { type: "deliver", status: 200, paymentResponse: "corrupt" }

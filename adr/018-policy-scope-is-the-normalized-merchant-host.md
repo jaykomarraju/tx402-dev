@@ -5,6 +5,9 @@
 Closes PLAN.md open item **O45** (HIGH), filed by the S15 pre-publication audit, and
 publishes the `SpendStore` contract half of **O54** (MEDIUM).
 
+**Amended S15d** — see "Amendment (S15d)" below, which fixes the canonical form of the host
+itself and closes O58.
+
 ## Context
 
 SPEC §5.3 gives every `SpendReservation` a `policyScope: string` and says nothing about what
@@ -123,10 +126,60 @@ fails only here, which is exactly where money is lost.
   one store, a falsey adapter, and a lookalike. All were confirmed to fail on the S15
   commit.
 
+## Amendment (S15d) — the canonical host is the A-label, and both languages produce it
+
+Closes PLAN.md open item **O58** (MEDIUM), filed by the S15c audit re-run.
+
+This ADR made `normalizePolicyHost` / `normalize_policy_host` "the public way to derive the
+exact key a client reserves under" and left the _form_ of that key undefined. The two
+languages promptly chose different ones for the same merchant.
+
+- **TypeScript** returned `new URL(url).hostname`, which is WHATWG ToASCII — so
+  `https://bücher.example/x` and its punycoded twin both normalize to
+  `xn--bcher-kva.example`.
+- **Python** returned `urlsplit(url).hostname`, which is the U-label the caller typed —
+  `bücher.example`. Its _client_, meanwhile, normalized `str(httpx.Request.url)`, and httpx
+  had already punycoded it, so the ledger key was `xn--bcher-kva.example`.
+
+The consequences were a caller querying a ledger their own client had never written to, and
+a Unicode `allowed_domains` entry that could not match any real request host — Python
+therefore refusing a domain TypeScript allows. Neither can authorize an unintended host: the
+allowlist failure is restrictive, which is why this was filed MEDIUM and not HIGH.
+
+**Decision: the canonical policy host is the A-label (ASCII) host** — what a WHATWG URL
+parser produces — lowercased, with **one** trailing root dot removed, IPv6 literals kept in
+brackets. The A-label is chosen over the U-label because it is the host that actually goes
+on the wire, it is what every store already holds, it is a pure-ASCII map key with no
+normalization form to argue about, and TypeScript is the reference implementation
+(ADR-005).
+
+**What changes:** Python only, and nothing about the money.
+
+- `normalize_policy_host` punycodes through **httpx**, the parser that already converts the
+  host of every request the SDK sends, rather than a second IDNA implementation that could
+  drift from it. `.lower()` and a single-dot strip finish the job. Delegating is the point:
+  helper and client now cannot disagree, instead of merely agreeing today.
+- Two smaller alignments travel with it, both previously unnoticed cross-language drift in
+  the same function: an IPv6 literal is `[::1]` in both languages rather than `::1` in
+  Python, and `a.test..` strips **one** dot in both rather than all of them in Python.
+- An unencodable host raises `ValueError`, which `policy.allowed_domains` already converts
+  into `TX402_CONFIG_INVALID`.
+- **`normalizePolicyHost` is unchanged in TypeScript.** Its allowlist normalizer now calls
+  it instead of repeating its body, which is how the two came to drift in the first place.
+
+**A shared parity table pins it.** The same eight hosts — Unicode, punycoded, uppercase
+Unicode, `ß`, IPv6, trailing dot, double dot, and the root label — are asserted to produce
+identical output in both suites, so a future edit to either helper alone fails a test rather
+than being discovered by an audit.
+
+**O43 is unaffected and stays accepted.** `https://./x` still normalizes to the empty string
+in both languages, for the reasons recorded there.
+
 ## References
 
 - `SPEC.md` §4.1, §4.3, §5.3, §6.3
 - `packages/tx402/src/core/ledger.ts`, `packages/tx402-python/src/tx402/ledger.py`,
   `packages/tx402-python/src/tx402/spend_store_contract.py`
 - ADR-007 (local state), ADR-017 (store failure semantics)
-- PLAN.md open items O45, O54 (opened S15, decided S15b)
+- PLAN.md open items O45, O54 (opened S15, decided S15b); O58 (opened S15c, decided S15d)
+- `packages/tx402/src/core/policy.ts`, `packages/tx402-python/src/tx402/policy.py`

@@ -20,7 +20,7 @@ old one.
 
 ### 2. The conformance fixtures are frozen
 
-`core-spec/conformance/` holds 65 vectors that both SDKs execute. They are the contract that
+`core-spec/conformance/` holds 67 vectors that both SDKs execute. They are the contract that
 keeps TypeScript and Python identical.
 
 **Adding** a vector is ordinary work. **Changing or removing** one is a contract change.
@@ -43,7 +43,7 @@ why not.
 git clone https://github.com/neogeeks/tx402.git
 cd tx402
 
-# TypeScript — Node 20+
+# TypeScript — Node 22.12+ to develop
 pnpm install
 pnpm build
 
@@ -51,12 +51,21 @@ pnpm build
 cd packages/tx402-python && uv sync --all-extras
 ```
 
+**Two runtimes, and they are not the same number.** The published SDK supports **Node
+20.19+**, and CI runs the whole TypeScript suite on Node 20 as well as 22 to keep that
+claim true. The _workspace_ needs **Node 22.12+**, because `pnpm check` builds the
+documentation site and Astro requires it. `pnpm toolchain:check` — the first thing
+`pnpm check` runs — reports the mismatch in a second rather than letting you discover it
+after twelve minutes of green checks, and it derives both floors from the manifests instead
+of from this paragraph.
+
 ## Before you open a PR
 
 Everything below must pass. CI runs all of it across Node 20/22 and CPython 3.10–3.13.
 
 ```bash
 # TypeScript
+pnpm toolchain:check      # the runtime contract: workspace vs. published SDK
 pnpm lint                 # eslint, --max-warnings 0
 pnpm format:check         # prettier
 pnpm typecheck            # tsc, strict + noUncheckedIndexedAccess + exactOptionalPropertyTypes

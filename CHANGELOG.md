@@ -49,7 +49,7 @@ a minor to break you but this project still refuses to let it happen quietly.
   touches and searching the whole serialised stream for each one.
 - **An Ed25519-signed release manifest**, compiled into both packages, carrying networks, assets,
   RPC endpoints, and CAIP-2 aliases. Client construction fails if the signature does not verify.
-- **65 frozen conformance vectors** in `core-spec/`, executed by both languages against the same
+- **67 frozen conformance vectors** in `core-spec/`, executed by both languages against the same
   normalized output, route ordering, error codes, and money rule.
 
 ### Security

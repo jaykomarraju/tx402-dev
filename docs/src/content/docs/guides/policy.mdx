@@ -98,14 +98,20 @@ This is ADR-006, and it is not negotiable anywhere in either SDK.
 
 ## Domain patterns
 
-Patterns match against the **normalized** host: lowercased, IDN-decoded, trailing dot removed,
-and the port dropped.
+Patterns match against the **normalized** host: lowercased, punycoded, trailing root dot
+removed, and the port dropped.
 
 | Pattern           | Matches                              | Does not match         |
 | ----------------- | ------------------------------------ | ---------------------- |
 | `api.example.com` | exactly that host                    | `evil-api.example.com` |
 | `*.example.com`   | `api.example.com`, `a.b.example.com` | `example.com`          |
 | `*`               | everything                           | —                      |
+
+An internationalized domain normalizes to its **ASCII (A-label) form** — the punycode a URL
+parser produces, which is also what goes on the wire. `bücher.example` and
+`xn--bcher-kva.example` are the same host to the allowlist, to the ledger, and to
+`normalizePolicyHost` / `normalize_policy_host`, so you may write either one in
+`allowedDomains` and query the budget with either one (ADR-018).
 
 The default is `["*"]`, because a domain allowlist that is subtly wrong is worse than no
 allowlist — it fails closed on the wrong things and teaches people to disable it. Set it

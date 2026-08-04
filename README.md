@@ -182,7 +182,7 @@ compiled into both packages; construction fails if the signature does not verify
 ```
 packages/tx402/          npm "tx402"    — SDK + CLI (TypeScript, the reference implementation)
 packages/tx402-python/   PyPI "tx402"   — SDK + CLI (Python, at behavioural parity)
-core-spec/               language-neutral: JSON Schemas, 65 frozen conformance vectors,
+core-spec/               language-neutral: JSON Schemas, 67 frozen conformance vectors,
                          and the signed release manifest. Neither SDK keeps a private copy.
 docs/                    the documentation site (Astro Starlight)
 examples/                runnable quickstart and dry-run, both languages
@@ -191,7 +191,7 @@ tools/                   size gate, manifest signer, conformance index, test mer
 adr/                     every architectural decision, including each deviation from SPEC.md
 ```
 
-**The two SDKs are held together by files, not by intent.** All 65 conformance vectors execute in
+**The two SDKs are held together by files, not by intent.** All 67 conformance vectors execute in
 both languages against the same normalized output, route ordering, error codes and money rule. The
 release manifest is signed by the Node tool and verified by the Python SDK, so the canonical-JSON
 encoding and the Ed25519 envelope are proven identical by the signature itself.
@@ -199,7 +199,7 @@ encoding and the Ed25519 envelope are proven identical by the signature itself.
 ## Development
 
 ```bash
-pnpm install
+pnpm install                      # Node 22.12+ to develop; the published SDK supports Node 20.19+
 pnpm check                        # every gate, in the order CI runs them
 
 cd packages/tx402-python
@@ -209,6 +209,9 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pyt
 
 `pnpm check` runs lint, format, types, the NUL-byte guard, the workflow linter, conformance index
 integrity, the manifest signature, both test suites, the build, the size gate, and the docs site.
+It starts with `pnpm toolchain:check`, because the docs site is an Astro build that needs Node
+22.12+ while the package itself supports Node 20.19+ — two different numbers, both derived from
+the manifests rather than restated here.
 A gate is only evidence if it ran in the order and from the state CI uses — see
 [CONTRIBUTING.md](CONTRIBUTING.md) for the traps that rule exists because of.
 
@@ -231,7 +234,7 @@ Scope, response times, and the guarantees a report can be filed against are in
 ## Contributing
 
 [CONTRIBUTING.md](CONTRIBUTING.md) leads with the three rules that actually get a PR rejected:
-`SPEC.md` governs, the 65 conformance fixtures are frozen, and behavioural changes land in both
+`SPEC.md` governs, the 67 conformance fixtures are frozen, and behavioural changes land in both
 languages together. Participation is governed by the
 [Contributor Covenant](CODE_OF_CONDUCT.md).
 

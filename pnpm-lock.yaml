@@ -116,6 +116,8 @@ importers:
         specifier: ^0.24.0
         version: 0.24.2
 
+  tools/supply-chain: {}
+
   tools/svm-rpc-stub: {}
 
   tools/test-merchant:

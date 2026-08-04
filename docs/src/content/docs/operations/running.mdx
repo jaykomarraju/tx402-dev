@@ -118,6 +118,6 @@ The bundled release manifest **expires**. `pnpm manifest:verify` warns below 90 
 and a client cannot be constructed against an expired one. Re-issuing it is a patch release, so
 keep tx402 reasonably current rather than pinning it forever.
 
-Upstream `@x402/*` moves quickly. Every dependency bump replays all 65 conformance vectors in
+Upstream `@x402/*` moves quickly. Every dependency bump replays all 67 conformance vectors in
 both languages before it ships, so a protocol-envelope change cannot land silently — but that
 also means a tx402 release may lag an upstream one by the time it takes to reconcile.

@@ -32,6 +32,7 @@ import {
 } from "./chain.js";
 import {
   classifyPaidAttempt,
+  MALFORMED_SETTLEMENT_CAUSE,
   MAX_PAID_ATTEMPTS_REASON,
   type AmbiguousDisposition,
   type SettlementEvidence,
@@ -709,10 +710,16 @@ function settlementIdHash(settlementId: string): string {
   return `sha256:${createHash("sha256").update(settlementId, "utf8").digest("hex")}`;
 }
 
+/** Diagnostic reason for a merchant that sent no settlement metadata at all. */
+const SETTLEMENT_ABSENT_REASON = "payment-response-absent";
+
+/** Diagnostic reason for a merchant whose settlement metadata does not decode. */
+const SETTLEMENT_UNPARSEABLE_REASON = "payment-response-unparseable";
+
 /**
  * Reads PAYMENT-RESPONSE, on **every** status (SPEC §5.3, ADR-016).
  *
- * Two things about this function are load-bearing and were both wrong before S15b:
+ * Three things about this function are load-bearing, and each was wrong once:
  *
  *  - It is called whatever the merchant's status line says. A 403 or a 500 carrying a
  *    successful settlement is exactly the case SPEC §5.3 legislates for, and it cannot be
@@ -720,22 +727,19 @@ function settlementIdHash(settlementId: string): string {
  *  - Absent and undecodable are **different** evidence values. Upstream marks the header
  *    optional, so absent is forgiven; a header that is present and does not decode is a
  *    protocol violation and is evidence of nothing (O53).
+ *  - **It emits nothing.** Evidence is not an outcome. Until S15d the absent branch logged
+ *    `payment.completed` with `paid: true` from here, which is only true when that evidence
+ *    later reaches the table's commit row — a headerless 403 refusal and a headerless 402
+ *    re-challenge both produced a paid-success event for a call that paid nothing (O57).
+ *    The reader now returns evidence and the disposition decides what, if anything, is
+ *    reported.
  */
-function readPaymentResponse(
-  response: Response,
-  requestId: string,
-  logger: Tx402Logger,
-): { settlement: SettlementEvidence; settlementId?: string } {
+function readPaymentResponse(response: Response): {
+  settlement: SettlementEvidence;
+  settlementId?: string;
+} {
   const header = response.headers.get(PROTOCOL_HEADERS.paymentResponse);
-  if (header === null || header.length === 0) {
-    emit(logger, "warn", {
-      event: "payment.completed",
-      requestId,
-      paid: true,
-      reason: "payment-response-absent",
-    });
-    return { settlement: "absent" };
-  }
+  if (header === null || header.length === 0) return { settlement: "absent" };
   try {
     const settle = decodePaymentResponseHeader(header);
     return {
@@ -747,12 +751,6 @@ function readPaymentResponse(
   } catch {
     // A response tx402 cannot parse is not evidence of anything, in either direction —
     // which is why it neither commits nor releases (ADR-016).
-    emit(logger, "warn", {
-      event: "payment.completed",
-      requestId,
-      paid: "unknown",
-      reason: "payment-response-unparseable",
-    });
     return { settlement: "malformed" };
   }
 }
@@ -1044,7 +1042,7 @@ async function attemptPayment(
   // PAYMENT-RESPONSE is read before the disposition is taken, and on every status: "the
   // merchant reports a successful settlement" is one of the table's inputs, not a check
   // after the fact, and gating the read on 2xx is what hid O44.
-  const read = readPaymentResponse(response, requestId, runtime.logger);
+  const read = readPaymentResponse(response);
   const settlement: SettlementEvidence = read.settlement;
   const settlementId = read.settlementId;
 
@@ -1055,6 +1053,18 @@ async function attemptPayment(
   });
 
   if (disposition.kind === "ambiguous") {
+    // Reported here rather than at the read site, because "the merchant's settlement
+    // metadata does not decode" only becomes a completion once the table has said the
+    // money is retained and the outcome unknown (O57). `paid: "unknown"` is the honest
+    // value and it is what this disposition means.
+    if (disposition.causeCategory === MALFORMED_SETTLEMENT_CAUSE) {
+      emit(runtime.logger, "warn", {
+        event: "payment.completed",
+        requestId,
+        paid: "unknown",
+        reason: SETTLEMENT_UNPARSEABLE_REASON,
+      });
+    }
     throw transmissionUnresolved(
       runtime,
       undefined,
@@ -1146,10 +1156,18 @@ async function attemptPayment(
     response.status,
   );
 
-  emit(runtime.logger, "info", {
+  // The one place a payment really did complete, and therefore the only place an absent
+  // header may be reported as a completed payment (O57). SPEC §6.7 forgives the missing
+  // metadata — the pinned protocol marks it optional — so the money is unaffected and only
+  // the severity moves: `warn` and a `reason`, because a merchant that never sends it
+  // cannot be reconciled against, and an operator should be able to see that from the log
+  // stream alone.
+  const settlementAbsent = settlement === "absent";
+  emit(runtime.logger, settlementAbsent ? "warn" : "info", {
     event: "payment.completed",
     requestId,
     paid: true,
+    ...(settlementAbsent ? { reason: SETTLEMENT_ABSENT_REASON } : {}),
     ...(entry.settlementId === undefined
       ? {}
       : { settlementIdHash: settlementIdHash(entry.settlementId) }),
