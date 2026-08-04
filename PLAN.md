@@ -392,6 +392,16 @@ complete 402 is handed back to tx402 to the moment before the signer is invoked,
 the property under test here, not a convenience: sustained loss costs the primary's deadline five
 times and then never again, because its circuit is open.
 
+A second defect was caught after the first commit, by reading the diff rather than by a test.
+Two **raw NUL bytes** had landed in `src/evm/adapter.ts` and two more in `src/solana/adapter.ts` —
+the separator in the balance-cache key was written as a literal `\x00` instead of the escape
+`\u0000`. The resulting strings were correct and every gate passed, but git classifies a file
+containing a NUL as binary: `git diff` reported `Bin 9713 -> 10761 bytes` and `grep` silently
+refused to search it. A source file that cannot be diffed cannot be reviewed. The separator is now
+`BALANCE_KEY_SEPARATOR` in `core/routing.ts`, declared once as an escape, and both adapters build
+their key with `join`. A repository-wide scan confirms no tracked source or fixture file contains a
+NUL byte.
+
 One test-harness defect is worth carrying forward, because it is the S5 lesson in a new place. The
 first failover harness rebuilt the outbound RPC request as `new Request(input, init)` before
 forwarding it, which dropped the pool's per-provider deadline signal, and the suite hung until it was
@@ -828,6 +838,7 @@ with the code, and emit the next handoff prompt.
 | O22 | **Resolved at S7 alongside O19.** `SvmRpcPool` lost its own `openUntilEpochMs` and reports into the same `HealthIndex` as the EVM pool, namespaced `<caip2>\|<host>` so a provider serving several chains is scored per chain. A genesis-hash mismatch still opens immediately, via `HealthIndex.open`, which is reserved for the SPEC §7.1/§7.2 chain-identity rules — those are not reliability samples to average into a window, and both clauses require moving to the next RPC now.                                                                                                                                                                                                                                 | Agent            | ✅ Resolved S7                               |
 | O23 | The PyPI upload token supplied for the one-time reservation was exposed in conversation. Revoke it immediately in PyPI account settings, then use a project-scoped `tx402` token only if needed before OIDC trusted publishing is configured. Do not store the replacement in chat, the repository, shell profiles, or `.pypirc`. Real releases remain CI-only under O10.                                                                                                                                                                                                                                                                                                                                                | **User**         | 🟥 Open — revoke credential now              |
 | O24 | A test transport that rebuilds an outbound request as `new Request(input, init)` **drops the per-provider deadline signal**, because a rebuilt Request only _follows_ the original's signal through a WeakRef. S7's first failover harness did exactly that and the suite hung until it was killed — against a stub that never answers, a broken follow chain is not a slow test, it is no deadline at all. This is S5's `withDeadline` lesson reappearing in test code. Shims must forward `init` by identity; worth a shared test helper at S12.                                                                                                                                                                       | Agent            | 🟨 Convention, revisit S12                   |
+| O25 | Two raw NUL bytes reached `src/evm/adapter.ts` and two more `src/solana/adapter.ts` at S7 — a cache-key separator written as a literal control character rather than as `\u0000`. Every gate passed; git classified both files as binary, so `git diff` showed only a byte count and `grep` refused to search them. Fixed by declaring `BALANCE_KEY_SEPARATOR` once in `core/routing.ts`. A tracked-file scan is clean. Worth a cheap CI guard at S12: fail if any tracked source or fixture file contains a NUL byte.                                                                                                                                                                                                   | Agent            | 🟨 Guard due S12                             |
 
 ---
 

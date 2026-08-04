@@ -20,6 +20,7 @@ import type { HealthIndex } from "../core/health.js";
 import type { SvmManifestAsset, SvmManifestNetwork } from "../core/manifest.js";
 import { formatMoneyDecimal } from "../core/money.js";
 import { isSolanaSigner, type SolanaSigner } from "../core/signers.js";
+import { BALANCE_KEY_SEPARATOR } from "../core/routing.js";
 import { planExactSvmAuthorization } from "./plan.js";
 import {
   SvmRpcError,
@@ -142,7 +143,7 @@ export function createSvmChainAdapter(options: SvmChainAdapterOptions = {}): Cha
           request.balances === undefined
             ? await read()
             : await request.balances.read(
-                `${request.networkId} ${asset.mint} ${publicKey}`,
+                [request.networkId, asset.mint, publicKey].join(BALANCE_KEY_SEPARATOR),
                 read,
               );
       } catch (error) {

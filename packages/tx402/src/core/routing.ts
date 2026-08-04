@@ -70,6 +70,16 @@ export interface RouteCandidate {
  * instead of racing two. The cache lives for exactly one planning pass: a balance is a
  * snapshot, and reusing it across requests would be reusing a stale one.
  */
+/**
+ * Separates the parts of a balance-cache key.
+ *
+ * A NUL cannot appear in a CAIP-2 identifier, a token address, or an account address, so
+ * joining on it makes the key unambiguous — the same reason `core/policy.ts` uses it for its
+ * network/asset index. It is written as an escape rather than as a literal character: a raw
+ * NUL byte in a source file makes git classify the file as binary and stop diffing it.
+ */
+export const BALANCE_KEY_SEPARATOR = "\u0000";
+
 export interface BalanceProbeCache {
   read<T>(key: string, load: () => Promise<T>): Promise<T>;
 }
