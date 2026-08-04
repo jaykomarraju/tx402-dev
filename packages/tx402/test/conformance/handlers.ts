@@ -13,6 +13,7 @@ import { expect } from "vitest";
 
 import { BUNDLED_MANIFEST } from "../../src/core/bundled-manifest.js";
 import { canonicalizeJson, CanonicalJsonError } from "../../src/core/canonical-json.js";
+import { classifyPaidAttempt, type PaidAttemptResult } from "../../src/core/completion.js";
 import { TX402_ERROR_TAXONOMY } from "../../src/core/errors.js";
 import { isTx402Error } from "../../src/core/errors.js";
 import {
@@ -387,6 +388,29 @@ registerHandler("routing.candidate-order", (vector: ConformanceVector) => {
     const selected = ordered.find((candidate) => candidate.viable);
     expect(selected?.requirementIndex ?? null).toEqual(expected.selected);
   }
+});
+
+/* M6 — completion semantics (SPEC §6.7). ------------------------------------------------ */
+
+registerHandler("completion.paid-attempt", (vector: ConformanceVector) => {
+  const input = vector.input as {
+    maxPaidAttempts: number;
+    attempts: { attempt: number; result: PaidAttemptResult }[];
+  };
+  const expected = vector.expected as { dispositions: Record<string, unknown>[] };
+
+  // Compared as whole objects rather than field by field: `reservation` is the field that
+  // decides what happens to money, and an assertion that only checked `kind` would pass an
+  // implementation that released where it should have retained.
+  const observed = input.attempts.map((entry) => ({
+    ...classifyPaidAttempt({
+      attempt: entry.attempt,
+      maxPaidAttempts: input.maxPaidAttempts,
+      result: entry.result,
+    }),
+  }));
+
+  expect(observed).toEqual(expected.dispositions);
 });
 
 registerHandler("health.circuit", (vector: ConformanceVector) => {

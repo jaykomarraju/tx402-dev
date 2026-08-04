@@ -24,6 +24,7 @@
  */
 
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 
 import {
@@ -65,6 +66,8 @@ const RETRY_VIOLATIONS = {
  * @property {number} paidAttempt    how many signed attempts had arrived, including this one
  * @property {number} status         what the server answered, or -1 if it hung
  * @property {string} [violation]    set when retry validation rejected it
+ * @property {string} [signatureHash] sha256 of the raw PAYMENT-SIGNATURE header
+ * @property {string} [acceptedAmount] the atomic amount the buyer paid against
  */
 
 /**
@@ -77,6 +80,8 @@ const RETRY_VIOLATIONS = {
  * @property {string} [settlementId]              deterministic transaction id in PAYMENT-RESPONSE
  * @property {string} [resourceDescription]
  * @property {boolean} [validateRetries]          default true
+ * @property {object[]} [rechallengeRequirements] offered instead once a signed attempt has
+ *   arrived, so a re-challenge can genuinely differ from the first challenge
  */
 
 /**
@@ -113,11 +118,25 @@ async function readBody(request) {
 }
 
 /**
+ * A one-way digest of the raw signature header.
+ *
+ * SEC-003 keeps the value itself out of every record, but a test still has to be able to
+ * prove that two attempts carried *different* signatures — SPEC §6.7's "the old signature is
+ * never reused". A hash settles that question without retaining anything sensitive.
+ *
+ * @param {string} value
+ */
+function digest(value) {
+  return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}
+
+/**
  * Asserts the properties SPEC §6.7 and ADR-003 require of a paid retry.
  *
  * @param {import("node:http").IncomingMessage} request
- * @param {object[]} requirements the requirements this server offered
- * @returns {{ ok: true, payload: object } | { ok: false, violation: string }}
+ * @param {object[]} requirements every requirement this server may have offered
+ * @returns {{ ok: true, acceptedAmount: string, signatureHash: string }
+ *   | { ok: false, violation: string }}
  */
 function validatePaidRetry(request, requirements) {
   const raw = request.headers[HEADER_PAYMENT_SIGNATURE];
@@ -148,18 +167,21 @@ function validatePaidRetry(request, requirements) {
   }
 
   // The buyer must pay against a requirement the merchant actually offered — not a
-  // near-miss, and not one carried over from a previous challenge.
-  const offered = requirements.find(
+  // near-miss, and not one carried over from a previous challenge. The amount is part of
+  // the match rather than a follow-up comparison, because a re-challenge may re-price the
+  // same scheme/network/asset/recipient tuple and paying the *old* price is precisely the
+  // defect this check exists to catch.
+  const matches = requirements.filter(
     (requirement) =>
       requirement.scheme === accepted.scheme &&
       requirement.network === accepted.network &&
       requirement.asset === accepted.asset &&
       requirement.payTo === accepted.payTo,
   );
-  if (!offered) {
+  if (matches.length === 0) {
     return { ok: false, violation: RETRY_VIOLATIONS.unofferedRequirement };
   }
-  if (offered.amount !== accepted.amount) {
+  if (!matches.some((requirement) => requirement.amount === accepted.amount)) {
     return { ok: false, violation: RETRY_VIOLATIONS.amountMismatch };
   }
 
@@ -167,7 +189,11 @@ function validatePaidRetry(request, requirements) {
     return { ok: false, violation: RETRY_VIOLATIONS.emptyPayload };
   }
 
-  return { ok: true, payload };
+  return {
+    ok: true,
+    acceptedAmount: String(accepted.amount),
+    signatureHash: digest(raw),
+  };
 }
 
 /**
@@ -185,9 +211,12 @@ export async function createTestMerchant(options = {}) {
     settlementId = "0xtestmerchantsettlement000000000000000000000000000000000000000000",
     resourceDescription = "tx402 test merchant resource",
     validateRetries = true,
+    rechallengeRequirements,
   } = options;
 
   const scenario = requireScenario(scenarioName);
+  /** Every requirement the buyer may legitimately have paid against, across all challenges. */
+  const acceptableRequirements = [...requirements, ...(rechallengeRequirements ?? [])];
 
   /** @type {RecordedRequest[]} */
   const requests = [];
@@ -224,7 +253,7 @@ export async function createTestMerchant(options = {}) {
       };
 
       if (hasSignature && validateRetries) {
-        const validation = validatePaidRetry(request, requirements);
+        const validation = validatePaidRetry(request, acceptableRequirements);
         if (!validation.ok) {
           record.violation = validation.violation;
           send(
@@ -234,16 +263,24 @@ export async function createTestMerchant(options = {}) {
           );
           return;
         }
+        record.signatureHash = validation.signatureHash;
+        record.acceptedAmount = validation.acceptedAmount;
       }
 
       const action = scenario.next({ paidAttempt: paidAttempts, hasSignature });
 
       switch (action.type) {
         case "challenge": {
+          // A re-challenge may offer different terms. SPEC §6.7 requires the buyer to parse
+          // the new challenge from scratch, so the fixture has to be able to change.
+          const offered =
+            paidAttempts > 0 && rechallengeRequirements !== undefined
+              ? rechallengeRequirements
+              : requirements;
           const challenge = encodePaymentRequiredHeader({
             x402Version: 2,
             resource: { url: `${origin}${record.path}`, description: resourceDescription },
-            accepts: requirements,
+            accepts: offered,
           });
           send(
             402,

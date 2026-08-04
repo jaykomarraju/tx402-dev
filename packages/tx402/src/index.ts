@@ -22,9 +22,10 @@
  * const response = await client.fetch(url, init);
  * ```
  *
- * Status: implemented through M5 — paid calls on Base and Solana, with deterministic
- * multi-route planning and a shared endpoint health index. The re-challenge loop and
- * `maxPaidAttempts` land at M6.
+ * Status: **feature-complete for v0.1** — implemented through M6. Paid calls on Base and
+ * Solana, deterministic multi-route planning over a shared endpoint health index, and
+ * SPEC §6.7's re-challenge loop under `policy.maxPaidAttempts`. The conformance fixtures
+ * are frozen against this implementation; the Python SDK is written to match them.
  */
 
 export {

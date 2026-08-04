@@ -87,13 +87,20 @@ registering the handlers, because the runner checks.
 
 ## Vector kinds
 
-| Kind                               | Milestone | Executes                                                    |
-| :--------------------------------- | :-------- | :---------------------------------------------------------- |
-| `errors.taxonomy`                  | M0        | The SDK's error table against the frozen SPEC §8 rows       |
-| `canonical-json`                   | M0        | `canonicalizeJson` / `canonicalize_json`                    |
-| `manifest.verify`                  | M0        | Offline manifest verification, including the failure reason |
-| `manifest.network-resolution`      | M0        | CAIP-2 alias resolution (ADR-010 decision 4)                |
-| `protocol.decode-payment-required` | M1        | Strict v2 decode and normalization                          |
+| Kind                               | Milestone | Executes                                                     |
+| :--------------------------------- | :-------- | :----------------------------------------------------------- |
+| `errors.taxonomy`                  | M0        | The SDK's error table against the frozen SPEC §8 rows        |
+| `canonical-json`                   | M0        | `canonicalizeJson` / `canonicalize_json`                     |
+| `manifest.verify`                  | M0        | Offline manifest verification, including the failure reason  |
+| `manifest.network-resolution`      | M0        | CAIP-2 alias resolution (ADR-010 decision 4)                 |
+| `protocol.decode-payment-required` | M1        | Strict v2 decode and normalization                           |
+| `request.fingerprint`              | M2        | SEC-009 URL normalization, body digest, and fingerprint      |
+| `spend-ledger.behavior`            | M2        | Reserve/commit/release transitions and the rolling-hour cap  |
+| `evm.authorization-plan`           | M3        | EIP-3009 plan derivation and the lifetime clamp (SPEC §7.1)  |
+| `svm.authorization-plan`           | M4        | ATA derivation, fee payer, Token-2022 exclusion (SPEC §7.2)  |
+| `routing.candidate-order`          | M5        | The SPEC §6.4 step 18 ordering cascade                       |
+| `health.circuit`                   | M5        | The SPEC §6.5 EWMA, thresholds, and open/half-open lifecycle |
+| `completion.paid-attempt`          | M6        | The SPEC §6.7 disposition table for one signed attempt       |
 
 Adding a kind means adding it to the schema enum, registering a handler in both languages,
 and writing at least one valid and one invalid vector.
@@ -131,9 +138,28 @@ The oversized-header vector stores a compact `generatedHeader` recipe instead of
 encode them before invoking the decoder. This pins the 64 KiB SEC-006 boundary without making a
 machine-generated blob part of code review.
 
-## Known gaps after M1
+## Frozen at M6 (2026-08-03)
 
-- **No `route-candidate` or spend-ledger vectors.** Those schemas are frozen, but route
-  ordering (M5) and ledger arithmetic (M2) have no implementation to run against yet.
-- **No request-fingerprint golden vectors.** SEC-009 requires them for TS/Python parity;
-  they are written at M2 with the fingerprint itself.
+The TypeScript reference implementation is feature-complete for v0.1, and **this fixture set
+is frozen against it**: 65 vectors across M0–M6. The gaps recorded here after M1 — route
+ordering, ledger arithmetic, and request-fingerprint goldens — are all closed.
+
+Frozen means the Python SDK is written to pass these files as they stand, at S9 and S10.
+It does not mean the set can never grow; it means a change to an existing vector is a change
+to the contract, not a fix to a test:
+
+- **Adding** a vector is ordinary work. It must cite a SPEC clause and must pass in both
+  languages before it lands.
+- **Changing or removing** one requires the same justification as changing SPEC itself. A
+  vector that Python cannot pass is evidence of a defect in Python, in TypeScript, or in the
+  vector's reading of SPEC — and which of the three it is has to be established before any
+  file is edited. Editing the fixture first is how a cross-language contract quietly becomes
+  a record of whatever the two implementations happen to do.
+- Every `id` is permanent. Renaming one breaks the references in `PLAN.md` and in the
+  release notes.
+
+The one thing the frozen set deliberately does **not** cover is the request loop itself.
+Vectors are pure functions of their inputs, and `client.fetch` is a state machine over a
+network; the loop is pinned by each language's own integration suite against the shared test
+merchant (`tools/test-merchant`), which is why the merchant's scenario catalogue is a fixture
+in its own right.

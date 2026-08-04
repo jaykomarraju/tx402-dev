@@ -297,7 +297,7 @@ describe("M3 Base paid call", () => {
     expect(tx402.getBudgetState().reservedAtomic).toBe("50000");
   });
 
-  it("reports a re-challenge without reusing the signature", async () => {
+  it("makes exactly one signed attempt when the policy permits only one", async () => {
     await merchant.close();
     merchant = await createTestMerchant({
       scenario: "always-402",
@@ -307,13 +307,20 @@ describe("M3 Base paid call", () => {
     const tx402 = client({
       spendStore: recordingStore(log),
       signers: { evm: withLog(log) },
+      policy: {
+        maxPerRequest: "0.50 USDC",
+        maxPerHour: "10.00 USDC",
+        allowedNetworks: ["eip155:8453"],
+        maxPaidAttempts: 1,
+      },
     });
 
     await expect(tx402.fetch(`${merchant.url}/resource`)).rejects.toMatchObject({
       code: "TX402_RESOURCE_DELIVERY",
-      details: { status: 402, reason: "rechallenged" },
+      details: { reason: "max-paid-attempts-exhausted", attempt: 1, maxPaidAttempts: 1 },
     });
-    // One signature, one attempt. The re-challenge loop with maxPaidAttempts is M6.
+    // The full re-challenge loop is exercised in `test/completion.test.ts`; what this pins
+    // is that the *bound* is the configured one and that it counts signed retries only.
     expect(signer.signCount).toBe(1);
     expect(merchant.paidRequests).toHaveLength(1);
     expect(log).toEqual(["reserve", "sign", "release"]);

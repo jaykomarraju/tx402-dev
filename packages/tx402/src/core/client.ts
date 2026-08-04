@@ -31,6 +31,11 @@ import {
   type ChainRoute,
 } from "./chain.js";
 import {
+  classifyPaidAttempt,
+  MAX_PAID_ATTEMPTS_REASON,
+  type SettlementEvidence,
+} from "./completion.js";
+import {
   AmbiguousPaymentError,
   ConfigurationError,
   InvalidPaymentRequiredError,
@@ -459,6 +464,8 @@ interface ClientRuntime {
   readonly adapters: Map<string, Promise<ChainAdapter | undefined>>;
   readonly paymentRetryMs: number;
   readonly disableRequestIdHeader: boolean;
+  /** Needed on every attempt: a re-challenge is decoded with the same binding rules. */
+  readonly allowInsecureLocalhost: boolean;
 }
 
 function signerFor(signers: Tx402Signers, family: string): unknown {
@@ -607,12 +614,18 @@ function settlementIdHash(settlementId: string): string {
   return `sha256:${createHash("sha256").update(settlementId, "utf8").digest("hex")}`;
 }
 
-/** Reads PAYMENT-RESPONSE, which upstream marks optional on a delivered resource. */
+/**
+ * Reads PAYMENT-RESPONSE, which upstream marks optional on a delivered resource.
+ *
+ * Absent and undecodable both report `"unknown"` rather than a failure: neither is evidence
+ * in either direction, and treating either as `"unsuccessful"` would refuse a resource the
+ * merchant did deliver and did settle.
+ */
 function readPaymentResponse(
   response: Response,
   requestId: string,
   logger: Tx402Logger,
-): { success: boolean; settlementId?: string } | undefined {
+): { settlement: SettlementEvidence; settlementId?: string } {
   const header = response.headers.get(PROTOCOL_HEADERS.paymentResponse);
   if (header === null || header.length === 0) {
     emit(logger, "warn", {
@@ -621,12 +634,12 @@ function readPaymentResponse(
       paid: true,
       reason: "payment-response-absent",
     });
-    return undefined;
+    return { settlement: "unknown" };
   }
   try {
     const settle = decodePaymentResponseHeader(header);
     return {
-      success: settle.success === true,
+      settlement: settle.success === true ? "success" : "unsuccessful",
       ...(typeof settle.transaction === "string" && settle.transaction.length > 0
         ? { settlementId: settle.transaction }
         : {}),
@@ -639,7 +652,7 @@ function readPaymentResponse(
       paid: true,
       reason: "payment-response-unparseable",
     });
-    return undefined;
+    return { settlement: "unknown" };
   }
 }
 
@@ -688,12 +701,25 @@ async function buildPaidRequest(
 }
 
 /**
- * Everything between a parsed challenge and a delivered resource.
+ * The re-challenge loop (SPEC §6.7).
  *
- * Exactly one signature is created and exactly one signature-bearing request is sent
- * (ADR-003). The re-challenge loop of SPEC §6.7 — a fresh challenge, a fresh nonce, and
- * `maxPaidAttempts` — lands with M6; a merchant that answers the paid retry with another 402
- * is reported here rather than retried.
+ * A merchant that answers a paid retry with another 402 has not accepted the payment, and
+ * SPEC §6.7 allows tx402 to try again — but only against a challenge parsed **from
+ * scratch**, with a fresh nonce, and only while `policy.maxPaidAttempts` permits it.
+ *
+ * Three properties this shape exists to guarantee:
+ *
+ *  - **Nothing carries over between attempts.** Each pass re-evaluates policy, re-plans the
+ *    route from the new challenge's requirements, takes its own reservation, and produces
+ *    its own signature. The old signature is never re-sent, and the second attempt's route
+ *    is not the first attempt's route re-used — SPEC §6.4 step 19 makes ordering a pure
+ *    function of the candidates and health state, and health has moved since.
+ *  - **The loop's bound lives in the disposition table, not here.** `classifyPaidAttempt`
+ *    returns `"rechallenge"` only while `attempt < maxPaidAttempts`; on the last permitted
+ *    attempt the same 402 becomes a typed terminal error. That is why exhaustion cannot be
+ *    a loop that quietly falls out of its condition.
+ *  - **`requestId` is created once, in `fetch`, and is the same on every attempt.** The
+ *    diagnostic header identifies the caller's *operation*, not one transmission of it.
  */
 async function executePayment(
   runtime: ClientRuntime,
@@ -704,8 +730,44 @@ async function executePayment(
   selection: { assetId?: string },
 ): Promise<Response> {
   const { requestId } = inspection;
-  const challenge = inspection.paymentRequired;
+  let challenge = inspection.paymentRequired;
 
+  for (let attempt = 1; ; attempt += 1) {
+    const outcome = await attemptPayment(
+      runtime,
+      prepared,
+      requestId,
+      challenge,
+      attempt,
+      startedAt,
+      selection,
+    );
+    if (outcome.kind === "delivered") return outcome.response;
+    challenge = outcome.challenge;
+  }
+}
+
+/** What one signed attempt leaves for the loop to do. Anything else throws. */
+type AttemptOutcome =
+  | { readonly kind: "delivered"; readonly response: Response }
+  | { readonly kind: "rechallenged"; readonly challenge: NormalizedPaymentRequired };
+
+/**
+ * One signed attempt: policy, plan, reserve, sign, transmit, dispose.
+ *
+ * The ordering here is the security-critical part (SEC-002, SPEC §6.6) and it holds on
+ * *every* attempt, not only the first — a second pass through this function re-reserves
+ * before it re-signs exactly as the first did.
+ */
+async function attemptPayment(
+  runtime: ClientRuntime,
+  prepared: PreparedRequest,
+  requestId: string,
+  challenge: NormalizedPaymentRequired,
+  attempt: number,
+  startedAt: number,
+  selection: { assetId?: string },
+): Promise<AttemptOutcome> {
   /* Policy — entirely local, before any balance read or signer call (SEC-002). */
   const decision = await runtime.policyEngine.evaluate(challenge, {
     requestId,
@@ -829,7 +891,7 @@ async function executePayment(
     throw error;
   }
 
-  /* One signature, one attempt (ADR-003). */
+  /* Exactly one signature and exactly one signature-bearing request per attempt (ADR-003). */
   let paid: { request: Request; deadline: Deadline };
   try {
     paid = await buildPaidRequest(prepared, signatureHeader, requestId, runtime);
@@ -841,10 +903,17 @@ async function executePayment(
   emit(runtime.logger, "info", {
     event: "request.retried",
     requestId,
-    attempt: 1,
+    attempt,
     selectedNetwork: selected.route.networkId,
   });
 
+  /*
+   * From here on the signature is on the wire, so no failure path may assume otherwise.
+   * Every outcome — including the ones that arrive as exceptions — is reduced to a
+   * `PaidAttemptResult` and handed to SPEC §6.7's disposition table rather than being
+   * branched on in place.
+   */
+  const maxPaidAttempts = runtime.policyEngine.maxPaidAttempts;
   let response: Response;
   try {
     response = await issuePaidRetry(
@@ -854,56 +923,109 @@ async function executePayment(
       paid.deadline,
     );
   } catch (error) {
-    if (error instanceof PaidRedirectBlockedError) {
-      // The signature reached the merchant; only the follow-up was blocked. Whether the
-      // merchant settled is unknown, so the reservation stays (SPEC §6.7).
-      throw ambiguous(runtime, error, reservation, errorContext, "redirect-blocked");
-    }
-    throw ambiguous(runtime, error, reservation, errorContext, "transport-after-signature");
+    // A transmission that never completed is ambiguous whatever the cause, which is why the
+    // table's overload for this input returns an ambiguous disposition and nothing else.
+    const disposition = classifyPaidAttempt({
+      attempt,
+      maxPaidAttempts,
+      result:
+        error instanceof PaidRedirectBlockedError
+          ? { kind: "redirect-blocked" }
+          : { kind: "transport-failure" },
+    });
+    throw ambiguousPayment(
+      runtime,
+      error,
+      reservation,
+      errorContext,
+      disposition.causeCategory,
+    );
   } finally {
     // Held until the attempt settles, then released — the timer must outlive the request and
     // must not outlive it by longer than necessary.
     paid.deadline.dispose();
   }
 
-  if (response.status === 402) {
-    // A fresh challenge is definitive: the merchant did not accept the payment, so no
-    // settlement evidence exists and the reservation is released. Re-signing against the new
-    // challenge is M6's `maxPaidAttempts` loop.
-    await releaseQuietly(runtime, reservation.reservationId);
-    throw new ResourceDeliveryError("Merchant re-challenged the paid request", {
-      context: { ...errorContext, phase: "retry", paid: false },
-      details: { status: 402, reason: "rechallenged" },
-    });
+  // PAYMENT-RESPONSE is read before the disposition is taken: "the merchant's own metadata
+  // says the settlement failed" is one of the table's inputs, not a check after the fact.
+  let settlement: SettlementEvidence = "unknown";
+  let settlementId: string | undefined;
+  if (response.status >= 200 && response.status < 300) {
+    const read = readPaymentResponse(response, requestId, runtime.logger);
+    settlement = read.settlement;
+    settlementId = read.settlementId;
   }
 
-  if (!response.ok) {
-    if (response.status >= 500) {
-      throw ambiguous(runtime, undefined, reservation, errorContext, "server-error");
-    }
-    // A 4xx is the merchant refusing the request outright: no settlement, so release.
-    await releaseQuietly(runtime, reservation.reservationId);
-    throw new ResourceDeliveryError("Merchant rejected the paid request", {
-      context: { ...errorContext, phase: "retry", paid: false },
-      details: { status: response.status, reason: "paid-request-rejected" },
-    });
+  const disposition = classifyPaidAttempt({
+    attempt,
+    maxPaidAttempts,
+    result: { kind: "response", status: response.status, settlement },
+  });
+
+  if (disposition.kind === "ambiguous") {
+    throw ambiguousPayment(
+      runtime,
+      undefined,
+      reservation,
+      errorContext,
+      disposition.causeCategory,
+    );
   }
 
-  const settlement = readPaymentResponse(response, requestId, runtime.logger);
-  if (settlement !== undefined && !settlement.success) {
+  // Both remaining non-commit dispositions release: the merchant either re-challenged or
+  // refused, and each is evidence that no settlement occurred (SPEC §6.7).
+  if (disposition.kind !== "commit") {
     await releaseQuietly(runtime, reservation.reservationId);
-    throw new ResourceDeliveryError("Merchant reported an unsuccessful settlement", {
-      context: { ...errorContext, phase: "complete", paid: false },
-      details: { status: response.status, reason: "settlement-unsuccessful" },
+  }
+
+  if (disposition.kind === "rechallenge") {
+    // Parsed from scratch, with the same binding checks the first challenge got. The
+    // reservation is already gone, so a challenge that fails to decode fails cleanly.
+    const fresh = decodePaymentRequired(
+      response.headers.get(PROTOCOL_HEADERS.paymentRequired),
+      {
+        requestUrl: prepared.url,
+        requestMethod: prepared.method,
+        requestId,
+        clockEpochMs: runtime.clock.now(),
+        allowInsecureLocalhost: runtime.allowInsecureLocalhost,
+      },
+    );
+    emit(runtime.logger, "info", {
+      event: "payment.required",
+      requestId,
+      attempt: attempt + 1,
+      requirementCount: fresh.requirements.length,
+      headerHash: fresh.headerHash,
     });
+    return { kind: "rechallenged", challenge: fresh };
+  }
+
+  if (disposition.kind === "failed") {
+    throw new ResourceDeliveryError(
+      disposition.reason === MAX_PAID_ATTEMPTS_REASON
+        ? `Merchant re-challenged every one of the ${maxPaidAttempts} permitted paid attempts`
+        : "Merchant did not deliver the paid resource",
+      {
+        context: {
+          ...errorContext,
+          phase: disposition.reason === "settlement-unsuccessful" ? "complete" : "retry",
+          paid: false,
+        },
+        details: {
+          status: response.status,
+          reason: disposition.reason,
+          attempt,
+          maxPaidAttempts,
+        },
+      },
+    );
   }
 
   const entry = await runtime.spendStore.commit({
     reservationId: reservation.reservationId,
     committedAtEpochMs: runtime.clock.now(),
-    ...(settlement?.settlementId === undefined
-      ? {}
-      : { settlementId: settlement.settlementId }),
+    ...(settlementId === undefined ? {} : { settlementId }),
   });
 
   emit(runtime.logger, "info", {
@@ -915,7 +1037,7 @@ async function executePayment(
       : { settlementIdHash: settlementIdHash(entry.settlementId) }),
     totalSdkOverheadMs: Math.max(0, runtime.clock.monotonic() - startedAt),
   });
-  return response;
+  return { kind: "delivered", response };
 }
 
 /** Releases a reservation without letting a store failure mask the original error. */
@@ -931,7 +1053,7 @@ async function releaseQuietly(
   }
 }
 
-function ambiguous(
+function ambiguousPayment(
   runtime: ClientRuntime,
   cause: unknown,
   reservation: SpendReservation,
@@ -1035,6 +1157,7 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
     adapters: new Map(),
     paymentRetryMs,
     disableRequestIdHeader: config.disableRequestIdHeader ?? false,
+    allowInsecureLocalhost,
   };
 
   let budgetState: BudgetState = Object.freeze({

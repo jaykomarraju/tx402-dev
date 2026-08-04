@@ -42,6 +42,16 @@ export interface RecordedRequest {
   status: number;
   /** Set when retry validation rejected the attempt. */
   violation?: string;
+  /**
+   * `sha256:<hex>` of the raw PAYMENT-SIGNATURE header, present on a validated paid attempt.
+   *
+   * The value itself is never retained (SEC-003), but SPEC §6.7's "the old signature is
+   * never reused" has to be checkable, and comparing two digests settles it without keeping
+   * anything sensitive.
+   */
+  signatureHash?: string;
+  /** The atomic amount the buyer's `accepted` requirement named. */
+  acceptedAmount?: string;
 }
 
 export interface TestMerchantOptions {
@@ -62,6 +72,12 @@ export interface TestMerchantOptions {
    * a malformed retry is answered `400` with a machine-readable reason.
    */
   validateRetries?: boolean;
+  /**
+   * Offered instead of `requirements` once at least one signed attempt has arrived, so a
+   * re-challenge can genuinely differ from the first challenge (SPEC §6.7). A paid attempt
+   * is validated against the union of both sets.
+   */
+  rechallengeRequirements?: Record<string, unknown>[];
 }
 
 export interface TestMerchant {

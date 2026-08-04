@@ -1,0 +1,30 @@
+{
+  "$schema": "https://tx402.dev/schemas/v1/conformance-vector.schema.json",
+  "id": "completion.paid-attempt.absent-settlement-evidence-commits",
+  "kind": "completion.paid-attempt",
+  "milestone": "M6",
+  "title": "An unreadable PAYMENT-RESPONSE is not a failed settlement",
+  "description": "PAYMENT-RESPONSE is optional on a delivered resource, and a header that does not decode is no more informative than one that is absent. Both report settlement 'unknown', and both commit: the resource arrived with a 2xx, and refusing to commit would release budget for a payment the merchant most likely did settle. Only an explicit success:false releases.",
+  "spec": ["SPEC \u00a76.7"],
+  "input": {
+    "maxPaidAttempts": 1,
+    "attempts": [
+      {
+        "attempt": 1,
+        "result": {
+          "kind": "response",
+          "status": 200,
+          "settlement": "unknown"
+        }
+      }
+    ]
+  },
+  "expected": {
+    "dispositions": [
+      {
+        "kind": "commit",
+        "reservation": "committed"
+      }
+    ]
+  }
+}

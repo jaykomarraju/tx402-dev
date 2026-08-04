@@ -51,6 +51,48 @@
       "sha256": "sha256:676398c29305bd5e558102916350beac0abeaf05698ac46fea8415bb5e03bffa"
     },
     {
+      "id": "completion.paid-attempt.absent-settlement-evidence-commits",
+      "kind": "completion.paid-attempt",
+      "milestone": "M6",
+      "file": "vectors/completion/absent-settlement-evidence-commits.json",
+      "sha256": "sha256:b1aec303513e522718194b725fd3168fd6e77786c7d596519100f10ec6aadd44"
+    },
+    {
+      "id": "completion.paid-attempt.ambiguous-after-transmission",
+      "kind": "completion.paid-attempt",
+      "milestone": "M6",
+      "file": "vectors/completion/ambiguous-after-transmission.json",
+      "sha256": "sha256:99b053e4dea5718f7fedd934c660bae8a9c9e25a39ded3bb0d87b9d4b599470d"
+    },
+    {
+      "id": "completion.paid-attempt.attempts-exhausted",
+      "kind": "completion.paid-attempt",
+      "milestone": "M6",
+      "file": "vectors/completion/attempts-exhausted.json",
+      "sha256": "sha256:31f0e3e8ff8b5b01eb1ef9ccd34c3f86e0dfe959e6e5c0e5d9d9af4b5439694f"
+    },
+    {
+      "id": "completion.paid-attempt.rechallenge-then-delivered",
+      "kind": "completion.paid-attempt",
+      "milestone": "M6",
+      "file": "vectors/completion/rechallenge-then-delivered.json",
+      "sha256": "sha256:e30d5042745f24e95dc5db93844df976245ad0debb6bdd6613c70e2bdcb58356"
+    },
+    {
+      "id": "completion.paid-attempt.refusal-releases-redirect-does-not",
+      "kind": "completion.paid-attempt",
+      "milestone": "M6",
+      "file": "vectors/completion/refusal-releases-redirect-does-not.json",
+      "sha256": "sha256:5d86b284d55f748939ea1640d64a3efb8d4d20a75296b585d53b55d6be24b347"
+    },
+    {
+      "id": "completion.paid-attempt.single-attempt-exhausted",
+      "kind": "completion.paid-attempt",
+      "milestone": "M6",
+      "file": "vectors/completion/single-attempt-exhausted.json",
+      "sha256": "sha256:7ce3df096e55b9c972d1583193c7508ef22a0e2ca0e246b289d63b8640f3d141"
+    },
+    {
       "id": "errors.taxonomy.frozen",
       "kind": "errors.taxonomy",
       "milestone": "M0",

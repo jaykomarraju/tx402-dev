@@ -99,6 +99,15 @@ export const SCENARIOS = {
       paidAttempt >= 2 ? { type: "deliver", status: 200 } : { type: "challenge" },
   },
 
+  "rechallenge-malformed": {
+    description:
+      "Challenges normally, then answers the paid attempt with a 402 whose PAYMENT-REQUIRED " +
+      "does not decode. The re-challenge gets the same strict parse the first one did.",
+    covers: ["T-010", "SPEC §6.2", "SPEC §6.7"],
+    next: ({ hasSignature }) =>
+      hasSignature ? { type: "malformed-challenge" } : { type: "challenge" },
+  },
+
   "malformed-challenge": {
     description: "Returns a 402 whose PAYMENT-REQUIRED header is not decodable.",
     covers: ["T-009", "SPEC §6.2"],
