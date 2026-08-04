@@ -15,7 +15,7 @@ package import time.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 
@@ -159,6 +159,7 @@ def load_chain_adapter(
     *,
     health: HealthIndex,
     rpc_transport: object = None,
+    rpc_overrides: Mapping[str, Sequence[str]] | None = None,
 ) -> ChainAdapter | None:
     """Loads the adapter for a chain family, or ``None`` when tx402 has none.
 
@@ -169,9 +170,13 @@ def load_chain_adapter(
     if family == "eip155":
         from tx402.evm import create_evm_chain_adapter
 
-        return create_evm_chain_adapter(health=health, rpc_transport=rpc_transport)
+        return create_evm_chain_adapter(
+            health=health, rpc_transport=rpc_transport, rpc_overrides=rpc_overrides
+        )
     if family == "solana":
         from tx402.solana import create_svm_chain_adapter
 
-        return create_svm_chain_adapter(health=health, rpc_transport=rpc_transport)
+        return create_svm_chain_adapter(
+            health=health, rpc_transport=rpc_transport, rpc_overrides=rpc_overrides
+        )
     return None

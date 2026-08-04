@@ -37,6 +37,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BUNDLED_MANIFEST } from "../src/core/bundled-manifest.js";
 import { createTx402Client, type Tx402Logger } from "../src/core/client.js";
 import { isTx402Error } from "../src/core/errors.js";
+import { keypairToSolanaSigner } from "../src/signers/index.js";
 import type {
   EvmManifestAsset,
   EvmManifestNetwork,
@@ -46,6 +47,24 @@ import type {
 
 const EVM_KEY = process.env.TX402_BASE_SEPOLIA_PRIVATE_KEY;
 const SVM_KEY = process.env.TX402_SOLANA_DEVNET_KEYPAIR;
+
+/**
+ * A keyed RPC endpoint for one network, when the environment supplies one (ADR-015).
+ *
+ * The manifest ships keyless public endpoints, and a keyless public endpoint has a per-IP
+ * quota: at S12 the Solana leg delivered 8 of 50 and then 429'd, because each Solana payment
+ * costs five Devnet requests and both manifest endpoints exhaust at roughly forty from one
+ * address (PLAN.md open item O35). Pacing did not help — pacing at 600 ms and at 2 000 ms
+ * produced the identical cutoff, which is what identified it as a quota rather than a rate.
+ *
+ * The suite reads the environment and passes the value **in**; the SDK never reads the
+ * environment itself. Returns `{}` when unset, so the signed manifest still decides by
+ * default and this cannot silently change what an unconfigured run measures.
+ */
+function rpcOverrideFor(networkId: string, variable: string) {
+  const url = process.env[variable];
+  return url === undefined ? {} : { routing: { rpcOverrides: { [networkId]: [url] } } };
+}
 
 /** SPEC §12.2 says fifty per network. Overridable only to shorten a local smoke run. */
 const CALLS = Number.parseInt(process.env.TX402_VOLUME_CALLS ?? "50", 10);
@@ -150,6 +169,7 @@ describe.skipIf(EVM_KEY === undefined)("T-019 volume — Base Sepolia (live, opt
       },
       logger: nonceCollector(nonces),
       allowInsecureLocalhost: true,
+      ...rpcOverrideFor(BASE_ID, "TX402_BASE_SEPOLIA_RPC_URL"),
     });
 
     const failures: RunOutcome["failures"] = [];
@@ -224,29 +244,10 @@ describe.skipIf(SVM_KEY === undefined)(
     beforeAll(async () => {
       const network = BUNDLED_MANIFEST.networks[SOLANA_ID] as SvmManifestNetwork;
       const usdc = network.assets[0] as SvmManifestAsset;
-      const { createKeyPairSignerFromBytes, createSignableMessage, generateKeyPairSigner } =
-        await import("@solana/kit");
-      const { SolanaSigner } = { SolanaSigner: undefined };
-      void SolanaSigner;
-
-      const keypair = await createKeyPairSignerFromBytes(
-        Uint8Array.from(JSON.parse(SVM_KEY as string) as number[]),
-      );
-      // The same shape the single-call Devnet suite uses: tx402's own `SolanaSigner`
-      // contract, satisfied by `@solana/kit`. tx402 never sees the key material.
-      const signer = {
-        kind: "solana",
-        getPublicKey: () => Promise.resolve(keypair.address.toString()),
-        signTransaction: async (request: { messageBytes: Uint8Array }) => {
-          const [signatures] = await keypair.signMessages([
-            createSignableMessage(request.messageBytes),
-          ]);
-          const signature = signatures?.[keypair.address];
-          if (signature === undefined)
-            throw new Error("Devnet signer produced no signature");
-          return new Uint8Array(signature);
-        },
-      } as const;
+      const { generateKeyPairSigner } = await import("@solana/kit");
+      // The shipped convenience adapter, not a hand-rolled one. A volume suite that builds
+      // its own signer proves the volume behaviour of code no user runs.
+      const signer = await keypairToSolanaSigner(SVM_KEY as string);
       const feePayer = (await generateKeyPairSigner()).address.toString();
 
       merchant = await createTestMerchant({
@@ -274,6 +275,7 @@ describe.skipIf(SVM_KEY === undefined)(
         },
         logger: nonceCollector(nonces),
         allowInsecureLocalhost: true,
+        ...rpcOverrideFor(SOLANA_ID, "TX402_SOLANA_DEVNET_RPC_URL"),
       });
 
       const failures: RunOutcome["failures"] = [];

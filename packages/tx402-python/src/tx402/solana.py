@@ -1095,16 +1095,27 @@ class SvmChainAdapter:
 
     family = "solana"
 
-    def __init__(self, *, health: HealthIndex, rpc_transport: object = None) -> None:
+    def __init__(
+        self,
+        *,
+        health: HealthIndex,
+        rpc_transport: object = None,
+        rpc_overrides: Mapping[str, Sequence[str]] | None = None,
+    ) -> None:
         self._health = health
         self._rpc_transport = rpc_transport
+        #: ADR-015. Already validated and alias-resolved by ``PolicyEngine``.
+        self._rpc_overrides = rpc_overrides or {}
         self._pools: dict[str, SvmRpcPool] = {}
 
     def _pool(self, network_id: str, network: Mapping[str, Any]) -> SvmRpcPool:
         pool = self._pools.get(network_id)
         if pool is None:
             pool = SvmRpcPool(
-                network["rpcUrls"],
+                # ADR-015: a caller-supplied endpoint list replaces the manifest's for this
+                # network, and nothing else about the network changes. The chain-identity
+                # proof still runs against whatever endpoint is used.
+                self._rpc_overrides.get(network_id) or network["rpcUrls"],
                 network_id=network_id,
                 health=self._health,
                 transport=self._rpc_transport,
@@ -1301,6 +1312,11 @@ class SvmChainAdapter:
 
 
 def create_svm_chain_adapter(
-    *, health: HealthIndex, rpc_transport: object = None
+    *,
+    health: HealthIndex,
+    rpc_transport: object = None,
+    rpc_overrides: Mapping[str, Sequence[str]] | None = None,
 ) -> SvmChainAdapter:
-    return SvmChainAdapter(health=health, rpc_transport=rpc_transport)
+    return SvmChainAdapter(
+        health=health, rpc_transport=rpc_transport, rpc_overrides=rpc_overrides
+    )

@@ -53,6 +53,63 @@ that starts putting a timestamp in `extra` gets the check for free.
 
 ---
 
+## `routing.rpcOverrides` — your endpoint instead of the manifest's
+
+**ADR-015**
+
+The signed manifest ships keyless public RPC endpoints, because those are the only ones that
+can be published to every installation. A keyless public endpoint has a per-IP quota, and at
+any volume you will hit it.
+
+`routing.rpcOverrides` replaces the endpoint list for one network, and changes nothing else:
+
+```ts
+const tx402 = createTx402Client({
+  signers: { solana },
+  routing: {
+    rpcOverrides: {
+      "solana:devnet": ["https://your-provider.example/v2/<key>"],
+    },
+  },
+});
+```
+
+```python
+Tx402Client(
+    solana_signer=solana,
+    routing=RoutingPolicy(
+        rpc_overrides={"solana:devnet": ["https://your-provider.example/v2/<key>"]},
+    ),
+)
+```
+
+Validated at construction, so a mistake is an error rather than a setting that quietly never
+applies:
+
+| Rule | Why |
+| :--- | :--- |
+| The key is resolved through the manifest | An unknown or misspelled network fails immediately. An override that never matches would leave you believing your keyed endpoint is in use while every read still goes to the public one. |
+| An empty list is rejected | "Override with nothing" is a mistake, not a request to fall back. |
+| `https:` only, except on localhost | An RPC endpoint usually carries its API key in the path or query. `http:` is allowed on `localhost`, `127.0.0.1`, and `[::1]` for a local validator. |
+| Nothing else is overridable | Which networks exist, which assets they carry, and a token's decimals still come from the signed document. |
+
+:::note[This does not weaken the signed manifest]
+The manifest's signature protects against a *third party* redirecting your balance reads.
+An override is you, in your own source. And it cannot make tx402 pay on the wrong chain
+regardless: SPEC §7.1 and §7.2 require chain identity — `eth_chainId`, the Solana genesis
+hash — to be proven on the same endpoint that serves the balance, on **every** read, and
+that check runs against whatever endpoint is in use. An override pointing somewhere wrong
+opens that endpoint's circuit and is skipped.
+
+The worst an override can do is make tx402 unable to read a balance, which surfaces as a
+typed `TransportError` and no signature.
+:::
+
+tx402 never reads the environment for this, or for anything else. If you keep the URL in an
+environment variable, your code passes it in.
+
+---
+
 ## `policy.allowedNetworks` and `routing.preferNetworks` — aliases in, canonical out
 
 **SPEC §4.1, §4.3, §7.2** · **ADR-010 decision 4**

@@ -40,6 +40,25 @@ export interface RoutingPolicyConfig {
    * its genesis hash (ADR-010 decision 4).
    */
   readonly preferNetworks?: readonly string[];
+  /**
+   * Replaces the signed manifest's RPC endpoints for specific networks (ADR-015).
+   *
+   * Keyed by CAIP-2 identifier or alias; the value replaces `rpcUrls` for that network and
+   * nothing else. Every other manifest fact — which networks exist, which assets they carry,
+   * a token's decimals — still comes from the signed document and cannot be overridden here.
+   *
+   * **This does not weaken the manifest's integrity guarantee.** SPEC §7.1 and §7.2 require
+   * chain identity to be proven on the same endpoint that serves the balance, on every read,
+   * and that check runs against whatever endpoint is used — so an override that points at
+   * the wrong chain opens its circuit and is skipped rather than being trusted. What an
+   * override can do is make tx402 unable to read a balance; it cannot make tx402 pay on a
+   * network the caller did not allow.
+   *
+   * Exists because the manifest ships keyless public endpoints, and a keyless public
+   * endpoint has a per-IP quota. An operator running at volume has a keyed endpoint and
+   * previously had no way to tell tx402 about it (PLAN.md open item O35).
+   */
+  readonly rpcOverrides?: Readonly<Record<string, readonly string[]>>;
 }
 
 export interface PolicyRequirement extends NormalizedPaymentRequirement {
@@ -163,6 +182,8 @@ export class PolicyEngine {
   readonly maxPaidAttempts: number;
   /** Canonical CAIP-2, in the caller's stated order (SPEC §6.4 step 18). */
   readonly preferNetworks: readonly string[];
+  /** Caller-supplied RPC endpoints, keyed by canonical CAIP-2 (ADR-015). */
+  readonly rpcOverrides: Readonly<Record<string, readonly string[]>>;
 
   constructor(
     manifest: ReleaseManifest,
@@ -236,6 +257,55 @@ export class PolicyEngine {
         );
       }),
     );
+
+    // Resolved through the manifest for the same reason preferences are: an override keyed
+    // by a misspelled or aliased network must fail at construction rather than silently
+    // never applying, which would leave the operator believing their keyed endpoint is in
+    // use while every read still goes to the public one (ADR-015).
+    const configuredOverrides = routing.rpcOverrides ?? {};
+    if (
+      typeof configuredOverrides !== "object" ||
+      configuredOverrides === null ||
+      Array.isArray(configuredOverrides)
+    ) {
+      throw configuration("routing.rpcOverrides", "expected-object");
+    }
+    const overrides = new Map<string, readonly string[]>();
+    for (const [network, urls] of Object.entries(configuredOverrides)) {
+      const path = `routing.rpcOverrides[${network}]`;
+      const resolved = requireNetwork(manifest, network, configContext(), path);
+      if (!Array.isArray(urls) || urls.length === 0) {
+        throw configuration(path, "empty-list");
+      }
+      overrides.set(
+        resolved,
+        Object.freeze(
+          urls.map((url, index) => {
+            if (typeof url !== "string") {
+              throw configuration(`${path}[${index}]`, "expected-string");
+            }
+            let parsed: URL;
+            try {
+              parsed = new URL(url);
+            } catch {
+              throw configuration(`${path}[${index}]`, "invalid-url");
+            }
+            // An RPC endpoint carries an API key in its path or query often enough that
+            // plaintext http would leak it to the network. Localhost is exempt because a
+            // local validator has no transport to intercept.
+            const local =
+              parsed.hostname === "localhost" ||
+              parsed.hostname === "127.0.0.1" ||
+              parsed.hostname === "[::1]";
+            if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && local)) {
+              throw configuration(`${path}[${index}]`, "insecure-scheme");
+            }
+            return url;
+          }),
+        ),
+      );
+    }
+    this.rpcOverrides = Object.freeze(Object.fromEntries(overrides));
 
     for (const networkId of this.#allowedNetworks) {
       const network = manifest.networks[networkId];

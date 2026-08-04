@@ -1,0 +1,87 @@
+name: Docs
+
+# The documentation site is what the fresh-eyes UX pass reads and what a first-time user
+# lands on, so it deploys from `main` rather than only at release: docs that lag the code
+# are the failure this is designed against.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "packages/tx402/src/**"
+      - "tools/docs-gen/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy to tx402.dev/docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: "10.34.5"
+
+      # Astro 7 requires Node 22+. The rest of the workspace targets Node 20, which is why
+      # this is its own job rather than a step in a matrix leg.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The generated pages are emitted from the package's own exports, so the package has
+      # to exist before they can be checked or built.
+      - name: Build the SDK
+        run: pnpm --filter tx402 build
+
+      - name: Generated pages are current
+        run: pnpm docs:check
+
+      - name: Build the site
+        run: pnpm docs:build
+
+      # `astro.config.mjs` sets `base: "/docs"`, so every emitted link is `/docs/…` while the
+      # build output itself sits at the root of `docs/dist`. Deploying `dist` directly would
+      # serve a site whose every link 404s. Nesting it under `docs/` makes the deployed paths
+      # match the links, and keeps the local preview and production identical.
+      - name: Arrange the deploy root
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/docs
+          cp -R docs/dist/. deploy/docs/
+          # A bare visit to the apex should not 404 while the marketing site does not exist.
+          printf '/  /docs/  302\n' > deploy/_redirects
+          test -f deploy/docs/index.html
+
+      # Skipped rather than failed when the token is absent, so a fork or a pre-setup branch
+      # still gets the build-and-check signal above without a red run it cannot fix.
+      - name: Deploy to Cloudflare Pages
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pnpm dlx wrangler@4 pages deploy deploy \
+            --project-name tx402-docs \
+            --branch "${GITHUB_REF_NAME}" \
+            --commit-dirty=true
+
+      - name: Report when the deploy was skipped
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          echo "::notice::Site built and verified, but CLOUDFLARE_API_TOKEN is not set," \
+               "so nothing was deployed. Add the secret to publish to tx402.dev/docs."

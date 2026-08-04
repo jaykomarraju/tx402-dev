@@ -21,21 +21,38 @@ account.
 Example::
 
     import os
-    from tx402.signers import private_key_to_evm_signer
+    from tx402.signers import keypair_to_solana_signer, private_key_to_evm_signer
 
     evm = private_key_to_evm_signer(os.environ["TX402_DEV_PRIVATE_KEY"])
+    solana = keypair_to_solana_signer(os.environ["TX402_DEV_SOLANA_KEYPAIR"])
 """
 
 from __future__ import annotations
 
+import json
 import re
-from typing import Any, Final, Literal
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from tx402.evm import EvmTypedDataRequest
 
-__all__ = ["PrivateKeyEvmSigner", "private_key_to_evm_signer"]
+if TYPE_CHECKING:
+    # `tx402.solana` imports `solders` at module scope, so importing it here at runtime
+    # would make `tx402.signers` — and therefore `private_key_to_evm_signer` — require the
+    # `svm` extra. A caller who installed `tx402[evm]` must be able to import this module.
+    from tx402.solana import SolanaSignRequest
+
+__all__ = [
+    "KeypairSolanaSigner",
+    "PrivateKeyEvmSigner",
+    "keypair_to_solana_signer",
+    "private_key_to_evm_signer",
+]
 
 _PRIVATE_KEY: Final = re.compile(r"^0x[0-9a-fA-F]{64}$")
+
+#: Bytes in a Solana keypair file: a 32-byte seed followed by the 32-byte public key.
+_SOLANA_KEYPAIR_BYTES: Final = 64
 
 
 class PrivateKeyEvmSigner:
@@ -108,3 +125,107 @@ def private_key_to_evm_signer(private_key: str) -> PrivateKeyEvmSigner:
         ``eth_account`` sees it if it is malformed.
     """
     return PrivateKeyEvmSigner(private_key)
+
+
+def _solana_keypair_bytes(keypair: str | bytes | Sequence[int]) -> bytes:
+    """Normalizes the shapes a Solana keypair arrives in into its 64 raw bytes.
+
+    ``solana-keygen`` writes a JSON array of byte values to ``~/.config/solana/id.json``, so
+    that string is what a caller actually has in hand and what an environment variable
+    actually carries. Parsing it here keeps the mistakes in one place.
+
+    No error message quotes the input. A malformed key is still a key, and a validation
+    message that echoes it is how key material reaches a traceback.
+    """
+    values: bytes | Sequence[int]
+    if isinstance(keypair, str):
+        try:
+            parsed = json.loads(keypair)
+        except ValueError:
+            raise ValueError(
+                "keypair_to_solana_signer expects a JSON array of 64 keypair bytes, as "
+                "written by `solana-keygen` — it could not be parsed as JSON"
+            ) from None
+        if not isinstance(parsed, list):
+            raise ValueError(
+                "keypair_to_solana_signer expects a JSON array of 64 keypair bytes"
+            )
+        values = parsed
+    elif isinstance(keypair, (bytes, bytearray, list, tuple)):
+        values = keypair
+    else:
+        # Reached when a caller passes an unset ``os.environ.get(...)``. Without this branch
+        # ``len()`` raises a bare ``TypeError`` that says nothing about what was expected.
+        raise ValueError(
+            "keypair_to_solana_signer expects 64 keypair bytes or the JSON array string "
+            "`solana-keygen` writes, and received neither"
+        )
+
+    if len(values) != _SOLANA_KEYPAIR_BYTES:
+        raise ValueError(
+            f"keypair_to_solana_signer expects {_SOLANA_KEYPAIR_BYTES} keypair bytes, "
+            f"received {len(values)}"
+        )
+    if not all(isinstance(value, int) and 0 <= value <= 255 for value in values):
+        raise ValueError(
+            "keypair_to_solana_signer expects keypair bytes in the range 0-255"
+        )
+
+    return bytes(values)
+
+
+class KeypairSolanaSigner:
+    """A :class:`~tx402.solana.SolanaSigner` backed by a raw Ed25519 keypair.
+
+    The keypair lives in ``_sign``'s closure and in the ``solders`` object it captures. It
+    is not an attribute, so it cannot be reached by attribute access, by ``vars()``, or by a
+    serializer walking the object.
+    """
+
+    kind: Literal["solana"] = "solana"
+
+    __slots__ = ("_public_key", "_sign")
+
+    def __init__(self, keypair: str | bytes | Sequence[int]) -> None:
+        raw = _solana_keypair_bytes(keypair)
+
+        # Imported lazily so the core install never loads a chain library, exactly as the
+        # EVM adapter does: `import tx402` must not require the `svm` extra.
+        from solders.keypair import Keypair
+
+        inner = Keypair.from_bytes(raw)
+        self._public_key: str = str(inner.pubkey())
+
+        def sign(request: SolanaSignRequest) -> bytes:
+            # Only `message_bytes` is signed. `transaction_bytes` and `presentation` exist
+            # so a hardware or KMS adapter can display and independently decode the same
+            # transaction; signing anything else would sign something other than what the
+            # runtime verifies.
+            return bytes(inner.sign_message(request.message_bytes))
+
+        self._sign = sign
+
+    def get_public_key(self) -> str:
+        return self._public_key
+
+    def sign_transaction(self, request: SolanaSignRequest) -> bytes:
+        return self._sign(request)
+
+    def __repr__(self) -> str:
+        return f"KeypairSolanaSigner(solana:{self._public_key})"
+
+    def __reduce__(self) -> Any:
+        raise TypeError("a tx402 signer cannot be pickled")
+
+
+def keypair_to_solana_signer(keypair: str | bytes | Sequence[int]) -> KeypairSolanaSigner:
+    """Wraps a raw Ed25519 keypair as a :class:`~tx402.solana.SolanaSigner`.
+
+    The Solana counterpart to :func:`private_key_to_evm_signer`, and it carries the same
+    warning: prefer an external signer.
+
+    :param keypair: The 64 bytes of a Solana keypair, or the JSON array string that
+        ``solana-keygen`` writes. Never logged, and rejected before ``solders`` sees it if
+        it is malformed.
+    """
+    return KeypairSolanaSigner(keypair)

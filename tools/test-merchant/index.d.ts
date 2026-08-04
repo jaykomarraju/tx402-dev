@@ -50,6 +50,19 @@ export interface RecordedRequest {
    * anything sensitive.
    */
   signatureHash?: string;
+  /**
+   * The facilitator's answer, present only when `facilitatorUrl` was configured and a
+   * signed attempt reached settlement. A real settlement, on a real chain.
+   */
+  settlement?: {
+    success: boolean;
+    transaction: string;
+    network: string;
+    payer?: string;
+    errorReason?: string;
+  };
+  /** Set when the facilitator could not be reached at all, rather than refusing. */
+  settlementError?: string;
   /** The atomic amount the buyer's `accepted` requirement named. */
   acceptedAmount?: string;
 }
@@ -66,6 +79,17 @@ export interface TestMerchantOptions {
   contentType?: string;
   /** Deterministic transaction id placed in PAYMENT-RESPONSE. */
   settlementId?: string;
+  /**
+   * When set, a signed attempt is verified and settled against this **real** x402
+   * facilitator instead of being answered with the deterministic `settlementId`.
+   *
+   * ADR-002 puts `/verify` and `/settle` on the merchant, so the buyer sees no difference
+   * and never learns a facilitator exists. That is what makes a local merchant a legitimate
+   * fixture for a real payment: the buyer's code path is the shipped one, and the fixture
+   * supplies only the counterparty. A failed settlement answers 402 carrying both
+   * PAYMENT-RESPONSE and a fresh PAYMENT-REQUIRED.
+   */
+  facilitatorUrl?: string;
   resourceDescription?: string;
   /**
    * Default true. Turn it off only to test what an unvalidating merchant does — with it on,

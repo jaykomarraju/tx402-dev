@@ -1,22 +1,26 @@
 # tx402
 
-**Resilient x402 buyer SDK for TypeScript.** Deterministic multi-chain payment routing, local
-spend guardrails, and a drop-in `fetch` wrapper for autonomous agents.
+**Resilient x402 buyer SDK for TypeScript.** Deterministic multi-chain payment routing, local spend
+guardrails, and a drop-in `fetch` wrapper for autonomous agents.
 
-> ⚠️ **This is a placeholder release (`0.0.0`). The package name is reserved; the SDK is under
-> active development and nothing is implemented yet.** Do not depend on this version. The first
-> functional release will be `0.1.0`.
+[Documentation](https://tx402.dev/docs) · [Quickstart](https://tx402.dev/docs/start/quickstart/) ·
+[Errors](https://tx402.dev/docs/reference/errors/) ·
+[Source](https://github.com/neogeeks/tx402) ·
+[Python SDK](https://pypi.org/project/tx402/)
 
-## What it will do
+> **`0.0.0` is an inert name placeholder and contains no working code.** The first functional
+> release is `0.1.0`. Do not depend on `0.0.0`.
 
-An AI agent running a 50-step workflow cannot afford to have step 45 die because one payment
-facilitator rate-limited it or the merchant wanted USDC on a chain the agent wasn't configured
-for. `tx402` wraps a normal HTTP client and handles the `402 Payment Required` handshake:
+## Why
+
+An AI agent running a fifty-step workflow cannot afford to have step 45 die because the merchant
+wanted USDC on a chain it wasn't configured for, or because an RPC endpoint went dark. `tx402`
+wraps a normal HTTP client and completes the `402 Payment Required` handshake:
 
 ```ts
 import { createTx402Client } from "tx402";
 
-const client = createTx402Client({
+const tx402 = createTx402Client({
   signers: { evm, solana },
   policy: {
     maxPerRequest: "0.50 USDC",
@@ -25,26 +29,16 @@ const client = createTx402Client({
   },
 });
 
-const response = await client.fetch(url, init);
+const response = await tx402.fetch(url, init);
 ```
 
-Under the hood, on a `402`, it will: decode the challenge, enforce your spend policy **before any
-key is touched**, deterministically pick a route across the networks the merchant actually offered
-(scored by balance, fee, and local endpoint health), reserve the spend, sign one authorization, and
-retry exactly once with it.
+On a `402` it decodes the challenge strictly, enforces your spend policy **before any key is
+touched**, deterministically picks a route across the networks the merchant actually offered
+(scored by balance, fee, and local endpoint health), reserves the spend atomically, signs exactly
+one authorization with a fresh nonce, and retries once with it.
 
-## Design commitments
-
-- **Non-custodial.** The core API accepts signer abstractions, never raw private key strings.
-  Private keys never leave your process, and are never logged or transmitted.
-- **Policy before signature.** Budget caps, domain allowlists, and network allowlists are evaluated
-  and the spend is reserved _before_ a signer is ever invoked.
-- **Integer money.** All amounts are integer atomic units. Floating-point money inputs are rejected,
-  not coerced — a cap that rounds is not a cap.
-- **No backend.** No tx402-operated service, no telemetry, no phone-home. The only network calls
-  are to the merchant you asked for and the RPC endpoints you configured.
-- **Same-chain only.** It pays on a network the merchant offered and you can sign for. It will not
-  bridge or swap behind your back; if you can't pay, you get a typed `InsufficientLiquidityError`.
+If the resource can't be paid for, you get one of fifteen typed errors telling you which thing went
+wrong — not a bare `402`.
 
 ## Install
 
@@ -52,17 +46,55 @@ retry exactly once with it.
 npm install tx402
 ```
 
-Chain support is behind optional subpath exports (`tx402/evm`, `tx402/solana`) so you only pay for
-what you import. The CLI ships in the same package:
+Node 20 or newer. Chain support sits behind optional subpath exports, so importing `tx402` loads no
+chain library at all:
+
+```ts
+import { privateKeyToEvmSigner } from "tx402/signers"; // dev convenience — warns on stderr
+import { createEvmChainAdapter } from "tx402/evm"; // viem / @x402/evm
+import { createSvmChainAdapter } from "tx402/solana"; // @solana/kit / @x402/svm
+```
+
+`EvmSigner` and `SolanaSigner` are two-method interfaces declared in the core path, so a KMS or
+hardware signer is a first-class citizen rather than an escape hatch.
+
+The CLI ships in the same package:
 
 ```bash
 npx tx402 call https://api.example.com/v1/inference --max-spend "0.10 USDC" --dry-run
 ```
 
-## Status
+`--dry-run` plans the payment and prints what would be signed. It never invokes a signer and never
+reserves budget. No flag accepts a private key, and none ever will.
 
-Pre-alpha. Targeting Base and Solana for the first release, with a Python SDK
-([`tx402` on PyPI](https://pypi.org/project/tx402/)) at behavioral parity.
+## Design commitments
+
+- **Non-custodial.** The core API accepts signer abstractions, never a raw private key string.
+  Keys never leave your process and are never logged or transmitted.
+- **Policy before signature.** Caps, allowlists, and the budget reservation are evaluated and
+  committed _before_ a signer is invoked. A budget check that runs after signing is not a check.
+- **Integer money.** Every amount is an integer in atomic units. A JS `number` is rejected, never
+  coerced — a cap that rounds is not a cap.
+- **No backend.** No tx402-operated service, no telemetry, no phone-home. The only hosts contacted
+  are the merchant you named and the RPC endpoints you configured.
+- **The buyer never settles.** tx402 does not call a facilitator's `/verify` or `/settle` and does
+  not broadcast your transaction. The merchant owns settlement.
+- **Same-chain only.** It pays on a network the merchant offered _and_ you can sign for. It will
+  never bridge or swap behind your back — you get `InsufficientLiquidityError` instead.
+- **Ambiguity is its own outcome.** A timeout after the signature went out means money may have
+  moved. That is `AmbiguousPaymentError` with the reservation retained, never a silent retry.
+
+## Networks
+
+Base Mainnet, Base Sepolia, Solana Mainnet, and Solana Devnet, with USDC on each. The network list,
+its assets, and its RPC endpoints ship as an **Ed25519-signed manifest** compiled into the package;
+client construction fails if the signature does not verify.
+
+## Parity with Python
+
+[`tx402` on PyPI](https://pypi.org/project/tx402/) is the same product in Python, released at the
+same version from the same commit. Both are held to identical behaviour — normalized output, route
+ordering, error codes, and the money rule — by 65 shared conformance vectors.
 
 ## License
 

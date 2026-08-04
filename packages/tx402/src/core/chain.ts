@@ -133,10 +133,17 @@ export interface ChainAdapter {
   resetHealth(): void;
 }
 
-/** Wiring an adapter receives from core. Both members are optional for standalone use. */
+/** Wiring an adapter receives from core. All members are optional for standalone use. */
 export interface ChainAdapterContext {
   /** The client's single health index (SPEC §6.5). Adapters never create their own. */
   readonly health?: HealthIndex;
+  /**
+   * Caller-supplied RPC endpoints replacing the manifest's, keyed by canonical CAIP-2.
+   *
+   * Already validated and alias-resolved by `PolicyEngine`, so an adapter can index this
+   * directly by the network id it was handed (ADR-015).
+   */
+  readonly rpcOverrides?: Readonly<Record<string, readonly string[]>>;
 }
 
 export type ChainAdapterLoader = (
@@ -157,14 +164,17 @@ export function chainFamily(networkId: string): string {
  * promise; the caller turns it into a `ConfigurationError` naming the package to install.
  */
 export const loadChainAdapter: ChainAdapterLoader = async (family, context = {}) => {
-  const health = context.health === undefined ? {} : { health: context.health };
+  const wiring = {
+    ...(context.health === undefined ? {} : { health: context.health }),
+    ...(context.rpcOverrides === undefined ? {} : { rpcOverrides: context.rpcOverrides }),
+  };
   if (family === "eip155") {
     const evm = await import("../evm/adapter.js");
-    return evm.createEvmChainAdapter(health);
+    return evm.createEvmChainAdapter(wiring);
   }
   if (family === "solana") {
     const svm = await import("../solana/adapter.js");
-    return svm.createSvmChainAdapter(health);
+    return svm.createSvmChainAdapter(wiring);
   }
   return undefined;
 };

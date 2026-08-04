@@ -9,8 +9,10 @@ validation error.
 from __future__ import annotations
 
 import dataclasses
+import json
 import pickle
 from types import MappingProxyType
+from typing import Any
 
 import pytest
 
@@ -173,3 +175,129 @@ def test_importing_tx402_does_not_import_this_module() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "clean" in result.stdout
+
+
+# --- The Solana counterpart (SEC-001, SPEC §7.2) ----------------------------------------
+
+# A throwaway keypair derived from a fixed seed for this test alone. It holds nothing on
+# any cluster, and the same bytes appear in the TypeScript suite so the two languages are
+# proven to derive the same address and the same signature from one input.
+SOLANA_KEYPAIR = [
+    14, 200, 93, 200, 99, 239, 157, 82, 111, 247, 30, 2, 138, 61, 188, 29,
+    138, 92, 85, 5, 220, 150, 210, 158, 61, 73, 122, 94, 137, 34, 216, 241,
+    200, 103, 77, 26, 108, 138, 48, 143, 33, 107, 244, 199, 17, 251, 21, 8,
+    84, 91, 77, 73, 60, 57, 114, 66, 52, 8, 179, 238, 103, 132, 135, 46,
+]  # fmt: skip
+SOLANA_ADDRESS = "EVHuBQEV9EL3kVzBndVQTKvhdHbAdNBkMfJBteUyhU13"
+
+
+def _svm_request(message: bytes, **overrides: object) -> Any:
+    """A structural stand-in for :class:`tx402.solana.SolanaSignRequest`.
+
+    Built here rather than imported so this module does not require the ``svm`` extra to be
+    collected. The adapter reads ``message_bytes`` and nothing else, which is the property
+    under test.
+    """
+    fields: dict[str, object] = {
+        "message_bytes": message,
+        "transaction_bytes": b"\xff" * 16,
+        "presentation": object(),
+    }
+    fields.update(overrides)
+    return type("SvmRequestStub", (), fields)()
+
+
+class TestSolanaSigning:
+    def test_accepts_the_json_array_solana_keygen_writes(self) -> None:
+        from tx402.signers import keypair_to_solana_signer
+
+        signer = keypair_to_solana_signer(json.dumps(SOLANA_KEYPAIR))
+        assert signer.get_public_key() == SOLANA_ADDRESS
+
+    def test_accepts_raw_bytes_and_a_sequence_identically(self) -> None:
+        from tx402.signers import keypair_to_solana_signer
+
+        assert (
+            keypair_to_solana_signer(bytes(SOLANA_KEYPAIR)).get_public_key()
+            == keypair_to_solana_signer(SOLANA_KEYPAIR).get_public_key()
+            == SOLANA_ADDRESS
+        )
+
+    def test_produces_a_64_byte_ed25519_signature(self) -> None:
+        from tx402.signers import keypair_to_solana_signer
+
+        signer = keypair_to_solana_signer(SOLANA_KEYPAIR)
+        assert len(signer.sign_transaction(_svm_request(b"\x80hello"))) == 64
+
+    def test_signs_message_bytes_and_nothing_else(self) -> None:
+        """``transaction_bytes`` and ``presentation`` are context, not signing input.
+
+        Ed25519 is deterministic, so signing the same ``message_bytes`` twice under two
+        different surrounding requests must yield identical bytes. If the adapter ever
+        folded either field in, these two signatures would diverge.
+        """
+        from tx402.signers import keypair_to_solana_signer
+
+        signer = keypair_to_solana_signer(SOLANA_KEYPAIR)
+        first = _svm_request(b"\x80same message")
+        second = _svm_request(
+            b"\x80same message",
+            transaction_bytes=b"\x00" * 32,
+            presentation={"different": True},
+        )
+        assert signer.sign_transaction(first) == signer.sign_transaction(second)
+
+
+class TestSolanaKeyIsNotReachable:
+    def test_the_keypair_is_not_an_attribute(self) -> None:
+        from tx402.signers import keypair_to_solana_signer
+
+        signer = keypair_to_solana_signer(SOLANA_KEYPAIR)
+        assert not hasattr(signer, "keypair")
+        assert not hasattr(signer, "_keypair")
+        assert set(type(signer).__slots__) == {"_public_key", "_sign"}
+
+    def test_repr_renders_a_redacted_placeholder(self) -> None:
+        from tx402.signers import keypair_to_solana_signer
+
+        rendered = repr(keypair_to_solana_signer(SOLANA_KEYPAIR))
+        assert rendered == f"KeypairSolanaSigner(solana:{SOLANA_ADDRESS})"
+        assert "14" not in rendered or str(SOLANA_KEYPAIR[:4]) not in rendered
+
+    def test_it_cannot_be_pickled_into_another_process(self) -> None:
+        from tx402.signers import keypair_to_solana_signer
+
+        with pytest.raises(TypeError, match="cannot be pickled"):
+            pickle.dumps(keypair_to_solana_signer(SOLANA_KEYPAIR))
+
+
+class TestSolanaValidation:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            None,
+            12345,
+            "not json at all",
+            "{}",
+            "[1, 2, 3]",
+            json.dumps([0] * 63),
+            json.dumps([0] * 65),
+            json.dumps([999] * 64),
+            json.dumps([-1] * 64),
+        ],
+    )
+    def test_rejects_anything_that_is_not_64_keypair_bytes(self, value: object) -> None:
+        from tx402.signers import keypair_to_solana_signer
+
+        with pytest.raises(ValueError, match="keypair_to_solana_signer"):
+            keypair_to_solana_signer(value)  # type: ignore[arg-type]
+
+    def test_a_validation_error_never_quotes_the_rejected_value(self) -> None:
+        """A malformed key is still a key. Echoing it is how it reaches a traceback."""
+        from tx402.signers import keypair_to_solana_signer
+
+        secret = json.dumps([7] * 63)
+        with pytest.raises(ValueError, match="64 keypair bytes") as raised:
+            keypair_to_solana_signer(secret)
+        assert secret not in str(raised.value)
+        assert "7, 7, 7" not in str(raised.value)

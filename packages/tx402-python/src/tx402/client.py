@@ -451,6 +451,7 @@ class _Core:
                 family,
                 health=self.health,
                 rpc_transport=self._rpc_transports.get(family),
+                rpc_overrides=self.policy.rpc_overrides,
             )
         except ImportError as error:
             # A missing optional extra arrives here as a module resolution failure. The

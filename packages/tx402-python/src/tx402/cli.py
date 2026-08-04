@@ -345,6 +345,26 @@ class _DryRunSigner:
         raise AssertionError("tx402: --dry-run must never produce a signature")
 
 
+class _DryRunSolanaSigner:
+    """A Solana signer that can report its public key and can never produce a signature.
+
+    The Solana counterpart to :class:`_DryRunSigner`, and it exists for the same reason:
+    SPEC §11's rule is enforced structurally, so an edit that reaches signing on the dry-run
+    path fails loudly rather than quietly signing.
+    """
+
+    kind = "solana"
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def get_public_key(self) -> str:
+        return str(self._inner.get_public_key())
+
+    def sign_transaction(self, request: Any) -> bytes:
+        raise AssertionError("tx402: --dry-run must never produce a signature")
+
+
 def _resolve_signers(io: CliIo, dry_run: bool) -> dict[str, Any]:
     """Builds signers from the documented environment variables, warning first.
 
@@ -355,30 +375,53 @@ def _resolve_signers(io: CliIo, dry_run: bool) -> dict[str, Any]:
     mode a once-per-session warning would introduce.
     """
     evm_key = io.env.get(DEV_KEY_ENV["evm"])
-    if evm_key is None:
+    solana_key = io.env.get(DEV_KEY_ENV["solana"])
+    if evm_key is None and solana_key is None:
         return {}
 
-    io.stderr(
-        f"warning: using a development signing key from {DEV_KEY_ENV['evm']}. "
-        "Anything that can read this process's environment can read the key. "
-        "Use an external signer for anything but a low-balance test wallet.\n"
-    )
+    def warn(variable: str) -> None:
+        io.stderr(
+            f"warning: using a development signing key from {variable}. "
+            "Anything that can read this process's environment can read the key. "
+            "Use an external signer for anything but a low-balance test wallet.\n"
+        )
 
-    # Imported lazily so the CLI's help and usage paths never load a chain library, and so
-    # a dry run on a machine without the `evm` extra installed still works.
-    from tx402.signers import private_key_to_evm_signer
+    signers: dict[str, Any] = {}
 
-    try:
-        signer = private_key_to_evm_signer(evm_key)
-    except Exception as error:
-        # The raised message is not forwarded — key validation tends to quote its input.
-        raise UsageError(
-            f"{DEV_KEY_ENV['evm']} is not a 0x-prefixed 32-byte hex private key"
-        ) from error
+    if evm_key is not None:
+        warn(DEV_KEY_ENV["evm"])
 
-    if not dry_run:
-        return {"evm_signer": signer}
-    return {"evm_signer": _DryRunSigner(signer)}
+        # Imported lazily so the CLI's help and usage paths never load a chain library, and
+        # so a dry run on a machine without the `evm` extra installed still works.
+        from tx402.signers import private_key_to_evm_signer
+
+        try:
+            signer = private_key_to_evm_signer(evm_key)
+        except Exception as error:
+            # The raised message is not forwarded — key validation tends to quote its input.
+            raise UsageError(
+                f"{DEV_KEY_ENV['evm']} is not a 0x-prefixed 32-byte hex private key"
+            ) from error
+
+        signers["evm_signer"] = _DryRunSigner(signer) if dry_run else signer
+
+    if solana_key is not None:
+        warn(DEV_KEY_ENV["solana"])
+
+        from tx402.signers import keypair_to_solana_signer
+
+        try:
+            solana_signer = keypair_to_solana_signer(solana_key)
+        except Exception as error:
+            raise UsageError(
+                f"{DEV_KEY_ENV['solana']} is not a JSON array of 64 Solana keypair bytes"
+            ) from error
+
+        signers["solana_signer"] = (
+            _DryRunSolanaSigner(solana_signer) if dry_run else solana_signer
+        )
+
+    return signers
 
 
 def _render_plan_human(io: CliIo, plan: Any) -> None:

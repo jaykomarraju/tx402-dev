@@ -503,7 +503,10 @@ async function adapterFor(
 ): Promise<ChainAdapter | undefined> {
   let pending = runtime.adapters.get(family);
   if (pending === undefined) {
-    pending = loadChainAdapter(family, { health: runtime.health });
+    pending = loadChainAdapter(family, {
+      health: runtime.health,
+      rpcOverrides: runtime.policyEngine.rpcOverrides,
+    });
     runtime.adapters.set(family, pending);
   }
   try {

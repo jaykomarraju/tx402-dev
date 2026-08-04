@@ -48,6 +48,11 @@ export interface EvmChainAdapterOptions {
   readonly rpc?: EvmRpcPoolOptions;
   /** The client's shared health index (SPEC §6.5). Omitted, each pool keeps a private one. */
   readonly health?: HealthIndex;
+  /**
+   * Caller-supplied RPC endpoints replacing the manifest's, keyed by canonical CAIP-2.
+   * Validated and alias-resolved upstream by `PolicyEngine` (ADR-015).
+   */
+  readonly rpcOverrides?: Readonly<Record<string, readonly string[]>>;
 }
 
 function requireEvmNetwork(
@@ -109,7 +114,10 @@ export function createEvmChainAdapter(options: EvmChainAdapterOptions = {}): Cha
   const poolFor = (networkId: string, network: EvmManifestNetwork): EvmRpcPool => {
     let pool = pools.get(networkId);
     if (pool === undefined) {
-      pool = new EvmRpcPool(network.rpcUrls, {
+      // ADR-015: a caller-supplied endpoint list replaces the manifest's for this
+      // network, and nothing else about the network changes. The chain-identity proof
+      // still runs against whatever endpoint is used.
+      pool = new EvmRpcPool(options.rpcOverrides?.[networkId] ?? network.rpcUrls, {
         networkId,
         ...(options.health === undefined ? {} : { health: options.health }),
         ...options.rpc,

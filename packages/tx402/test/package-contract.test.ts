@@ -67,10 +67,15 @@ describe("subpath export surface", () => {
     expect(evm.createEvmChainAdapter()).toMatchObject({ family: "eip155" });
   });
 
-  it("exposes only the private-key convenience adapter from tx402/signers", async () => {
+  it("exposes only the two key-loading convenience adapters from tx402/signers", async () => {
     const signers = await import("../src/signers/index.js");
-    // SEC-001: the raw-key path is opt-in and lives nowhere else.
-    expect(Object.keys(signers)).toEqual(["privateKeyToEvmSigner"]);
+    // SEC-001: the raw-key path is opt-in and lives nowhere else. This list is asserted
+    // exactly, not by `toContain`, so that a *new* export holding key material fails here
+    // and has to be justified rather than arriving unnoticed.
+    expect(Object.keys(signers).sort()).toEqual([
+      "keypairToSolanaSigner",
+      "privateKeyToEvmSigner",
+    ]);
   });
 });
 

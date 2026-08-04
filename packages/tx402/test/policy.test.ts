@@ -219,3 +219,56 @@ describe("PolicyEngine", () => {
     expect(() => new PolicyEngine(BUNDLED_MANIFEST, {}, { maxQuoteAgeMs: -1 })).toThrow();
   });
 });
+
+describe("routing.rpcOverrides (ADR-015)", () => {
+  const engine = (rpcOverrides: Record<string, readonly string[]>) =>
+    new PolicyEngine(
+      BUNDLED_MANIFEST,
+      { allowedNetworks: ["eip155:84532"] },
+      {
+        rpcOverrides,
+      },
+    );
+
+  it("resolves an aliased key to canonical CAIP-2", () => {
+    // `solana:devnet` is an alias; the adapter is handed the genesis-hash id, so an
+    // override keyed by the alias has to land under the canonical name or it silently
+    // never applies — which is the failure this resolution exists to prevent.
+    const resolved = new PolicyEngine(
+      BUNDLED_MANIFEST,
+      {},
+      {
+        rpcOverrides: { "solana:devnet": ["https://rpc.example.com/k"] },
+      },
+    ).rpcOverrides;
+
+    expect(Object.keys(resolved)).toEqual(["solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"]);
+  });
+
+  it("defaults to no overrides, so the manifest decides", () => {
+    expect(new PolicyEngine(BUNDLED_MANIFEST).rpcOverrides).toEqual({});
+  });
+
+  it("rejects an unknown network rather than never applying", () => {
+    expect(() => engine({ "eip155:999999": ["https://rpc.example.com"] })).toThrow(
+      /eip155:999999|unknown-network|routing.rpcOverrides/u,
+    );
+  });
+
+  it("rejects an empty list", () => {
+    expect(() => engine({ "eip155:84532": [] })).toThrow(/empty-list/u);
+  });
+
+  it("rejects plaintext http off localhost, because the key is in the URL", () => {
+    expect(() => engine({ "eip155:84532": ["http://rpc.example.com/k"] })).toThrow(
+      /insecure-scheme/u,
+    );
+    // A local validator has no transport to intercept.
+    expect(() => engine({ "eip155:84532": ["http://127.0.0.1:8899"] })).not.toThrow();
+    expect(() => engine({ "eip155:84532": ["http://localhost:8899"] })).not.toThrow();
+  });
+
+  it("rejects a value that is not a URL", () => {
+    expect(() => engine({ "eip155:84532": ["not a url"] })).toThrow(/invalid-url/u);
+  });
+});

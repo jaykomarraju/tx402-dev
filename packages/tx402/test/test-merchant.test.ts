@@ -282,3 +282,91 @@ describe("test merchant — request log", () => {
     expect(second).toEqual(first);
   });
 });
+
+describe("test merchant — failed settlement (PLAN.md O40)", () => {
+  /**
+   * A facilitator that verifies anything and settles nothing.
+   *
+   * Real settlement failures are the interesting ones and are hard to provoke on demand:
+   * `transaction_simulation_failed` from a recipient with no associated token account is
+   * what actually happened at S13. This reproduces the shape of that answer locally.
+   */
+  async function refusingFacilitator(errorReason: string): Promise<{
+    url: string;
+    close: () => Promise<void>;
+  }> {
+    const { createServer } = await import("node:http");
+    const server = createServer((request, response) => {
+      let payload = "";
+      request.on("data", (chunk) => (payload += chunk));
+      request.on("end", () => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          request.url === "/verify"
+            ? JSON.stringify({ isValid: true })
+            : JSON.stringify({ success: false, errorReason, transaction: "" }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("no port");
+    return {
+      url: `http://127.0.0.1:${String(address.port)}`,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  it("answers 402 with BOTH PAYMENT-RESPONSE and a fresh PAYMENT-REQUIRED", async () => {
+    const facilitator = await refusingFacilitator("transaction_simulation_failed");
+    try {
+      merchant = await createTestMerchant({
+        scenario: "pay-once",
+        facilitatorUrl: facilitator.url,
+        requirements: [DEFAULT_REQUIREMENTS.base],
+      });
+
+      const response = await fetch(`${merchant.url}/resource`, {
+        headers: { "payment-signature": signatureFor(DEFAULT_REQUIREMENTS.base) },
+      });
+
+      expect(response.status).toBe(402);
+
+      // The defect this test exists for: a 402 carrying only PAYMENT-RESPONSE is not a
+      // challenge, so the buyer classified it as `missing-header` and the operator never
+      // saw the facilitator's actual reason.
+      const challenge = response.headers.get("payment-required");
+      expect(challenge).not.toBeNull();
+      expect(decodePaymentRequiredHeader(challenge as string).accepts).toHaveLength(1);
+
+      // And the real cause is still carried, which is the whole point of answering at all.
+      expect(response.headers.get("payment-response")).not.toBeNull();
+      expect(merchant.requests.at(-1)?.settlement).toMatchObject({
+        success: false,
+        errorReason: "transaction_simulation_failed",
+      });
+    } finally {
+      await facilitator.close();
+    }
+  });
+
+  it("reports an unreachable facilitator as a settlement failure, not as a delivery", async () => {
+    // Port 1 on loopback refuses immediately, so this needs no fixture and cannot hang.
+    merchant = await createTestMerchant({
+      scenario: "pay-once",
+      facilitatorUrl: "http://127.0.0.1:1",
+      requirements: [DEFAULT_REQUIREMENTS.base],
+    });
+
+    const response = await fetch(`${merchant.url}/resource`, {
+      headers: { "payment-signature": signatureFor(DEFAULT_REQUIREMENTS.base) },
+    });
+
+    expect(response.status).toBe(402);
+    expect(response.headers.get("payment-required")).not.toBeNull();
+    expect(merchant.requests.at(-1)?.settlement).toMatchObject({
+      success: false,
+      errorReason: "facilitator-unreachable",
+    });
+  });
+});

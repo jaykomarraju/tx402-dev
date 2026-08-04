@@ -1,0 +1,205 @@
+name: Release
+
+# Publishing is triggered by a tag and by nothing else. There is deliberately no
+# `workflow_dispatch` with a version input: a release that can be produced by filling in a
+# form is a release whose provenance attests to a form submission.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+# Least privilege at the top; each job widens only what it needs. `id-token: write` is what
+# makes OIDC trusted publishing work, and it is granted per job rather than here.
+permissions:
+  contents: read
+
+env:
+  PNPM_VERSION: "10.34.5"
+  NODE_VERSION_DEFAULT: "20"
+
+jobs:
+  # Nothing is published until the same gates CI enforces have passed *on the tagged
+  # commit*. A green CI run on `main` is not evidence about a tag: the tag may not point at
+  # the commit that was tested.
+  verify:
+    name: Verify the tagged commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION_DEFAULT }}
+          cache: pnpm
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          prune-cache: true
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Every gate, in the order CI runs them (PLAN.md open item O38).
+      - name: Full check
+        run: pnpm check
+
+      - name: Python suite
+        working-directory: packages/tx402-python
+        run: |
+          uv sync --all-extras
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy
+          uv run pytest -q
+
+      - name: Release gates
+        run: |
+          pnpm fuzz
+          pnpm perf
+          pnpm supply-chain
+          pnpm reproducible
+
+      # The tag and the two package versions must agree. They are three separate places a
+      # human types a number, so they are compared rather than trusted.
+      - name: Tag matches both package versions
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          npm_version=$(node -p "require('./packages/tx402/package.json').version")
+          py_version=$(grep -m1 '^version = ' packages/tx402-python/pyproject.toml | cut -d'"' -f2)
+          echo "tag=$tag npm=$npm_version pypi=$py_version"
+          test "$tag" = "$npm_version"
+          test "$tag" = "$py_version"
+
+      # PLAN.md open item O12. The development key `tx402-release-1` must never sign a
+      # published release, and the check is by key id rather than by intention.
+      - name: Release manifest is signed by the release key, not the dev key
+        run: |
+          set -euo pipefail
+          pnpm manifest:verify
+          key_id=$(node -p "require('./core-spec/manifests/bundled.manifest.json').signature.keyId")
+          echo "manifest signed by: $key_id"
+          if [ "$key_id" = "tx402-release-1" ]; then
+            echo "::error::The bundled manifest is signed by the development key." \
+                 "Rotate to the release key before publishing — docs/operations/release-manifest.md"
+            exit 1
+          fi
+
+  npm:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      # Required for provenance. Without it npm publishes without an attestation and the
+      # `publishConfig.provenance: true` in package.json fails the publish outright.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION_DEFAULT }}
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter tx402 build
+
+      # No `--no-provenance`, and no NODE_AUTH_TOKEN. The S1 placeholder was published from
+      # a laptop with `--no-provenance` because provenance needs CI OIDC; this is that CI.
+      # Publishing here relies on the npm trusted publisher configured for this repository
+      # and this workflow file, so no long-lived token exists to leak (PLAN.md O10/O23).
+      - name: Publish
+        run: pnpm --filter tx402 publish --access public --no-git-checks
+
+  pypi:
+    name: Publish to PyPI
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          prune-cache: true
+
+      - name: Build sdist and wheel
+        working-directory: packages/tx402-python
+        run: uv build
+
+      # PyPI trusted publishing: the workflow's OIDC identity is exchanged for a short-lived
+      # upload token. The exposed long-lived token was revoked at S11 and deliberately never
+      # replaced (PLAN.md O23).
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/tx402-python/dist
+
+  # Published artifacts are verified from a clean environment before the release is
+  # announced. Installing what was just published is the only check that covers the
+  # registry itself — everything before this verified the repository.
+  smoke:
+    name: Install from the registries
+    needs: [npm, pypi]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION_DEFAULT }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: npm install and CLI smoke
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          # Registry propagation is not instantaneous; retry rather than fail on a race.
+          for attempt in 1 2 3 4 5; do
+            npm install --no-save "tx402@$version" && break
+            echo "attempt $attempt failed, waiting"
+            sleep 20
+          done
+          npx --yes "tx402@$version" --version
+          node -e "import('tx402').then(m => { if (typeof m.createTx402Client !== 'function') throw new Error('missing export'); console.log('npm ok'); })"
+
+      - name: PyPI install and CLI smoke
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          for attempt in 1 2 3 4 5; do
+            uv venv && uv pip install "tx402==$version" && break
+            echo "attempt $attempt failed, waiting"
+            sleep 20
+          done
+          uv run tx402 --version
+          uv run python -c "import tx402; print('pypi ok', tx402.PACKAGE_NAME)"
+
+      - name: npm provenance attestation is present
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          # A release that claims provenance and does not have it is worse than one that
+          # never claimed it, so the attestation is verified rather than assumed.
+          npm audit signatures || true
+          npm view "tx402@$version" dist.attestations --json

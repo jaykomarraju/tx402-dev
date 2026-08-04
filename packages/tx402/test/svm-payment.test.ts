@@ -14,6 +14,7 @@ import { createTx402Client } from "../src/core/client.js";
 import { MemorySpendStore, type SpendStore } from "../src/core/ledger.js";
 import type { SvmManifestAsset, SvmManifestNetwork } from "../src/core/manifest.js";
 import type { SolanaSigner } from "../src/core/signers.js";
+import { isTransportFailure } from "../src/solana/adapter.js";
 import { derivePaymentAtas } from "../src/solana/signer.js";
 
 const NETWORK_ID = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
@@ -287,5 +288,56 @@ describe("M4 Solana paid call", () => {
     });
     expect(order).toEqual(["reserve", "sign", "release"]);
     expect(merchant.paidRequests).toHaveLength(0);
+  });
+});
+
+describe("upstream payload-creation failures are classified by cause (O35)", () => {
+  // `ExactSvmScheme` performs its own RPC inside `createPaymentPayload`, so a rate-limited
+  // endpoint surfaces there rather than through tx402's pool. Reporting that as a signer
+  // fault is wrong twice: wrong category, and wrong `retryable` — only TransportError is
+  // retryable (ADR-011). Seen once at S12 and left unexplained as the second half of O35.
+
+  it("recognises a rate limit, a socket failure, and an HTTP status as transport", () => {
+    expect(isTransportFailure(new Error("HTTP 429 Too Many Requests"))).toBe(true);
+    expect(isTransportFailure(new Error("Rate limit exceeded"))).toBe(true);
+    expect(isTransportFailure(Object.assign(new Error("nope"), { status: 429 }))).toBe(
+      true,
+    );
+    expect(isTransportFailure(Object.assign(new Error("nope"), { status: 503 }))).toBe(
+      true,
+    );
+    // `fetch` rejects with a TypeError whose `cause` holds the real error, which is why the
+    // cause chain is walked rather than only the top-level object inspected.
+    expect(
+      isTransportFailure(
+        new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } }),
+      ),
+    ).toBe(true);
+    expect(
+      isTransportFailure(
+        new Error("outer", {
+          cause: new TypeError("inner", { cause: { code: "ETIMEDOUT" } }),
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves a deterministic construction fault classified as a signer error", () => {
+    // The conservative direction. A false positive here would tell a caller to retry a
+    // fault that will never succeed, forever.
+    expect(isTransportFailure(new Error("memo exceeds the instruction limit"))).toBe(false);
+    expect(isTransportFailure(new Error("mint is Token-2022"))).toBe(false);
+    expect(isTransportFailure(Object.assign(new Error("nope"), { status: 200 }))).toBe(
+      false,
+    );
+    expect(isTransportFailure(undefined)).toBe(false);
+    expect(isTransportFailure(null)).toBe(false);
+  });
+
+  it("does not follow a cause chain indefinitely", () => {
+    // A self-referential cause is malformed input, not a hang.
+    const looped: { cause?: unknown } = {};
+    looped.cause = looped;
+    expect(isTransportFailure(looped)).toBe(false);
   });
 });

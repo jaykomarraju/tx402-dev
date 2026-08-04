@@ -342,22 +342,27 @@ export async function createTestMerchant(options = {}) {
 
       const action = scenario.next({ paidAttempt: paidAttempts, hasSignature });
 
-      switch (action.type) {
-        case "challenge": {
-          // A re-challenge may offer different terms. SPEC §6.7 requires the buyer to parse
-          // the new challenge from scratch, so the fixture has to be able to change.
-          const offered =
+      /**
+       * Encodes the PAYMENT-REQUIRED challenge for this request.
+       *
+       * A re-challenge may offer different terms. SPEC §6.7 requires the buyer to parse the
+       * new challenge from scratch, so the fixture has to be able to change.
+       */
+      const challengeHeader = () =>
+        encodePaymentRequiredHeader({
+          x402Version: 2,
+          resource: { url: `${origin}${record.path}`, description: resourceDescription },
+          accepts:
             paidAttempts > 0 && rechallengeRequirements !== undefined
               ? rechallengeRequirements
-              : requirements;
-          const challenge = encodePaymentRequiredHeader({
-            x402Version: 2,
-            resource: { url: `${origin}${record.path}`, description: resourceDescription },
-            accepts: offered,
-          });
+              : requirements,
+        });
+
+      switch (action.type) {
+        case "challenge": {
           send(
             402,
-            { [HEADER_PAYMENT_REQUIRED]: challenge },
+            { [HEADER_PAYMENT_REQUIRED]: challengeHeader() },
             JSON.stringify({ error: "payment required" }),
           );
           return;
@@ -418,6 +423,20 @@ export async function createTestMerchant(options = {}) {
                 ? {}
                 : { errorReason: settled.errorReason }),
             });
+
+            if (!settled.success) {
+              // A failed settlement answers 402, and a 402 without PAYMENT-REQUIRED is not a
+              // challenge — it is a malformed response. This fixture used to send one, so the
+              // buyer reported `missing-header` and the facilitator's actual `errorReason`
+              // (`transaction_simulation_failed`, say) never reached the operator. That cost
+              // real debugging time at S13 and looked like a defect in tx402.
+              //
+              // Re-issuing the challenge alongside the settlement outcome is also what a real
+              // merchant must do: it did not get paid, so it is still asking to be paid, and
+              // the buyer needs terms to work from.
+              headers[HEADER_PAYMENT_REQUIRED] = challengeHeader();
+            }
+
             send(settled.success ? (action.status ?? 200) : 402, headers, body);
             return;
           }

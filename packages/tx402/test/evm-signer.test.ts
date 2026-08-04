@@ -15,7 +15,7 @@ import { SignerError } from "../src/core/errors.js";
 import { isEvmSigner, isSolanaSigner } from "../src/core/signers.js";
 import type { EvmSigner, EvmTypedDataRequest } from "../src/core/signers.js";
 import { resolveEvmAddress, toClientEvmSigner } from "../src/evm/signer.js";
-import { privateKeyToEvmSigner } from "../src/signers/index.js";
+import { keypairToSolanaSigner, privateKeyToEvmSigner } from "../src/signers/index.js";
 
 const PAYER = "0x1111111111111111111111111111111111111111" as const;
 const PAY_TO = "0x2222222222222222222222222222222222222222";
@@ -322,6 +322,80 @@ describe("private-key convenience adapter (SEC-001)", () => {
     expect(() => privateKeyToEvmSigner(undefined as unknown as `0x${string}`)).toThrow(
       TypeError,
     );
+  });
+});
+
+describe("keypair convenience adapter, Solana (SEC-001)", () => {
+  // A throwaway keypair derived from a fixed seed for this test alone. It holds nothing on
+  // any cluster, and the identical bytes appear in the Python suite
+  // (`tests/test_signers.py::SOLANA_KEYPAIR`) so the two languages are held to the same
+  // derived address from the same input.
+  const KEYPAIR = [
+    14, 200, 93, 200, 99, 239, 157, 82, 111, 247, 30, 2, 138, 61, 188, 29, 138, 92, 85, 5,
+    220, 150, 210, 158, 61, 73, 122, 94, 137, 34, 216, 241, 200, 103, 77, 26, 108, 138, 48,
+    143, 33, 107, 244, 199, 17, 251, 21, 8, 84, 91, 77, 73, 60, 57, 114, 66, 52, 8, 179,
+    238, 103, 132, 135, 46,
+  ];
+  const ADDRESS = "EVHuBQEV9EL3kVzBndVQTKvhdHbAdNBkMfJBteUyhU13";
+
+  const request = (messageBytes: Uint8Array) => ({
+    messageBytes,
+    transactionBytes: new Uint8Array(16).fill(0xff),
+    presentation: PRESENTATION as never,
+  });
+
+  it("accepts the JSON array `solana-keygen` writes, raw bytes, and a number array alike", async () => {
+    const fromJson = await keypairToSolanaSigner(JSON.stringify(KEYPAIR));
+    const fromBytes = await keypairToSolanaSigner(Uint8Array.from(KEYPAIR));
+    const fromArray = await keypairToSolanaSigner(KEYPAIR);
+
+    for (const signer of [fromJson, fromBytes, fromArray]) {
+      expect(signer.kind).toBe("solana");
+      expect(await signer.getPublicKey()).toBe(ADDRESS);
+    }
+  });
+
+  it("produces a 64-byte signature without exposing the keypair", async () => {
+    const signer = await keypairToSolanaSigner(KEYPAIR);
+    const signature = await signer.signTransaction(request(new Uint8Array([0x80, 1, 2])));
+
+    expect(signature).toBeInstanceOf(Uint8Array);
+    expect(signature).toHaveLength(64);
+    expect(signer.toJSON()).toEqual({ kind: "solana", address: ADDRESS });
+    expect(JSON.stringify(signer)).not.toContain(String(KEYPAIR[0]));
+  });
+
+  it("signs messageBytes and nothing else", async () => {
+    // Ed25519 is deterministic, so the same `messageBytes` under two different surrounding
+    // requests must sign identically. If the adapter ever folded `transactionBytes` or the
+    // presentation in, these would diverge — and it would be signing something other than
+    // what the runtime verifies.
+    const signer = await keypairToSolanaSigner(KEYPAIR);
+    const message = new Uint8Array([0x80, 9, 9, 9]);
+
+    const first = await signer.signTransaction(request(message));
+    const second = await signer.signTransaction({
+      messageBytes: message,
+      transactionBytes: new Uint8Array(32),
+      presentation: { different: true } as never,
+    });
+
+    expect(Buffer.from(first).equals(Buffer.from(second))).toBe(true);
+  });
+
+  it("rejects anything that is not 64 keypair bytes, without quoting it", async () => {
+    const secret = JSON.stringify(Array<number>(63).fill(7));
+    await expect(keypairToSolanaSigner(secret)).rejects.toThrow(/64 keypair bytes/u);
+    await expect(keypairToSolanaSigner(secret)).rejects.not.toThrow(secret);
+
+    await expect(keypairToSolanaSigner("not json")).rejects.toThrow(TypeError);
+    await expect(keypairToSolanaSigner("{}")).rejects.toThrow(TypeError);
+    await expect(keypairToSolanaSigner(undefined as unknown as string)).rejects.toThrow(
+      TypeError,
+    );
+    await expect(
+      keypairToSolanaSigner(JSON.stringify(Array<number>(64).fill(999))),
+    ).rejects.toThrow(/range/u);
   });
 });
 

@@ -34,6 +34,11 @@ export interface SvmChainAdapterOptions {
   readonly rpc?: SvmRpcPoolOptions;
   /** The client's shared health index (SPEC §6.5, O22). */
   readonly health?: HealthIndex;
+  /**
+   * Caller-supplied RPC endpoints replacing the manifest's, keyed by canonical CAIP-2.
+   * Validated and alias-resolved upstream by `PolicyEngine` (ADR-015).
+   */
+  readonly rpcOverrides?: Readonly<Record<string, readonly string[]>>;
 }
 
 function requireNetwork(
@@ -72,6 +77,52 @@ function requireSigner(signer: unknown, context: Tx402ErrorContext): SolanaSigne
   return signer;
 }
 
+/**
+ * Whether a failure raised inside upstream's payload creation is a transport failure.
+ *
+ * tx402 does not own this error's type — `@x402/svm` fetches over its own client — so the
+ * classification is by evidence rather than by `instanceof`. Three kinds of evidence, in
+ * decreasing reliability:
+ *
+ *   1. A `cause` chain carrying a Node socket/undici error code. `fetch` rejects with a
+ *      `TypeError` whose `cause` holds the real one, which is why the chain is walked.
+ *   2. A numeric HTTP status at or above 400 hung on the error, which is how most JSON-RPC
+ *      clients report a non-2xx.
+ *   3. Failing those, an explicit message match — deliberately last, and deliberately
+ *      narrow. `429` is listed because it is the case this exists for.
+ *
+ * Anything unrecognised is **not** a transport failure. A false negative leaves the previous
+ * (non-retryable) classification; a false positive would tell a caller to retry a
+ * deterministic construction fault forever.
+ */
+export function isTransportFailure(error: unknown): boolean {
+  const NETWORK_CODES = new Set([
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ENOTFOUND",
+    "EAI_AGAIN",
+    "ETIMEDOUT",
+    "EPIPE",
+    "UND_ERR_CONNECT_TIMEOUT",
+    "UND_ERR_HEADERS_TIMEOUT",
+    "UND_ERR_SOCKET",
+  ]);
+
+  for (let current = error, depth = 0; current != null && depth < 5; depth += 1) {
+    if (typeof current !== "object") break;
+    const candidate = current as { code?: unknown; status?: unknown; cause?: unknown };
+    if (typeof candidate.code === "string" && NETWORK_CODES.has(candidate.code))
+      return true;
+    if (typeof candidate.status === "number" && candidate.status >= 400) return true;
+    current = candidate.cause;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(429|too many requests|rate.?limit|fetch failed|network|socket hang up)\b/iu.test(
+    message,
+  );
+}
+
 function transport(error: unknown, context: Tx402ErrorContext): TransportError {
   return new TransportError("Solana RPC is unavailable for payment planning", {
     context,
@@ -87,7 +138,10 @@ export function createSvmChainAdapter(options: SvmChainAdapterOptions = {}): Cha
   const poolFor = (networkId: string, network: SvmManifestNetwork): SvmRpcPool => {
     let pool = pools.get(networkId);
     if (pool === undefined) {
-      pool = new SvmRpcPool(network.rpcUrls, {
+      // ADR-015: a caller-supplied endpoint list replaces the manifest's for this
+      // network, and nothing else about the network changes. The chain-identity proof
+      // still runs against whatever endpoint is used.
+      pool = new SvmRpcPool(options.rpcOverrides?.[networkId] ?? network.rpcUrls, {
         networkId,
         ...(options.health === undefined ? {} : { health: options.health }),
         ...options.rpc,
@@ -228,6 +282,21 @@ export function createSvmChainAdapter(options: SvmChainAdapterOptions = {}): Cha
         );
       } catch (error) {
         if (error instanceof SignerError) throw error;
+        // `ExactSvmScheme` performs its **own** RPC inside `createPaymentPayload` — mint
+        // metadata and a recent blockhash — so a 429 from the endpoint arrives here rather
+        // than through tx402's pool. Wrapping every such failure as `SignerError` reported a
+        // rate-limited endpoint as a signing fault: wrong category, and wrong `retryable`,
+        // since only `TransportError` is retryable (ADR-011). It was seen once at S12 and
+        // recorded as the unexplained half of O35.
+        //
+        // Python does not have this problem — it compiles the transaction itself (ADR-013)
+        // and fetches the blockhash through `SvmRpcPool`, so its RPC failures are already
+        // `TransportError`. This brings TypeScript back into line with Python rather than
+        // inventing a third behaviour.
+        //
+        // Classification fails *safe*: anything not recognisably a transport failure stays
+        // a `SignerError`, which is the conservative, non-retryable answer.
+        if (isTransportFailure(error)) throw transport(error, context);
         throw new SignerError("Failed to create the Solana payment authorization", {
           context,
           details: { signerKind: "solana", causeCategory: "payload-creation-failed" },

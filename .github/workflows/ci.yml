@@ -297,3 +297,67 @@ jobs:
         run: |
           uv sync --all-extras
           uv run pytest -q
+
+  # SPEC §12.4 release gates that are cheap enough to run on every push. Kept in one job
+  # rather than folded into the TypeScript matrix leg: these are release evidence, and a
+  # release gate that only ran as a side effect of a compatibility leg is hard to point at
+  # when someone asks whether it passed.
+  release-gates:
+    name: Release gates (fuzz, perf, supply chain)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION_DEFAULT }}
+          cache: pnpm
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          prune-cache: true
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # SPEC §12.1's fuzz/property layer. Seeded, so a failure here reproduces exactly: the
+      # run prints the seed and the command that replays it.
+      - name: Fuzz and property gates
+        run: pnpm fuzz
+        env:
+          TX402_FUZZ_N: "200000"
+
+      # SPEC §12.3. `--expose-gc` is what makes the memory gate a measurement rather than a
+      # skip: retained heap can only be compared after a forced collection.
+      - name: Performance gates
+        run: pnpm perf
+
+      - name: Python environment for the SBOM
+        working-directory: packages/tx402-python
+        run: uv sync --all-extras
+
+      # SBOM, licence policy, and vulnerability scan. Findings in the development tree are
+      # reported and do not fail the gate — SPEC §12.4 scopes it to reachable production
+      # code, and vitest cannot reach a user.
+      - name: SBOM, licences, vulnerabilities
+        run: pnpm supply-chain
+
+      # Two clean builds of the published package must be byte-identical (SPEC §12.4).
+      - name: Reproducible build
+        run: pnpm reproducible
+
+      - name: Upload SBOM and build digest
+        uses: actions/upload-artifact@v5
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error

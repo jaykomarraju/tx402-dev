@@ -257,3 +257,50 @@ def test_t007_concurrent_reservations_enforce_the_cap_atomically() -> None:
         now_epoch_ms=NOW,
     )
     assert state.reserved_atomic == "1000"
+
+
+class TestRpcOverrides:
+    """ADR-015. Held to the same rules as the TypeScript engine, error for error."""
+
+    @staticmethod
+    def _engine(overrides: object) -> PolicyEngine:
+        return PolicyEngine(
+            BUNDLED_MANIFEST,
+            Policy(allowed_networks=["eip155:84532"]),
+            RoutingPolicy(rpc_overrides=overrides),  # type: ignore[arg-type]
+        )
+
+    def test_resolves_an_aliased_key_to_canonical_caip2(self) -> None:
+        # `solana:devnet` is an alias; the adapter is handed the genesis-hash id, so an
+        # override keyed by the alias has to land under the canonical name or it silently
+        # never applies — which is the failure this resolution exists to prevent.
+        engine = PolicyEngine(
+            BUNDLED_MANIFEST,
+            Policy(),
+            RoutingPolicy(rpc_overrides={"solana:devnet": ["https://rpc.example.com/k"]}),
+        )
+        assert list(engine.rpc_overrides) == ["solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"]
+
+    def test_defaults_to_no_overrides_so_the_manifest_decides(self) -> None:
+        assert dict(PolicyEngine(BUNDLED_MANIFEST).rpc_overrides) == {}
+
+    def test_rejects_an_unknown_network_rather_than_never_applying(self) -> None:
+        with pytest.raises(ConfigurationError):
+            self._engine({"eip155:999999": ["https://rpc.example.com"]})
+
+    def test_rejects_an_empty_list(self) -> None:
+        with pytest.raises(ConfigurationError, match="empty-list"):
+            self._engine({"eip155:84532": []})
+
+    def test_rejects_plaintext_http_off_localhost(self) -> None:
+        # An RPC endpoint carries its API key in the URL, so plaintext leaks it.
+        with pytest.raises(ConfigurationError, match="insecure-scheme"):
+            self._engine({"eip155:84532": ["http://rpc.example.com/k"]})
+
+    def test_allows_plaintext_http_on_localhost_for_a_local_validator(self) -> None:
+        engine = self._engine({"eip155:84532": ["http://127.0.0.1:8899"]})
+        assert engine.rpc_overrides["eip155:84532"] == ("http://127.0.0.1:8899",)
+
+    def test_rejects_a_value_that_is_not_a_url(self) -> None:
+        with pytest.raises(ConfigurationError, match="invalid-url"):
+            self._engine({"eip155:84532": ["not a url"]})

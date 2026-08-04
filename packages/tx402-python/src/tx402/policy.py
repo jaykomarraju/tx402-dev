@@ -46,6 +46,17 @@ class Policy:
 class RoutingPolicy:
     max_quote_age_ms: int = DEFAULT_MAX_QUOTE_AGE_MS
     prefer_networks: Sequence[str] = ()
+    #: Replaces the signed manifest's RPC endpoints for specific networks (ADR-015).
+    #:
+    #: Keyed by CAIP-2 identifier or alias; the value replaces ``rpcUrls`` for that network
+    #: and nothing else. Every other manifest fact — which networks exist, which assets they
+    #: carry, a token's decimals — still comes from the signed document.
+    #:
+    #: This does not weaken the manifest's integrity guarantee. SPEC §7.1 and §7.2 require
+    #: chain identity to be proven on the same endpoint that serves the balance, on every
+    #: read, and that check runs against whatever endpoint is used — so an override pointing
+    #: at the wrong chain opens its circuit and is skipped rather than trusted.
+    rpc_overrides: Mapping[str, Sequence[str]] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "prefer_networks", tuple(self.prefer_networks))
@@ -230,6 +241,44 @@ class PolicyEngine:
                 )
             )
         self.prefer_networks = tuple(preferences)
+
+        # Resolved through the manifest for the same reason preferences are: an override
+        # keyed by a misspelled or aliased network must fail at construction rather than
+        # silently never applying, which would leave the operator believing their keyed
+        # endpoint is in use while every read still goes to the public one (ADR-015).
+        overrides: dict[str, tuple[str, ...]] = {}
+        configured_overrides = route_policy.rpc_overrides or {}
+        if not isinstance(configured_overrides, Mapping):
+            raise _configuration("routing.rpc_overrides", "expected-object")
+        for network, urls in configured_overrides.items():
+            path = f"routing.rpc_overrides[{network}]"
+            resolved_network = require_network(
+                manifest,
+                network,
+                Tx402ErrorContext(request_id="configuration", phase="initial"),
+                path,
+            )
+            if isinstance(urls, str) or not isinstance(urls, Sequence) or len(urls) == 0:
+                raise _configuration(path, "empty-list")
+            checked: list[str] = []
+            for index, url in enumerate(urls):
+                if not isinstance(url, str):
+                    raise _configuration(f"{path}[{index}]", "expected-string")
+                parsed = urlsplit(url)
+                # An RPC endpoint carries an API key in its path or query often enough that
+                # plaintext http would leak it. Localhost is exempt because a local
+                # validator has no transport to intercept.
+                local = parsed.hostname in ("localhost", "127.0.0.1", "::1")
+                if parsed.scheme == "https" or (parsed.scheme == "http" and local):
+                    if parsed.hostname is None:
+                        raise _configuration(f"{path}[{index}]", "invalid-url")
+                    checked.append(url)
+                    continue
+                if parsed.scheme in ("http", "https"):
+                    raise _configuration(f"{path}[{index}]", "insecure-scheme")
+                raise _configuration(f"{path}[{index}]", "invalid-url")
+            overrides[resolved_network] = tuple(checked)
+        self.rpc_overrides: Mapping[str, Sequence[str]] = MappingProxyType(overrides)
 
         assets: dict[str, _PreparedAsset] = {}
         for network_id in self._allowed_networks:

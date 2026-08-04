@@ -90,38 +90,75 @@ function collectingLogger(events: Record<string, unknown>[]): Tx402Logger {
  */
 async function resolveSigners(io: CliIo, dryRun: boolean): Promise<Tx402Signers> {
   const evmKey = io.env[DEV_KEY_ENV.evm];
-  if (evmKey === undefined) return {};
+  const solanaKey = io.env[DEV_KEY_ENV.solana];
+  if (evmKey === undefined && solanaKey === undefined) return {};
 
-  io.stderr(
-    `warning: using a development signing key from ${DEV_KEY_ENV.evm}. ` +
-      `Anything that can read this process's environment can read the key. ` +
-      `Use an external signer for anything but a low-balance test wallet.\n`,
-  );
+  const warn = (variable: string) =>
+    io.stderr(
+      `warning: using a development signing key from ${variable}. ` +
+        `Anything that can read this process's environment can read the key. ` +
+        `Use an external signer for anything but a low-balance test wallet.\n`,
+    );
 
   // Loaded lazily so the CLI's help and usage paths never pull in a chain library, and so a
-  // dry run against a machine without `viem` installed still works.
-  const { privateKeyToEvmSigner } = await import("../signers/index.js");
-  let signer;
-  try {
-    signer = privateKeyToEvmSigner(evmKey as `0x${string}`);
-  } catch {
-    // The thrown message is not forwarded — a key-validation error tends to quote its input.
-    throw new UsageError(`${DEV_KEY_ENV.evm} is not a 0x-prefixed 32-byte hex private key`);
+  // dry run against a machine without `viem` installed still works. `Tx402Signers` is
+  // readonly, so each signer is resolved into a local and the object is built once.
+  let evm: Tx402Signers["evm"];
+  let solana: Tx402Signers["solana"];
+
+  if (evmKey !== undefined) {
+    warn(DEV_KEY_ENV.evm);
+    const { privateKeyToEvmSigner } = await import("../signers/index.js");
+    let signer;
+    try {
+      signer = privateKeyToEvmSigner(evmKey as `0x${string}`);
+    } catch {
+      // The thrown message is not forwarded — a key-validation error tends to quote its input.
+      throw new UsageError(
+        `${DEV_KEY_ENV.evm} is not a 0x-prefixed 32-byte hex private key`,
+      );
+    }
+
+    // SPEC §11: --dry-run MUST NOT invoke a signer. Enforced structurally rather than by
+    // trusting the code path, so that any future edit which reaches signing on this path
+    // fails loudly instead of quietly producing a signature during a "dry" run.
+    evm = dryRun
+      ? {
+          kind: "evm",
+          getAddress: () => signer.getAddress(),
+          signTypedData: () => {
+            throw new Error("tx402: --dry-run must never produce a signature");
+          },
+        }
+      : signer;
   }
 
-  if (!dryRun) return { evm: signer };
+  if (solanaKey !== undefined) {
+    warn(DEV_KEY_ENV.solana);
+    const { keypairToSolanaSigner } = await import("../signers/index.js");
+    let signer;
+    try {
+      signer = await keypairToSolanaSigner(solanaKey);
+    } catch {
+      throw new UsageError(
+        `${DEV_KEY_ENV.solana} is not a JSON array of 64 Solana keypair bytes`,
+      );
+    }
 
-  // SPEC §11: --dry-run MUST NOT invoke a signer. Enforced structurally rather than by
-  // trusting the code path, so that any future edit which reaches signing on this path
-  // fails loudly instead of quietly producing a signature during a "dry" run.
+    solana = dryRun
+      ? {
+          kind: "solana",
+          getPublicKey: () => signer.getPublicKey(),
+          signTransaction: () => {
+            throw new Error("tx402: --dry-run must never produce a signature");
+          },
+        }
+      : signer;
+  }
+
   return {
-    evm: {
-      kind: "evm",
-      getAddress: () => signer.getAddress(),
-      signTypedData: () => {
-        throw new Error("tx402: --dry-run must never produce a signature");
-      },
-    },
+    ...(evm === undefined ? {} : { evm }),
+    ...(solana === undefined ? {} : { solana }),
   };
 }
 

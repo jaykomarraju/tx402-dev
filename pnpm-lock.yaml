@@ -98,9 +98,17 @@ importers:
 
   tools/evm-rpc-stub: {}
 
+  tools/fuzz: {}
+
   tools/manifest-signer: {}
 
   tools/nul-check: {}
+
+  tools/perf:
+    dependencies:
+      '@x402/core':
+        specifier: ~2.20.0
+        version: 2.20.0
 
   tools/size-gate:
     dependencies:
