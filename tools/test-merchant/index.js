@@ -193,6 +193,69 @@ function validatePaidRetry(request, requirements) {
     ok: true,
     acceptedAmount: String(accepted.amount),
     signatureHash: digest(raw),
+    // Returned so a merchant configured with `facilitatorUrl` can forward the *decoded*
+    // payload rather than re-decoding the header a second time.
+    payload,
+    accepted,
+  };
+}
+
+/**
+ * Verifies and settles one payment against a real x402 facilitator.
+ *
+ * ADR-002 puts `/verify` and `/settle` on the **merchant**, never on the buyer, so this
+ * lives here and the buyer SDK still never learns a facilitator exists. It is what makes a
+ * local test merchant's payment genuinely real: the merchant running on `127.0.0.1` does
+ * not make the money fake — settlement does, and this settles on-chain.
+ *
+ * @param {string} facilitatorUrl
+ * @param {object} paymentPayload decoded PAYMENT-SIGNATURE
+ * @param {object} paymentRequirements the offer the buyer accepted
+ * @returns {Promise<{ success: boolean, transaction: string, network: string,
+ *   payer?: string, errorReason?: string }>}
+ */
+async function settleWithFacilitator(facilitatorUrl, paymentPayload, paymentRequirements) {
+  const base = facilitatorUrl.replace(/\/+$/u, "");
+  const body = JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements });
+  const headers = { "content-type": "application/json" };
+
+  const post = async (path) => {
+    const response = await fetch(`${base}${path}`, { method: "POST", headers, body });
+    const text = await response.text();
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error(`${path} returned ${response.status}: ${text.slice(0, 300)}`);
+    }
+    if (!response.ok) {
+      throw new Error(`${path} returned ${response.status}: ${text.slice(0, 300)}`);
+    }
+    return parsed;
+  };
+
+  // Verify first, exactly as a real merchant would: settling an invalid authorization
+  // wastes the facilitator's gas and tells the buyer nothing useful.
+  const verified = await post("/verify");
+  if (verified.isValid === false || verified.valid === false) {
+    return {
+      success: false,
+      transaction: "",
+      network: paymentRequirements.network,
+      errorReason: String(
+        verified.invalidReason ?? verified.reason ?? "verification-failed",
+      ),
+    };
+  }
+
+  const settled = await post("/settle");
+  return {
+    success: settled.success !== false,
+    transaction: String(settled.transaction ?? ""),
+    network: String(settled.network ?? paymentRequirements.network),
+    payer: settled.payer === undefined ? undefined : String(settled.payer),
+    errorReason:
+      settled.errorReason === undefined ? undefined : String(settled.errorReason),
   };
 }
 
@@ -212,6 +275,11 @@ export async function createTestMerchant(options = {}) {
     resourceDescription = "tx402 test merchant resource",
     validateRetries = true,
     rechallengeRequirements,
+    // When set, `deliver` performs a *real* /verify and /settle against this facilitator
+    // and reports the on-chain transaction in PAYMENT-RESPONSE. Unset (the default) the
+    // merchant reports the deterministic `settlementId`, which is what every offline test
+    // wants. See `settleWithFacilitator`.
+    facilitatorUrl,
   } = options;
 
   const scenario = requireScenario(scenarioName);
@@ -245,6 +313,10 @@ export async function createTestMerchant(options = {}) {
 
       const origin = `http://${request.headers.host ?? `127.0.0.1:${address.port}`}`;
 
+      /** Decoded payload of this request's PAYMENT-SIGNATURE, if it carried one. */
+      /** @type {{ payload: object, accepted: object } | undefined} */
+      let settlementInput;
+
       /** @param {number} status @param {Record<string,string>} headers @param {string} payload */
       const send = (status, headers, payload) => {
         record.status = status;
@@ -265,6 +337,7 @@ export async function createTestMerchant(options = {}) {
         }
         record.signatureHash = validation.signatureHash;
         record.acceptedAmount = validation.acceptedAmount;
+        settlementInput = { payload: validation.payload, accepted: validation.accepted };
       }
 
       const action = scenario.next({ paidAttempt: paidAttempts, hasSignature });
@@ -304,6 +377,51 @@ export async function createTestMerchant(options = {}) {
         case "deliver": {
           /** @type {Record<string, string>} */
           const headers = {};
+
+          // A real settlement, when one is configured. The buyer sees no difference — it
+          // reads the same PAYMENT-RESPONSE header either way — which is the point: the
+          // same code path is exercised whether the money is real or deterministic.
+          if (
+            facilitatorUrl !== undefined &&
+            settlementInput !== undefined &&
+            !action.omitPaymentResponse &&
+            action.paymentResponse === undefined
+          ) {
+            let settled;
+            try {
+              settled = await settleWithFacilitator(
+                facilitatorUrl,
+                settlementInput.payload,
+                settlementInput.accepted,
+              );
+            } catch (error) {
+              // A facilitator that cannot be reached is a merchant-side failure, not a
+              // buyer-side one, and the buyer must be told the settlement did not happen
+              // rather than being handed a resource it did not pay for.
+              record.settlementError = String(
+                error instanceof Error ? error.message : error,
+              );
+              settled = {
+                success: false,
+                transaction: "",
+                network: requirements[0].network,
+                errorReason: "facilitator-unreachable",
+              };
+            }
+            record.settlement = settled;
+            headers[HEADER_PAYMENT_RESPONSE] = encodePaymentResponseHeader({
+              success: settled.success,
+              transaction: settled.transaction,
+              network: settled.network,
+              payer: settled.payer ?? requirements[0].payTo,
+              ...(settled.errorReason === undefined
+                ? {}
+                : { errorReason: settled.errorReason }),
+            });
+            send(settled.success ? (action.status ?? 200) : 402, headers, body);
+            return;
+          }
+
           if (!action.omitPaymentResponse) {
             headers[HEADER_PAYMENT_RESPONSE] =
               action.paymentResponse === "corrupt"

@@ -116,6 +116,12 @@ importers:
         specifier: ~2.20.0
         version: 2.20.0
 
+  tools/ttv:
+    dependencies:
+      '@tx402-dev/test-merchant':
+        specifier: workspace:*
+        version: link:../test-merchant
+
 packages:
 
   '@adraffy/ens-normalize@1.11.1':
