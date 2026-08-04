@@ -573,6 +573,23 @@ receipt read back from a public RPC rather than taken from the facilitator's rep
 What remains for release: trusted publishing (O10), the manifest key rotation half of O12, the
 T-019 Solana leg (O35), and a CI run.
 
+### S14 — M8: Release engineering
+
+- Root `README.md` (there is none — it is the first thing anyone sees), `CHANGELOG.md`,
+  `CODE_OF_CONDUCT.md`, and a stated versioning policy.
+- O40 remainder: `tools/ttv` takes a network argument; record a Solana TTV number.
+- O35: a Devnet RPC endpoint with adequate quota, so T-019's Solana leg can complete.
+- O10 trusted publishing, O12 release key rotation.
+- The `tools/test-merchant` defect found at S13: a failed settlement answers 402 with no
+  `PAYMENT-REQUIRED` header, so the buyer reports `missing-header` rather than the cause.
+
+### S15 / S16 / S17 — the release gates
+
+Charters are **§11**, which is normative for sequencing. In short: an audit that distrusts
+the existing tests, then a cold-start UX pass that reads only what a user reads, then — and
+only then — publishing is planned. All three stages before the last happen on `tx402-dev`;
+nothing touches `neogeeks/tx402` until the first two run clean.
+
 ### S12 remaining — M8: Release
 
 - Fuzz corpus (decoder, money, URL/domain, route determinism); perf gates (<15 ms p95 non-402,
@@ -601,6 +618,11 @@ T-019 Solana leg (O35), and a CI run.
 | S10     | Python M4–M6             | ✅ Complete    | 2026-08-03. Solana adapter (ADR-013), deterministic routing over one shared HealthIndex, and SPEC §6.7 completion. **T-016 green: both languages run all 65 at Stage B.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | S11     | M7 CLI + docs            | ✅ Complete    | 2026-08-04. **Landed:** Step 0 verification of every S11 unblocker (O2/O3/O12-backup/O23, plus O32/O33 recorded); URL constants repointed to `neogeeks/tx402` with a four-file parity pin; Python structured redacting diagnostics, closing the last behavioural gap between the SDKs; **T-015 green in both languages**; and the full SPEC §11 TypeScript CLI including `client.plan()` for `--dry-run`. A real Base Sepolia paid call runs through the built binary in 452 ms. **Not done, carried to S12:** Python CLI and its coverage gate, the O26 redirect ADR, docs/examples/SECURITY.md/CONTRIBUTING.md (O17), the settled-through-a-real-facilitator TTV measurement, and CI. **New blocker found: O34**, an intermittent route-ordering flake that only appears under coverage. **Closed at S12**, which delivered the carried items. |
 | S12     | M8 hardening + release   | 🟨 In progress | 2026-08-04. **O34 diagnosed and closed** — both fixes the item proposed would have changed frozen contract surface _without fixing the flake_; the defect was the test's premise. **Python CLI** at full SPEC §11 parity with `client.plan()`, and `cli.py` inside the 90 % gate. **ADR-014** decides O26. **Docs are an MDX site** (Astro Starlight, 16 pages) with a generated error reference; `SECURITY.md` + `CONTRIBUTING.md` close O17. **NUL guard** (O25) and macOS/Windows CI legs (O7). **TTV measured against a real settled Base Sepolia payment: 1.66 s**, verified on-chain. **T-019 Base leg 50/50 green; Solana leg blocked on public Devnet RPC quota (O35).** Remaining for release: O10 trusted publishing, O12 key rotation, and a CI run.                                                                                  |
+
+| S14 | M8 release engineering | ⬜ Not started | Fuzz corpus, perf gates, SBOM/licence/vulnerability scan, reproducible build, trusted publishing (O10), release key rotation (O12), the O40 TTV remainder and O35's keyed Devnet RPC. Also the missing release-facing documents: root `README.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md`, and a stated versioning policy. |
+| S15 | Pre-publication audit | ⬜ Not started | **§11.2.** On `tx402-dev`. Correctness, adversarially derived tests, security, maintainer quality. Governing rule: the existing tests are not proof. No publish planning. |
+| S16 | Fresh-eyes UX pass | ⬜ Not started | **§11.3.** On `tx402-dev`, **cold start** — reads the README and docs site only, never `PLAN.md`, until the pass is done. Installs and uses the product as a stranger; times TTV with a stopwatch. |
+| S17 | Publish | ⬜ Not started | **§11.4.** Planned only once S15 and S16 run clean. `neogeeks/tx402` migration, npm + PyPI trusted publishing, SPEC §12.4 gates. |
 
 Legend: ⬜ not started · 🟨 in progress · ✅ complete · 🟥 blocked
 
@@ -1062,9 +1084,12 @@ only, and the repository's git identity — `Jayanth Komarraju <jay.komarraju@gm
 already correct. A future session must not reintroduce the trailer, including when a tool or
 default template suggests it.
 
-**Pushing (standing rule, from S11).** Never commit, push, or otherwise touch the public
-`neogeeks/tx402` repository without the user's explicit, in-session approval. `origin` remains
-`jaykomarraju/tx402-dev` until the S12 migration. 6. **Emit the handoff prompt** (§8.1) as the final message of the session, filled in with real
+**Pushing (standing rule, from S11; scope corrected at S13).** Never commit, push, or
+otherwise touch the public `neogeeks/tx402` repository without the user's explicit,
+in-session approval. `origin` remains `jaykomarraju/tx402-dev`, and **the migration is not
+planned until the §11.2 audit and the §11.3 UX pass have both run clean** — the S11 note
+called it "the S12 migration", which is superseded. Pushing to `origin` for CI is ordinary
+work and needs no approval. 6. **Emit the handoff prompt** (§8.1) as the final message of the session, filled in with real
 values, in a copy-paste code block.
 
 ### 8.1 Handoff prompt template
@@ -1289,3 +1314,113 @@ python examples/python/quickstart.py
 critical/high security finding; 100 % TS↔Python conformance parity; SBOM + license + provenance +
 reproducible build; testnet smoke suite passing twice from clean environments; docs published;
 independent security review clear.
+
+---
+
+## 11. Release Sequence & Pre-Publication Gates
+
+**This section is normative for sequencing and was set by the user at S13. No session may
+skip a stage or run two in one sitting.**
+
+### 11.1 The order, and where each stage happens
+
+```
+  remaining dev sessions        ──▶  on tx402-dev
+  pre-publication audit (§11.2) ──▶  on tx402-dev        ← no publishing planned yet
+  fresh-eyes UX pass    (§11.3) ──▶  on tx402-dev, COLD start
+  ─────────────────────────────────────────────────────
+  only now: plan the publish (§11.4) — neogeeks/tx402, npm, PyPI
+```
+
+Three rules that are easy to violate and expensive to undo:
+
+1. **Everything up to and including the UX pass happens on `tx402-dev`.** `origin` stays
+   `jaykomarraju/tx402-dev`. Nothing touches `neogeeks/tx402`.
+2. **The migration to `neogeeks/tx402` is not planned, scaffolded, or rehearsed until the
+   audit is complete.** Not a branch, not a workflow, not a checklist. Planning the publish
+   before knowing what the audit finds is how an audit becomes a formality.
+3. **The audit and the UX pass are separate sessions with different postures.** The audit
+   reads everything and distrusts it. The UX pass reads almost nothing and behaves like a
+   stranger. Merging them destroys the second one, because you cannot un-know the codebase.
+
+If either stage produces required changes, those land as ordinary dev work and the affected
+stage is **re-run**. A stage is complete when it runs clean, not when its findings are filed.
+
+### 11.2 Pre-publication audit charter
+
+One session, on `tx402-dev`. Its output is findings and — only where a finding proves it
+necessary — changes. It is not a feature session.
+
+**The governing instruction: do not trust the existing tests as proof that the product
+works.** They were written by the same model that wrote the implementation, against that
+model's own understanding of the behaviour. That is a correlated blind spot, not coverage.
+S12's O34 is the precedent: a test asserted something the specification never promised, and
+every gate agreed with it for a session.
+
+**1. Repository-wide correctness audit.** Inspect the whole repository before changing
+anything. Identify:
+
+- features that appear implemented but are not actually complete;
+- stubbed, mocked, hardcoded, or placeholder behaviour;
+- broken connections across the real boundaries in this project — SDK ↔ CLI, core ↔ chain
+  adapters, buyer ↔ merchant ↔ facilitator, SDK ↔ signed manifest, docs site ↔ generated
+  pages, and the spend ledger, which is this project's "database";
+- routes or functions never exercised;
+- incorrect assumptions made during implementation;
+- silent failures and swallowed exceptions;
+- race conditions, retry issues, and partial-write scenarios — the reservation/commit/release
+  path and the paid-retry disposition table deserve specific attention;
+- code that works only on the happy path;
+- documentation that no longer matches behaviour.
+
+**2. Adversarial test design.** Derive expected behaviour _independently_, from the README,
+`PRD.md`, `SPEC.md`, the public interfaces, the CLI help text, the API reference, the
+examples, and plain user expectation — then compare that against the implementation. Do not
+start from the existing tests. Prioritise, in roughly this order:
+
+fresh installation on a clean machine · first-run behaviour with an empty ledger · invalid
+configuration · missing environment variables · expired or incorrect credentials · network
+timeout and third-party outage · duplicate requests · concurrent requests · interrupted
+operations · upgrade from an older version · different operating systems and runtime
+versions · malformed user input · large inputs · uninstall and cleanup · public API
+backward compatibility.
+
+**3. Security and release-readiness review.** Framed as a defensive review of our own
+repository. Examine: secrets accidentally committed; unsafe defaults; authentication and
+authorization boundaries; input validation; injection risks; SSRF, path traversal, and
+insecure file handling; dependency risks; overly broad permissions; sensitive information in
+logs; rate limiting and abuse scenarios; supply-chain and package-publishing configuration;
+license and attribution; and whether the examples encourage insecure usage.
+
+**4. Maintainer-quality review.** A project can be correct and still be painful to
+contribute to. Ask whether an unfamiliar developer could install it without help, understand
+the architecture, run the tests locally, add a feature safely, diagnose a common error,
+submit a useful issue, contribute without learning undocumented conventions, and upgrade
+without breaking their system. Cover: README, quick start, architecture documentation,
+configuration reference, contribution guide, code of conduct, security policy, license,
+changelog, versioning policy, release process, example applications, and error messages.
+
+### 11.3 Fresh-eyes UX pass charter
+
+One session, on `tx402-dev`, and the **only** session in this plan that does not begin by
+reading `PLAN.md`.
+
+**Start cold, deliberately.** Read what a new user reads — the README and the documentation
+site — and nothing else. Do not open `PLAN.md`, `SPEC.md`, `PRD.md`, the ADRs, or the source
+until the pass is finished. The point is to find what the documentation fails to say, and
+that is unrecoverable once the codebase has been read.
+
+Then **actually use the product**: install both packages as a user would, follow the
+quickstart end to end, make a real settled testnet payment on both networks, run the CLI,
+run the examples, and try to do something the docs do not explicitly cover. Record every
+place reality and documentation diverge, every moment of confusion, and the real
+time-to-value — a stopwatch, not an estimate, against SPEC §16's five minutes.
+
+This is the last pass before publication.
+
+### 11.4 Publishing (planned only after §11.2 and §11.3 are clean)
+
+Not to be designed before then. It will cover the `neogeeks/tx402` migration, npm and PyPI
+trusted publishing with provenance (O10), the rotated release signing key (O12), and the
+SPEC §12.4 release gates. Until the two stages above run clean, the correct amount of
+publish planning is none.
