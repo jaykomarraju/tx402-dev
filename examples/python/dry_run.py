@@ -3,14 +3,21 @@
     export TX402_MERCHANT_URL=https://...
     python examples/python/dry_run.py
 
-``client.plan()`` runs the real decision path — decode, policy, route planning, ranking —
-and stops before the budget reservation. No signature is produced and no budget is
-consumed, so this is safe to run in a loop, in CI, or from an agent that should be able to
-find out what something costs without being able to buy it.
+``client.inspect()`` performs the request, decodes and strictly validates the merchant's
+``PAYMENT-REQUIRED`` challenge, and stops. It configures no signer, contacts no chain, and
+cannot spend anything — so it is safe to run in a loop, in CI, or from an agent that should
+be able to find out what something costs without being able to buy it.
 
-This is the same call that backs the CLI's ``--dry-run``. It lives on the client rather
-than in the CLI precisely so a dry run predicts the *shipped* decision path instead of a
-second implementation of it.
+**``inspect()`` and ``plan()`` are different questions, and only one of them is keyless.**
+``inspect()`` answers "what is this merchant asking for?" — a property of the challenge
+alone. ``plan()`` answers "what would I actually pay, and by which route?", which means
+ranking the offered routes, which means reading your address and balance on each one. A
+route it cannot price is a route it cannot rank, so ``plan()`` — and the CLI's
+``--dry-run``, which is the same call — require a configured signer. Neither ever produces
+a signature.
+
+Until S21 this file called ``plan()`` while promising to need no key, so it failed on every
+run with ``TX402_SCHEME_UNSUPPORTED`` (O78). See ADR-020.
 """
 
 from __future__ import annotations
@@ -38,9 +45,7 @@ def main() -> int:
         "::1",
     }
 
-    # No signers configured at all. Route planning reports every offered requirement as a
-    # candidate with `no-signer-configured`, which is exactly what you want to see when you
-    # are asking "what would this cost me?" rather than "pay this".
+    # No signers configured at all, and none needed: `inspect()` never reaches a chain.
     with Tx402Client(
         allow_insecure_localhost=is_localhost,
         policy=Policy(
@@ -51,46 +56,34 @@ def main() -> int:
         ),
     ) as tx402:
         try:
-            plan = tx402.plan("GET", MERCHANT_URL)
+            inspection = tx402.inspect("GET", MERCHANT_URL)
         except Tx402Error as error:
-            # A plan can fail for every reason a real call can, minus the ones that only
-            # exist after signing — which is what makes it a useful preflight.
+            # Inspection can still fail: an unreachable merchant, or a challenge that does
+            # not decode. Both are worth seeing before you try to pay.
             print(f"{type(error).code}: {error.message}", file=sys.stderr)
             return 1
 
-        if plan.payment_required is None:
-            print(f"No payment required — the resource answered {plan.response.status_code}.")
+        if inspection.payment_required is None:
+            print(
+                "No payment required — the resource answered "
+                f"{inspection.response.status_code}."
+            )
             return 0
 
-        print(f"request      {plan.request_id}")
-        print(f"requirements {len(plan.payment_required['requirements'])}")
-        print(f"header hash  {plan.payment_required['headerHash']}\n")
+        print(f"request      {inspection.request_id}")
+        print(f"requirements {len(inspection.payment_required['requirements'])}")
+        print(f"header hash  {inspection.payment_required['headerHash']}\n")
 
         print("What the merchant accepts:")
-        for requirement in plan.payment_required["requirements"]:
+        for requirement in inspection.payment_required["requirements"]:
             print(
                 f"  [{requirement['index']}] {requirement['amountAtomic']} atomic  "
                 f"{requirement['scheme']} on {requirement['network']}"
             )
 
-        print("\nHow tx402 ranked them:")
-        for candidate in plan.candidates or ():
-            status = (
-                "viable"
-                if candidate.viable
-                else f"not viable — {', '.join(candidate.rejection_reasons)}"
-            )
-            print(
-                f"  #{candidate.rank} {candidate.network}  "
-                f"health {candidate.health_score:.2f}  {status}"
-            )
-
-        if plan.selected is not None:
-            print(
-                f"\nWould pay {plan.selected.amount_atomic} atomic "
-                f"on {plan.selected.network}."
-            )
-        print("Nothing was signed and no budget was reserved.")
+        print("\nNothing was signed, no budget was reserved, and no chain was contacted.")
+        print("To see how tx402 would rank these routes, configure a signer and use")
+        print("`client.plan()` — or `tx402 call <url> --dry-run` from the CLI.")
         return 0
 
 

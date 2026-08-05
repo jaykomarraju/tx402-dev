@@ -26,7 +26,7 @@ state plainly that nothing is implemented and that the first functional release 
 
 ## Reserving `tx402` on PyPI
 
-Completed 2026-08-03 (PLAN.md open item **O1**). The prebuilt placeholder wheel and source
+Completed 2026-08-03. The prebuilt placeholder wheel and source
 distribution were published without rebuilding later development code into version `0.0.0`.
 
 ### 1. Create the account and token — _you_
@@ -66,7 +66,7 @@ curl -s https://pypi.org/pypi/tx402/json | python3 -c \
   "import sys,json; d=json.load(sys.stdin)['info']; print(d['name'], d['version'], d['license'])"
 ```
 
-Then update the table at the top of this file and the reservation line in `PLAN.md` §7.
+Then update the table at the top of this file.
 
 Publication verification on 2026-08-03:
 
@@ -120,7 +120,7 @@ long-lived token exists anywhere:
 ## Repository migration
 
 Development happens in the private `tx402-dev` repository; the public open-source repository is a
-later migration (open item **O3**). Every outward-facing URL is centralized so the move is a
+later migration. Every outward-facing URL is centralized so the move is a
 single-file change per language:
 
 - `packages/tx402/src/meta.ts` → `PROJECT_URLS`

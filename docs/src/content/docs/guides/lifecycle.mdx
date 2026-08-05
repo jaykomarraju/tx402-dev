@@ -96,8 +96,7 @@ moved, and the same dollar could then be spent again inside the same hour.
 | Settled, resource refused | 403 **with** a successful settlement   | **committed** | `TX402_RESOURCE_DELIVERY`, `paid: true`        |
 | Settled, ledger write failed | Your spend store rejected the commit | **retained** | `TX402_RESOURCE_DELIVERY`, `paid: true`         |
 
-**The last three rows are the ones worth reading twice**, and an earlier revision of this
-page had the third of them wrong — it said a settled 403 releases (the S15 audit's O44).
+**The last three rows are the ones worth reading twice.**
 Settlement evidence outranks the status line: if the merchant's own `PAYMENT-RESPONSE`
 reports a successful settlement, the money moved, so the spend is **committed** and you are
 told `paid: true` whatever the status line said. The same 403 with no settlement claim is a

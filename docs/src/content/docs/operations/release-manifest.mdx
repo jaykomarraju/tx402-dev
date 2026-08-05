@@ -10,8 +10,10 @@ addresses, RPC endpoints, and token decimals reach the SDK (SPEC §0, §5.4). It
 offline at client construction; a failure prevents construction rather than degrading to a
 warning.
 
-Authority for the format is [ADR-012](../../adr/012-manifest-signing-envelope.md) and
-[`core-spec/schemas/release-manifest.schema.json`](../../core-spec/schemas/release-manifest.schema.json).
+Authority for the format is
+[ADR-012](https://github.com/neogeeks/tx402/blob/main/adr/012-manifest-signing-envelope.md)
+and
+[`core-spec/schemas/release-manifest.schema.json`](https://github.com/neogeeks/tx402/blob/main/core-spec/schemas/release-manifest.schema.json).
 
 ## Layout
 
@@ -73,13 +75,13 @@ key is never rotated (SPEC §9.1).
 
 ## Key handling
 
-The current key, `tx402-release-1`, was generated locally during session S2 for development.
+The current key, `tx402-release-1`, was generated locally for development.
 It lives at `core-spec/manifests/keys/tx402-release-1.private.pem`, which is gitignored.
 
 **Back it up somewhere durable.** If it is lost, every manifest it signed stops being
 re-signable and a new key must be issued — see rotation below.
 
-**Before `0.1.0`** (open item O12), the release key must be regenerated inside a secure
+**Before `0.1.0`**, the release key must be regenerated inside a secure
 environment and held in CI OIDC or a secret manager, never as a plaintext repository variable
 (SPEC §13). The development key must not sign a published release.
 

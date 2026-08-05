@@ -217,7 +217,7 @@ export const SPEND_STORE_UNAVAILABLE_CAUSE = "spend-store-unavailable";
  * strings to the package's own `peerDependencies`, so they cannot drift from what npm
  * would actually install.
  */
-const CHAIN_INSTALL_COMMANDS: Readonly<Record<string, string>> = Object.freeze({
+export const CHAIN_INSTALL_COMMANDS: Readonly<Record<string, string>> = Object.freeze({
   eip155: "npm install tx402 @x402/evm viem",
   solana: "npm install tx402 @solana-program/token @solana/kit @x402/svm viem",
 });

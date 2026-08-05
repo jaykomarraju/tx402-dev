@@ -34,6 +34,16 @@ from tx402.meta import PACKAGE_NAME, PROJECT_URLS
 
 # --- exit codes (mirrors cli/exit-codes.ts) ---------------------------------------------
 
+#: What to install when a chain family's optional extra is missing.
+#:
+#: The Python counterpart of ``CHAIN_INSTALL_COMMANDS`` in
+#: ``packages/tx402/src/cli/run.ts``. Kept beside the failure rather than in the docs
+#: alone: the caller who hits this has already read the docs and still ended up here.
+_CHAIN_INSTALL_COMMANDS: Final[Mapping[str, str]] = {
+    "eip155": 'pip install "tx402[evm]"',
+    "solana": 'pip install "tx402[svm]"',
+}
+
 #: CLI exit codes. Normative — SPEC §11. ``1`` is deliberately unused: it is the
 #: interpreter's own crash code.
 EXIT_CODES: Final[Mapping[str, int]] = {
@@ -393,40 +403,58 @@ def _resolve_signers(io: CliIo, dry_run: bool) -> dict[str, Any]:
             "Use an external signer for anything but a low-balance test wallet.\n"
         )
 
+    def skip(variable: str, family: str) -> None:
+        """Report a chain whose signer could not be built because its extra is absent.
+
+        Skipped rather than fatal, and this is the whole of O77: a key exported for a
+        chain whose extra you did not install must not take down a request that never
+        needed that chain. Not offering a signer can only ever remove a payment option —
+        never redirect one — and a route that does need it still fails by name further in.
+        """
+        command = _CHAIN_INSTALL_COMMANDS.get(family, "the chain extra install command")
+        io.stderr(
+            f"warning: {variable} is set, but the tx402 extra for {family} is not "
+            f"installed, so that signer was not loaded. Run: {command}\n"
+        )
+
     signers: dict[str, Any] = {}
 
     if evm_key is not None:
         warn(DEV_KEY_ENV["evm"])
-
-        # Imported lazily so the CLI's help and usage paths never load a chain library, and
-        # so a dry run on a machine without the `evm` extra installed still works.
-        from tx402.signers import private_key_to_evm_signer
-
         try:
+            # Imported here rather than at module scope so the CLI's help and usage paths
+            # never load a chain library. `tx402.signers` imports `tx402.evm` at module
+            # scope, so a missing `evm` extra raises from the import rather than the call —
+            # which is why the import is inside the try (O79).
+            from tx402.signers import private_key_to_evm_signer
+
             signer = private_key_to_evm_signer(evm_key)
+            signers["evm_signer"] = _DryRunSigner(signer) if dry_run else signer
+        except ImportError:
+            skip(DEV_KEY_ENV["evm"], "eip155")
         except Exception as error:
             # The raised message is not forwarded — key validation tends to quote its input.
             raise UsageError(
                 f"{DEV_KEY_ENV['evm']} is not a 0x-prefixed 32-byte hex private key"
             ) from error
 
-        signers["evm_signer"] = _DryRunSigner(signer) if dry_run else signer
-
     if solana_key is not None:
         warn(DEV_KEY_ENV["solana"])
-
-        from tx402.signers import keypair_to_solana_signer
-
         try:
+            from tx402.signers import keypair_to_solana_signer
+
+            # `tx402.solana` — and therefore `solders` — is imported inside this call, so a
+            # missing `svm` extra surfaces from here rather than from the import above.
             solana_signer = keypair_to_solana_signer(solana_key)
+            signers["solana_signer"] = (
+                _DryRunSolanaSigner(solana_signer) if dry_run else solana_signer
+            )
+        except ImportError:
+            skip(DEV_KEY_ENV["solana"], "solana")
         except Exception as error:
             raise UsageError(
                 f"{DEV_KEY_ENV['solana']} is not a JSON array of 64 Solana keypair bytes"
             ) from error
-
-        signers["solana_signer"] = (
-            _DryRunSolanaSigner(solana_signer) if dry_run else solana_signer
-        )
 
     return signers
 

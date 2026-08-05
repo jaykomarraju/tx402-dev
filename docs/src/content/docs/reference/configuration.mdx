@@ -151,11 +151,11 @@ downgraded to a warning, because everything downstream treats manifest contents 
 authoritative. Rejection reasons are stable identifiers (`expired`, `signature-mismatch`,
 `unknown-key-id`, …) reported in the error's `details.reason`.
 
-Two consequences worth knowing before S3:
+Two consequences worth knowing:
 
 - **Expiry is real.** The bundled manifest stops verifying on **2027-08-02**, at which point
   client construction fails until it is re-issued. See
-  [the manifest runbook](../operations/release-manifest.md).
+  [the manifest runbook](../../operations/release-manifest/).
 - **`requiredNetworks` is not applied by default.** SPEC §5.4's four-network requirement binds
   the _bundled_ manifest, which a test asserts directly. A caller-supplied manifest may
   legitimately declare a single network — a local integration fixture, for instance — so
@@ -176,9 +176,9 @@ lookup is not cached, so a transient KMS outage does not disable a signer for th
 process. ADR-010 decision 5a records this.
 
 Chain adapters load lazily. `signers.evm` alone is enough — importing `tx402/evm` by hand is only
-necessary to build a signer or inspect a plan. A configured signer for a family whose adapter does
-not exist yet (Solana, until M4) produces `UnsupportedSchemeError` listing the networks that were
-offered, never a silent skip.
+necessary to build a signer or inspect a plan. A configured signer for a family whose adapter is
+unavailable produces `UnsupportedSchemeError` listing the networks that were offered, never a
+silent skip.
 
 The convenience adapter for a raw key lives behind its own import:
 
@@ -242,7 +242,6 @@ complete reference rather than a selective one.
 
 ### Solana is implemented
 
-An earlier revision of this page called Solana and `routing.preferNetworks` future work.
-Both shipped: Solana at M4 with SPL exact transfers and pre-sign transaction validation, and
-the deterministic route planner that consumes `preferNetworks` at M5. The S15 audit filed
-the stale text as O50.
+Both Solana and `routing.preferNetworks` are shipped: Solana with SPL exact transfers and
+pre-sign transaction validation, and the deterministic route planner that consumes
+`preferNetworks`.

@@ -7,8 +7,7 @@ sidebar:
 
 The Base adapter's automated suite is fully deterministic and needs no wallet: it runs against a
 local JSON-RPC stub (`tools/evm-rpc-stub`) and the local test merchant. This runbook is for the
-**opt-in live test**, which SPEC §12.1 requires before release and which PLAN.md tracks as open
-item **O2**.
+**opt-in live test**, which SPEC §12.1 requires before release.
 
 ## 1. Create a dedicated wallet
 
@@ -79,8 +78,8 @@ TX402_LIVE_MERCHANT_URL=https://some-merchant.example/paid-resource \
 
 SPEC §12.4 requires the public testnet smoke suite to pass **twice from clean environments**, and
 SPEC §12.2's T-019 asks for 50 Base Sepolia and 50 Solana Devnet calls with zero SDK-caused
-failures. Both land at M8 (session S12) and both need this wallet funded, so keep it topped up
-rather than draining it after a single run.
+failures. Both need this wallet funded, so keep it topped up rather than draining it after a
+single run.
 
 ## Troubleshooting
 

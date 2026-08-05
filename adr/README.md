@@ -33,6 +33,7 @@ added together with this line.
 | [017](017-spend-store-failure-semantics.md)                | Spend-store failure semantics                    | Accepted               | Fills a gap in SPEC §5.3, §8       |
 | [018](018-policy-scope-is-the-normalized-merchant-host.md) | Policy scope is the normalized merchant host     | Accepted, amended S15d | Fixes SPEC §5.3 conformance        |
 | [019](019-settlement-metadata-in-the-cli-json-document.md) | Settlement metadata in the CLI `--json` document | Accepted               | Concretizes SPEC §11               |
+| [020](020-inspect-is-the-keyless-question-plan-is-not.md)  | `inspect()` is keyless; `plan()` is not          | Accepted               | Clarifies SPEC §11                 |
 
 ## Format
 
