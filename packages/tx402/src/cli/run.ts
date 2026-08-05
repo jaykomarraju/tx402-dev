@@ -13,8 +13,14 @@
  * stream instead.
  */
 
-import { createTx402Client, type PaymentPlan, type Tx402Logger } from "../core/client.js";
-import { isTx402Error, type Tx402Error } from "../core/errors.js";
+import {
+  createTx402Client,
+  type PaymentPlan,
+  type Tx402Client,
+  type Tx402Logger,
+} from "../core/client.js";
+import { chainFamily } from "../core/chain.js";
+import { isTx402Error, type Tx402Error, type Tx402ErrorDetails } from "../core/errors.js";
 import type { Tx402Signers } from "../core/signers.js";
 import { formatMoneyDecimal } from "../core/money.js";
 import { PACKAGE_NAME, PROJECT_URLS } from "../meta.js";
@@ -219,6 +225,82 @@ function fromEvents(events: readonly Record<string, unknown>[]) {
   };
 }
 
+/**
+ * What `--json` reports about the money, once a signature has left the process.
+ *
+ * `status` reuses the SDK's own disposition vocabulary rather than inventing a second one:
+ * `committed` is the ledger's `paid: true`, `unknown` is its `paid: "unknown"`. The whole
+ * object is `null` when no signature was ever produced, which is the honest answer for a
+ * dry run and for every policy or protocol refusal — those never reach a signer.
+ */
+interface SettlementReport {
+  readonly status: "committed" | "unknown";
+  readonly transaction: string | null;
+  readonly payer: string | null;
+}
+
+/** The payer address on the chain the route selected, or `null` when it cannot be known. */
+async function payerAddress(
+  signers: Tx402Signers,
+  network: string | undefined,
+): Promise<string | null> {
+  if (network === undefined) return null;
+  const family = chainFamily(network);
+  if (family === "eip155" && signers.evm !== undefined) {
+    return signers.evm.getAddress();
+  }
+  if (family === "solana" && signers.solana !== undefined) {
+    return signers.solana.getPublicKey();
+  }
+  return null;
+}
+
+/**
+ * Reads the settlement facts back out of the ledger after the call (O74).
+ *
+ * **Why this is read from the ledger and not from the event stream.** SPEC §10's
+ * `payment.completed` carries `settlementIdHash`, deliberately: events are the thing that
+ * ends up in a log aggregator, and a settlement identifier there is a payment graph handed
+ * to whoever runs the aggregator. The **raw** identifier belongs to the buyer and is kept on
+ * their own `SpendEntry` (SPEC §5.3), which is process-local. `--json` on the buyer's own
+ * stdout is that same trust boundary, so the raw value is correct here and the hash stays
+ * correct in the events. Neither side changes; only this reader is new. See ADR-019.
+ */
+async function settlementFor(
+  client: Tx402Client,
+  signers: Tx402Signers,
+  events: readonly Record<string, unknown>[],
+  status: SettlementReport["status"],
+): Promise<SettlementReport | null> {
+  // `budget.reserved` is emitted immediately before the signer is reachable, so its
+  // presence is the precise test for "money is in play". A merchant that answered 200
+  // outright never reserves, and reporting a settlement for that call would be a lie.
+  const reserved = events.find((event) => event["event"] === "budget.reserved");
+  if (reserved === undefined) return null;
+
+  // Matched by reservation id rather than by taking the newest entry, so this stays correct
+  // against a shared spend store that another process is also writing to.
+  const reservationId = reserved["reservationId"];
+  const entry = client
+    .getBudgetState()
+    .entries.find((candidate) => candidate.reservationId === reservationId);
+
+  const planned = events.find((event) => event["event"] === "route.planned");
+  const selected = planned?.["selectedNetwork"];
+  const payer = await payerAddress(
+    signers,
+    typeof selected === "string" ? selected : undefined,
+  );
+  return {
+    status,
+    // Null when the reservation never committed (an ambiguous outcome), and also when the
+    // merchant supplied no settlement identifier — the pinned protocol marks
+    // PAYMENT-RESPONSE optional and that case commits with a warning (SPEC §6.7).
+    transaction: entry?.settlementId ?? null,
+    payer,
+  };
+}
+
 /** The `--json` document (SPEC §11: schema version, inspection, route, timings, error). */
 function jsonDocument(fields: {
   ok: boolean;
@@ -229,6 +311,7 @@ function jsonDocument(fields: {
   plan?: PaymentPlan;
   body?: string;
   error?: Tx402Error | UsageError;
+  settlement?: SettlementReport;
   elapsedMs: number;
   events: Record<string, unknown>[];
 }): string {
@@ -265,6 +348,9 @@ function jsonDocument(fields: {
             },
       ...(fields.status === undefined ? {} : { status: fields.status }),
       ...(fields.body === undefined ? {} : { body: fields.body }),
+      // Always present, so `null` means "nothing was ever signed" rather than "this build
+      // does not report settlement" — an absent key cannot distinguish those.
+      settlement: fields.settlement ?? null,
       timings: { elapsedMs: fields.elapsedMs, events: fields.events.length },
       // `toJSON` on Tx402Error deliberately omits `cause` (SEC-003), so this cannot carry a
       // signer payload or a URL with credentials into a log aggregator.
@@ -281,6 +367,34 @@ function jsonDocument(fields: {
 }
 
 /**
+ * Renders `error.details` to stderr, under the message it explains.
+ *
+ * Without this the printed remedy for the most common first error was not followable: exit
+ * `5` says "No allowed payment network was offered" and the documentation says to copy a
+ * value out of `offeredNetworks`, but that key reached the operator **only** under `--json`.
+ * A remedy the default output cannot carry is not a remedy (O75).
+ *
+ * Printing the whole of `details` rather than special-casing one code is deliberate. SPEC §8
+ * makes every error's required keys part of its contract, and `details` is redaction-safe by
+ * construction — identifiers, atomic amounts and categories, never a signature, a key or an
+ * authorization payload. So the general rule is both safe and the one that keeps the next
+ * error's documented remedy followable without another edit here.
+ */
+function renderDetailsHuman(io: CliIo, details: Tx402ErrorDetails): void {
+  for (const [key, value] of Object.entries(details)) {
+    if (value === undefined) continue;
+    const rendered = Array.isArray(value)
+      ? value
+          .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
+          .join(", ")
+      : typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : JSON.stringify(value);
+    io.stderr(`  ${key.padEnd(28)}${rendered}\n`);
+  }
+}
+
+/**
  * Runs one CLI invocation and returns its exit code.
  *
  * Never throws and never calls `process.exit`: the caller owns the process. That is what
@@ -290,6 +404,10 @@ export async function run(io: CliIo): Promise<ExitCode> {
   const startedAt = Date.now();
   const events: Record<string, unknown>[] = [];
   let options: CallOptions | undefined;
+  // Held outside the try so the failure path can still report what it knows about the
+  // money: exit 8 and exit 9 both mean a signature left this process (O74).
+  let client: Tx402Client | undefined;
+  let signers: Tx402Signers | undefined;
 
   try {
     const parsed = parseArgs(io.argv, io.readFile);
@@ -313,8 +431,9 @@ export async function run(io: CliIo): Promise<ExitCode> {
     };
 
     const create = io.createClient ?? createTx402Client;
-    const client = create({
-      signers: await resolveSigners(io, options.dryRun),
+    signers = await resolveSigners(io, options.dryRun);
+    client = create({
+      signers,
       logger: collectingLogger(events),
       ...(Object.keys(policy).length === 0 ? {} : { policy }),
       ...(options.timeoutMs === undefined
@@ -356,6 +475,9 @@ export async function run(io: CliIo): Promise<ExitCode> {
     const elapsedMs = Date.now() - startedAt;
 
     if (options.json) {
+      // A delivered resource means the ledger committed, so this reports the real
+      // settlement identifier and the address that paid it.
+      const settlement = await settlementFor(client, signers ?? {}, events, "committed");
       io.stdout(
         jsonDocument({
           ok: response.ok,
@@ -363,6 +485,7 @@ export async function run(io: CliIo): Promise<ExitCode> {
           dryRun: false,
           status: response.status,
           body,
+          ...(settlement === null ? {} : { settlement }),
           elapsedMs,
           events,
         }),
@@ -376,6 +499,20 @@ export async function run(io: CliIo): Promise<ExitCode> {
     const code = exitCodeFor(error);
     const elapsedMs = Date.now() - startedAt;
 
+    // Exactly the two failures where money is in play — exit 8 and exit 9. The disposition
+    // comes from the error's own `paid` context rather than from the exit code, so the CLI
+    // cannot drift out of step with what the SDK actually concluded.
+    const paid = isTx402Error(error) ? error.context.paid : undefined;
+    const settlement =
+      client === undefined || paid === undefined || paid === false
+        ? undefined
+        : ((await settlementFor(
+            client,
+            signers ?? {},
+            events,
+            paid === true ? "committed" : "unknown",
+          )) ?? undefined);
+
     if (options?.json === true) {
       io.stdout(
         jsonDocument({
@@ -384,16 +521,33 @@ export async function run(io: CliIo): Promise<ExitCode> {
           dryRun: options.dryRun,
           elapsedMs,
           events,
+          ...(settlement === undefined ? {} : { settlement }),
           ...(isTx402Error(error) || error instanceof UsageError ? { error } : {}),
         }),
       );
     } else if (isTx402Error(error)) {
       io.stderr(`${error.code}: ${error.message}\n`);
+      renderDetailsHuman(io, error.details);
       if (error.code === "TX402_PAYMENT_AMBIGUOUS") {
         // Worth spelling out: this is the one exit code where retrying may pay twice.
         io.stderr(
           "the payment may have settled — do not retry without checking the merchant\n",
         );
+      }
+      // The two outcomes that tell someone to reconcile are the two that must hand them
+      // what to reconcile *with*, without making them re-run the call under `--json` — a
+      // re-run of a payment is the one thing this advice exists to prevent (O74).
+      if (settlement !== undefined) {
+        io.stderr(
+          settlement.status === "committed"
+            ? "the payment settled — the resource is what failed\n"
+            : "the payment may have settled\n",
+        );
+        if (settlement.payer !== null)
+          io.stderr(`  payer${" ".repeat(23)}${settlement.payer}\n`);
+        if (settlement.transaction !== null) {
+          io.stderr(`  settlement${" ".repeat(18)}${settlement.transaction}\n`);
+        }
       }
     } else if (error instanceof UsageError) {
       io.stderr(`tx402: ${error.message}\n\n${USAGE}\n`);

@@ -449,6 +449,34 @@ def _render_plan_human(io: CliIo, plan: Any) -> None:
     io.stderr("dry run — nothing was signed and no budget was reserved\n")
 
 
+def _render_details_human(io: CliIo, details: Mapping[str, Any]) -> None:
+    """Render ``error.details`` to stderr, under the message it explains.
+
+    Port of ``renderDetailsHuman`` in ``packages/tx402/src/cli/run.ts``. Without this the
+    printed remedy for the most common first error was not followable: exit ``5`` says "No
+    allowed payment network was offered" and the documentation says to copy a value out of
+    ``offeredNetworks``, but that key reached the operator **only** under ``--json``. A
+    remedy the default output cannot carry is not a remedy (O75).
+
+    Printing the whole of ``details`` rather than special-casing one code is deliberate.
+    SPEC §8 makes every error's required keys part of its contract, and ``details`` is
+    redaction-safe by construction — identifiers, atomic amounts and categories, never a
+    signature, a key or an authorization payload.
+    """
+    for key, value in details.items():
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            rendered = ", ".join(
+                item if isinstance(item, str) else json.dumps(item) for item in value
+            )
+        elif isinstance(value, (str, int, float, bool)):
+            rendered = str(value)
+        else:
+            rendered = json.dumps(value)
+        io.stderr(f"  {key:<28}{rendered}\n")
+
+
 def _from_events(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Recovers the inspection and route facts from the structured event stream.
 
@@ -483,6 +511,83 @@ def _from_events(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _payer_address(signers: Mapping[str, Any], network: str | None) -> str | None:
+    """The payer address on the chain the route selected, or ``None`` when unknowable.
+
+    Reads the CLI's own resolved signers — the same map it hands the client — rather than
+    reaching into the client's internals, so this matches ``payerAddress`` in
+    ``packages/tx402/src/cli/run.ts`` line for line.
+    """
+    if network is None:
+        return None
+    from tx402.chain import chain_family
+
+    family = chain_family(network)
+    signer = signers.get("evm_signer" if family == "eip155" else "solana_signer")
+    if signer is None:
+        return None
+    # The two signer protocols name this differently — `EvmSigner.get_address` against
+    # `SolanaSigner.get_public_key` — because each mirrors its chain's own vocabulary.
+    return str(signer.get_address() if family == "eip155" else signer.get_public_key())
+
+
+def _settlement_for(
+    client: Any,
+    signers: Mapping[str, Any],
+    url: str,
+    events: Sequence[Mapping[str, Any]],
+    status: str,
+) -> dict[str, Any] | None:
+    """Reads the settlement facts back out of the ledger after the call (O74).
+
+    Port of ``settlementFor`` in ``packages/tx402/src/cli/run.ts``.
+
+    **Why this is read from the ledger and not from the event stream.** SPEC §10's
+    ``payment.completed`` carries ``settlementIdHash``, deliberately: events are the thing
+    that ends up in a log aggregator, and a settlement identifier there is a payment graph
+    handed to whoever runs the aggregator. The **raw** identifier belongs to the buyer and
+    is kept on their own ``SpendEntry`` (SPEC §5.3), which is process-local. ``--json`` on
+    the buyer's own stdout is that same trust boundary, so the raw value is correct here
+    and the hash stays correct in the events. See ADR-019.
+    """
+    from tx402.policy import normalize_policy_host
+
+    def find(name: str) -> Mapping[str, Any] | None:
+        return next((event for event in events if event.get("event") == name), None)
+
+    # `budget.reserved` is emitted immediately before the signer is reachable, so its
+    # presence is the precise test for "money is in play". A merchant that answered 200
+    # outright never reserves, and reporting a settlement for that call would be a lie.
+    reserved = find("budget.reserved")
+    if reserved is None:
+        return None
+
+    asset_id = reserved.get("assetId")
+    reservation_id = reserved.get("reservationId")
+    entry = None
+    if isinstance(asset_id, str):
+        state = client.get_budget_state(
+            policy_scope=normalize_policy_host(url), asset_id=asset_id
+        )
+        # Matched by reservation id rather than by taking the newest entry, so this stays
+        # correct against a shared spend store another process is also writing to.
+        entry = next(
+            (item for item in state.entries if item.reservation_id == reservation_id),
+            None,
+        )
+
+    planned = find("route.planned")
+    network = planned.get("selectedNetwork") if planned is not None else None
+    return {
+        "status": status,
+        # None when the reservation never committed (an ambiguous outcome), and also when
+        # the merchant supplied no settlement identifier — the pinned protocol marks
+        # PAYMENT-RESPONSE optional and that case commits with a warning (SPEC §6.7).
+        "transaction": None if entry is None else entry.settlement_id,
+        "payer": _payer_address(signers, network if isinstance(network, str) else None),
+    }
+
+
 def _json_document(
     *,
     ok: bool,
@@ -495,6 +600,7 @@ def _json_document(
     plan: Any = None,
     body: str | None = None,
     error: BaseException | None = None,
+    settlement: Mapping[str, Any] | None = None,
 ) -> str:
     """The ``--json`` document (SPEC §11: schema version, inspection, route, timings,
     error). Key order and shape match the TypeScript CLI's byte for byte."""
@@ -537,6 +643,9 @@ def _json_document(
         document["status"] = status
     if body is not None:
         document["body"] = body
+    # Always present, so `null` means "nothing was ever signed" rather than "this build
+    # does not report settlement" — an absent key cannot distinguish those.
+    document["settlement"] = settlement
     document["timings"] = {"elapsedMs": elapsed_ms, "events": len(events)}
     # `to_dict` on Tx402Error deliberately omits the cause and traceback (SEC-003), so
     # this cannot carry a signer payload or a URL with credentials into a log aggregator.
@@ -558,6 +667,10 @@ def run_cli(io: CliIo) -> int:
     started_at = time.monotonic()
     events = io.events
     options: CallOptions | None = None
+    # Held outside the `with` so the failure path can still report what it knows about the
+    # money: exit 8 and exit 9 both mean a signature left this process (O74).
+    client: Any = None
+    signers: dict[str, Any] = {}
 
     def elapsed() -> int:
         return int((time.monotonic() - started_at) * 1000)
@@ -588,12 +701,13 @@ def run_cli(io: CliIo) -> int:
             policy_fields["allowed_networks"] = [options.network]
 
         create = io.create_client or Tx402Client
+        signers = dict(_resolve_signers(io, options.dry_run))
         kwargs: dict[str, Any] = {
             "logger": _collecting_logger(events),
             # Localhost over plain HTTP is allowed so the documented local-merchant
             # walkthrough works; every other host is still required to be HTTPS.
             "allow_insecure_localhost": True,
-            **_resolve_signers(io, options.dry_run),
+            **signers,
         }
         if policy_fields:
             kwargs["policy"] = Policy(**policy_fields)
@@ -627,6 +741,8 @@ def run_cli(io: CliIo) -> int:
             body = response.text
 
             if options.json:
+                # A delivered resource means the ledger committed, so this reports the
+                # real settlement identifier and the address that paid it.
                 io.stdout(
                     _json_document(
                         ok=response.is_success,
@@ -634,6 +750,9 @@ def run_cli(io: CliIo) -> int:
                         dry_run=False,
                         status=response.status_code,
                         body=body,
+                        settlement=_settlement_for(
+                            client, signers, options.url, events, "committed"
+                        ),
                         elapsed_ms=elapsed(),
                         events=events,
                     )
@@ -649,6 +768,20 @@ def run_cli(io: CliIo) -> int:
             raise
         code = exit_code_for(error)
 
+        # Exactly the two failures where money is in play — exit 8 and exit 9. The
+        # disposition comes from the error's own `paid` context rather than from the exit
+        # code, so the CLI cannot drift out of step with what the SDK actually concluded.
+        paid = error.context.paid if isinstance(error, Tx402Error) else None
+        settlement: Mapping[str, Any] | None = None
+        if client is not None and options is not None and paid in (True, "unknown"):
+            settlement = _settlement_for(
+                client,
+                signers,
+                options.url,
+                events,
+                "committed" if paid is True else "unknown",
+            )
+
         if options is not None and options.json:
             io.stdout(
                 _json_document(
@@ -657,11 +790,13 @@ def run_cli(io: CliIo) -> int:
                     dry_run=options.dry_run,
                     elapsed_ms=elapsed(),
                     events=events,
+                    settlement=settlement,
                     error=error if isinstance(error, (Tx402Error, UsageError)) else None,
                 )
             )
         elif isinstance(error, Tx402Error):
             io.stderr(f"{type(error).code}: {error.message}\n")
+            _render_details_human(io, error.details)
             if type(error).code == TX402_ERROR_CODES["payment_ambiguous"]:
                 # Worth spelling out: this is the one exit code where retrying may pay
                 # twice.
@@ -669,6 +804,20 @@ def run_cli(io: CliIo) -> int:
                     "the payment may have settled — do not retry without checking "
                     "the merchant\n"
                 )
+            # The two outcomes that tell someone to reconcile are the two that must hand
+            # them what to reconcile *with*, without making them re-run the call under
+            # `--json` — a re-run of a payment is the one thing this advice exists to
+            # prevent (O74).
+            if settlement is not None:
+                io.stderr(
+                    "the payment settled — the resource is what failed\n"
+                    if settlement["status"] == "committed"
+                    else "the payment may have settled\n"
+                )
+                if settlement["payer"] is not None:
+                    io.stderr(f"  {'payer':<28}{settlement['payer']}\n")
+                if settlement["transaction"] is not None:
+                    io.stderr(f"  {'settlement':<28}{settlement['transaction']}\n")
         elif isinstance(error, UsageError):
             io.stderr(f"tx402: {error}\n\n{USAGE}\n")
         else:

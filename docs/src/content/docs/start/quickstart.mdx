@@ -176,23 +176,38 @@ not its transaction list.
 
 ## 6. Do the same from code
 
+**Use the block that matches the row you installed in step 1 and the key you set in step 3.**
+Each one configures exactly one chain, so it runs with only that chain's dependencies present
+and only that chain's key exported. Configuring a chain you did not install is what makes the
+other block fail, not anything about your wallet.
+
 <Tabs syncKey="lang">
   <TabItem label="TypeScript">
 
-```ts title="quickstart.ts"
+The snippet is ESM and uses top-level `await`, so the project has to be a module. `npm init -y`
+alone is **not** enough — without `"type": "module"` you get `Top-level await is currently not
+supported with the "cjs" output format` before any of your code runs.
+
+```bash
+mkdir tx402-quickstart && cd tx402-quickstart
+npm init -y
+npm pkg set type=module
+npm install tx402 @x402/evm viem   # the Base row from step 1
+npm install --save-dev tsx         # runs a .ts file directly
+```
+
+```ts title="quickstart.ts — Base Sepolia"
 import { createTx402Client } from "tx402";
-import { keypairToSolanaSigner, privateKeyToEvmSigner } from "tx402/signers";
+import { privateKeyToEvmSigner } from "tx402/signers";
 
 const tx402 = createTx402Client({
-  // Configure the chain you funded. Both is fine — the merchant's offer decides.
   signers: {
     evm: privateKeyToEvmSigner(process.env.TX402_DEV_PRIVATE_KEY as `0x${string}`),
-    solana: await keypairToSolanaSigner(process.env.TX402_DEV_SOLANA_KEYPAIR!),
   },
   policy: {
     maxPerRequest: "0.10 USDC",
     maxPerHour: "1.00 USDC",
-    allowedNetworks: ["eip155:84532", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
+    allowedNetworks: ["eip155:84532"],
   },
   // Only because the merchant above is on localhost. Never set this for a real merchant.
   allowInsecureLocalhost: true,
@@ -202,29 +217,90 @@ const response = await tx402.fetch("<merchant-url>");
 console.log(response.status, await response.text());
 ```
 
+For Solana, install the Solana row from step 1 instead and use this:
+
+```ts title="quickstart.ts — Solana Devnet"
+import { createTx402Client } from "tx402";
+import { keypairToSolanaSigner } from "tx402/signers";
+
+const tx402 = createTx402Client({
+  signers: {
+    solana: await keypairToSolanaSigner(process.env.TX402_DEV_SOLANA_KEYPAIR!),
+  },
+  policy: {
+    maxPerRequest: "0.10 USDC",
+    maxPerHour: "1.00 USDC",
+    allowedNetworks: ["solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
+  },
+  // Only because the merchant above is on localhost. Never set this for a real merchant.
+  allowInsecureLocalhost: true,
+});
+
+const response = await tx402.fetch("<merchant-url>");
+console.log(response.status, await response.text());
+```
+
+Then run it:
+
+```bash
+npx tsx quickstart.ts
+```
+
   </TabItem>
   <TabItem label="Python">
 
-```python title="quickstart.py"
+```bash
+mkdir tx402-quickstart && cd tx402-quickstart
+python3 -m venv .venv && source .venv/bin/activate
+pip install "tx402[evm]"           # the row from step 1
+```
+
+```python title="quickstart.py — Base Sepolia"
 import os
 
 from tx402 import Policy, Tx402Client
-from tx402.signers import keypair_to_solana_signer, private_key_to_evm_signer
+from tx402.signers import private_key_to_evm_signer
 
-# Configure the chain you funded. Both is fine — the merchant's offer decides.
 with Tx402Client(
     evm_signer=private_key_to_evm_signer(os.environ["TX402_DEV_PRIVATE_KEY"]),
-    solana_signer=keypair_to_solana_signer(os.environ["TX402_DEV_SOLANA_KEYPAIR"]),
     policy=Policy(
         max_per_request="0.10 USDC",
         max_per_hour="1.00 USDC",
-        allowed_networks=["eip155:84532", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
+        allowed_networks=["eip155:84532"],
     ),
     # Only because the merchant above is on localhost. Never set this for a real merchant.
     allow_insecure_localhost=True,
 ) as tx402:
     response = tx402.get("<merchant-url>")
     print(response.status_code, response.text)
+```
+
+For Solana, `pip install "tx402[svm]"` instead and use this:
+
+```python title="quickstart.py — Solana Devnet"
+import os
+
+from tx402 import Policy, Tx402Client
+from tx402.signers import keypair_to_solana_signer
+
+with Tx402Client(
+    solana_signer=keypair_to_solana_signer(os.environ["TX402_DEV_SOLANA_KEYPAIR"]),
+    policy=Policy(
+        max_per_request="0.10 USDC",
+        max_per_hour="1.00 USDC",
+        allowed_networks=["solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
+    ),
+    # Only because the merchant above is on localhost. Never set this for a real merchant.
+    allow_insecure_localhost=True,
+) as tx402:
+    response = tx402.get("<merchant-url>")
+    print(response.status_code, response.text)
+```
+
+Then run it:
+
+```bash
+python quickstart.py
 ```
 
   </TabItem>
@@ -260,13 +336,14 @@ Steps 3 and 5 happening before step 6 is the property the whole design is built 
 | `5`  | No usable route or bad challenge | Read the message — it says which of the four causes below it is        |
 | `7`  | Network failure                  | Transient; retry is safe here                                          |
 | `8`  | **Ambiguous**                    | Money may have moved. Do not retry — reconcile with the merchant first |
+| `9`  | **Paid, but nothing delivered**  | The money _did_ move. Do not retry — reconcile with the merchant, quoting the `settlement.transaction` that `--json` reports |
 
 Exit `5` is the one worth expanding, because it is the code you are most likely to see and it
 covers four unrelated causes. The message names which:
 
 | Message                                             | What is actually wrong                                                                       |
 | :-------------------------------------------------- | :------------------------------------------------------------------------------------------- |
-| `No allowed payment network was offered`            | You omitted `--network`, or pointed it at a network this merchant does not offer. The error lists `offeredNetworks` — copy one from there |
+| `No allowed payment network was offered`            | You omitted `--network`, or pointed it at a network this merchant does not offer. The error prints `offeredNetworks` directly beneath it — copy one from there |
 | `No offered network has a configured signer…`       | No key is exported for any offered chain, or the chain's optional peer dependency is missing — `@x402/evm` + `viem` for Base, the Solana trio for Solana |
 | `…requirement is unusable: eip712-domain-missing`   | The **merchant's** challenge is malformed: it did not publish the token's EIP-712 domain. Nothing on your side fixes this |
 | `Solana requirement is missing an address`          | The same, on Solana: the merchant's challenge names no fee payer                              |

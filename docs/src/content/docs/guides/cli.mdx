@@ -84,6 +84,11 @@ stream, which is why a warning can never corrupt your redirected output.
   },
   "status": 200,
   "body": "…",
+  "settlement": {
+    "status": "committed",
+    "transaction": "0x8a01f2027e5af993977c5c4c7dded4e8a031aa0a07578aa2f5d429f670af5af0",
+    "payer": "0xaad1566216D2447B530E04945dfEefD04C84967B"
+  },
   "timings": { "elapsedMs": 452, "events": 9 },
   "error": null
 }
@@ -91,7 +96,26 @@ stream, which is why a warning can never corrupt your redirected output.
 
 One object, on both success and failure. On failure `ok` is `false`, `exitCode` names the
 classification, and `error` carries the typed error — code, message, retryability, and its
-required context keys.
+required detail keys.
+
+`settlement` is what you reconcile with. `transaction` is the settlement identifier the
+merchant reported — the hash you paste into a block explorer — and `payer` is the address that
+paid, on the chain the route selected.
+
+- `"status": "committed"` — the money moved. This is exit `0` and exit `9`.
+- `"status": "unknown"` — the signature was transmitted and the outcome could not be
+  determined. This is exit `8`. `transaction` is `null`, because tx402 has none.
+- `"settlement": null` — nothing was ever signed. A dry run, or any policy or protocol
+  refusal.
+
+`transaction` can also be `null` on a committed payment, when the merchant supplied no
+identifier at all: the pinned protocol marks `PAYMENT-RESPONSE` optional and that case commits
+with a warning rather than failing. `null` there means "tx402 has no identifier", never "there
+was no payment" — `status` is what carries that. The reasoning, including why the raw
+identifier is right here when the event stream deliberately hashes it, is ADR-019.
+
+On exits `8` and `9` the same two values are printed to **stderr** as well, so the documented
+"reconcile before you retry" does not require re-running a payment to obtain them.
 
 `error` **never carries the underlying cause**, which is where a URL with credentials or a
 signer payload would live. That is enforced by the error's own serializer, not by the CLI
@@ -113,10 +137,17 @@ case $code in
   3) echo "refused by local policy — this is the guardrail working" >&2; exit 0 ;;
   4) echo "fund the wallet" >&2; exit 1 ;;
   7) echo "network failure — safe to retry" >&2; exit 75 ;;
-  8) echo "AMBIGUOUS: payment may have settled. Do not retry." >&2; exit 1 ;;
+  8) echo "AMBIGUOUS: payment may have settled. Do not retry." >&2
+     jq -r '"payer \(.settlement.payer)"' out.json >&2; exit 1 ;;
+  9) echo "PAID but not delivered. Do not retry." >&2
+     jq -r '"payer \(.settlement.payer)  tx \(.settlement.transaction)"' out.json >&2
+     exit 1 ;;
   *) echo "failed with $code" >&2; exit 1 ;;
 esac
 ```
+
+The `*)` catch-all is load-bearing: every code that is not named still stops the script rather
+than falling through to the success path.
 
 :::danger[Never retry on exit 8]
 Exit `8` means the signature reached the merchant and tx402 could not determine the outcome. It
