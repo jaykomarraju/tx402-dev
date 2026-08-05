@@ -1933,6 +1933,19 @@ TypeScript **550 passed / 11 skipped**. `supply-chain` PASS, `reproducible` PASS
 - **The vector count is a cross-document gate.** Adding six vectors required updating the
   count in eight documents plus the docs site; `conformance:check` fails otherwise.
 
+**CI on the pushed commit `c7fbd75`: run [#47](https://github.com/jaykomarraju/tx402-dev/actions)
+is green, 11 / 11 jobs** — both Node legs, all four Python versions, macOS, Windows,
+conformance parity, the docs-site job, and **Release gates (fuzz, perf, supply chain)**, which
+is the job O62 had been intermittently reddening. The separate **Docs run #6 fails as
+designed**: build, generated-page, site and deployable-root steps all succeeded, and only
+`A deploy from main requires the deploy credentials` failed, with deploy skipped. That is
+O56's fail-closed condition working and **not** a product regression.
+
+**Nothing was published.** The docs content changed in this session — the quickstart, the CLI
+guide, the base-testnet page, the configuration reference and the generated API page — so
+`docs.tx402.io` is now **behind this commit** until either O56's secrets exist or someone runs
+the manual `wrangler pages deploy` with the user's authorization. Neither was done here.
+
 **O6, O43, O55 and O56 are re-deferred**, and **O8, O10 and O12 remain USER release blockers.**
 Nothing here touched registries, keys, or Cloudflare.
 
