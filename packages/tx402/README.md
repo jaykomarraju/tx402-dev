@@ -110,7 +110,7 @@ client construction fails if the signature does not verify.
 
 [`tx402` on PyPI](https://pypi.org/project/tx402/) is the same product in Python, released at the
 same version from the same commit. Both are held to identical behaviour — normalized output, route
-ordering, error codes, and the money rule — by 67 shared conformance vectors.
+ordering, error codes, and the money rule — by 73 shared conformance vectors.
 
 ## License
 

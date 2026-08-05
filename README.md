@@ -182,7 +182,7 @@ compiled into both packages; construction fails if the signature does not verify
 ```
 packages/tx402/          npm "tx402"    — SDK + CLI (TypeScript, the reference implementation)
 packages/tx402-python/   PyPI "tx402"   — SDK + CLI (Python, at behavioural parity)
-core-spec/               language-neutral: JSON Schemas, 67 frozen conformance vectors,
+core-spec/               language-neutral: JSON Schemas, 73 frozen conformance vectors,
                          and the signed release manifest. Neither SDK keeps a private copy.
 docs/                    the documentation site (Astro Starlight)
 examples/                runnable quickstart and dry-run, both languages
@@ -191,7 +191,7 @@ tools/                   size gate, manifest signer, conformance index, test mer
 adr/                     every architectural decision, including each deviation from SPEC.md
 ```
 
-**The two SDKs are held together by files, not by intent.** All 67 conformance vectors execute in
+**The two SDKs are held together by files, not by intent.** All 73 conformance vectors execute in
 both languages against the same normalized output, route ordering, error codes and money rule. The
 release manifest is signed by the Node tool and verified by the Python SDK, so the canonical-JSON
 encoding and the Ed25519 envelope are proven identical by the signature itself.
@@ -234,7 +234,7 @@ Scope, response times, and the guarantees a report can be filed against are in
 ## Contributing
 
 [CONTRIBUTING.md](CONTRIBUTING.md) leads with the three rules that actually get a PR rejected:
-`SPEC.md` governs, the 67 conformance fixtures are frozen, and behavioural changes land in both
+`SPEC.md` governs, the 73 conformance fixtures are frozen, and behavioural changes land in both
 languages together. Participation is governed by the
 [Contributor Covenant](CODE_OF_CONDUCT.md).
 

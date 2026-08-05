@@ -289,6 +289,48 @@
       "sha256": "sha256:ae10ffe6db50bc48e8bdc12de0ec7b3b519c97a033592d27fc24d46ef661b6b7"
     },
     {
+      "id": "policy.host-normalization.double-dot",
+      "kind": "policy.host-normalization",
+      "milestone": "M0",
+      "file": "vectors/policy/double-dot.json",
+      "sha256": "sha256:f0dfc35e4e5a048c5a74b335317b69ec00a7872a9b853608bf7fdfe9fff37e42"
+    },
+    {
+      "id": "policy.host-normalization.ipv6",
+      "kind": "policy.host-normalization",
+      "milestone": "M0",
+      "file": "vectors/policy/ipv6.json",
+      "sha256": "sha256:8875e423ec894004a2c4cba7b61e34040c1d1fcfddd807e08d56da9cd85325aa"
+    },
+    {
+      "id": "policy.host-normalization.root-label",
+      "kind": "policy.host-normalization",
+      "milestone": "M0",
+      "file": "vectors/policy/root-label.json",
+      "sha256": "sha256:5f10e1866dfa5b49bc6a8536644687ff8e11b2671d36b73a2ddb0351d2f3f0eb"
+    },
+    {
+      "id": "policy.host-normalization.trailing-dot",
+      "kind": "policy.host-normalization",
+      "milestone": "M0",
+      "file": "vectors/policy/trailing-dot.json",
+      "sha256": "sha256:f3ee03630ae444c36f7e3028a91448f4bccb99ab14825be277d347860cb4545b"
+    },
+    {
+      "id": "policy.host-normalization.unicode-idn",
+      "kind": "policy.host-normalization",
+      "milestone": "M0",
+      "file": "vectors/policy/unicode-idn.json",
+      "sha256": "sha256:640a504cd10ba401d24e820d8fad06dde9ce22f2e94051e0586a8b4bfd9d49f0"
+    },
+    {
+      "id": "policy.host-normalization.uppercase",
+      "kind": "policy.host-normalization",
+      "milestone": "M0",
+      "file": "vectors/policy/uppercase.json",
+      "sha256": "sha256:d1c974300b95a0872e6a081aa5dc9aab8871177e0e941d58c9ffc8751fcfe84f"
+    },
+    {
       "id": "protocol.decode-payment-required.amount-not-integer",
       "kind": "protocol.decode-payment-required",
       "milestone": "M1",

@@ -106,7 +106,7 @@ Until `1.0`, security fixes land on the latest minor only.
 - Releases are published from CI with provenance, through trusted publishing. No long-lived
   registry token exists.
 - The release manifest signing key is held outside developer machines.
-- Every dependency bump replays all 67 cross-language conformance vectors before it ships.
+- Every dependency bump replays all 73 cross-language conformance vectors before it ships.
 - Both SDKs are held to the same behavioural fixtures, so a fix that lands in one language and
   not the other fails CI rather than shipping.
 

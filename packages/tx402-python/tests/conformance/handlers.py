@@ -30,6 +30,7 @@ from tx402.fingerprint import (
 from tx402.health import HealthIndex
 from tx402.ledger import MemorySpendStore
 from tx402.manifest import resolve_network, verify_release_manifest
+from tx402.policy import normalize_policy_host
 from tx402.protocol import decode_payment_required
 from tx402.routing import RouteCandidate, order_route_candidates
 from tx402.solana import plan_exact_svm_authorization
@@ -125,6 +126,19 @@ register_handler("errors.taxonomy", _errors_taxonomy)
 register_handler("canonical-json", _canonical_json)
 register_handler("manifest.verify", _manifest_verify)
 register_handler("manifest.network-resolution", _manifest_network_resolution)
+
+
+def _policy_host_normalization(vector: dict[str, Any]) -> None:
+    """SPEC §6.3 / ADR-018 — the one definition of merchant identity, in both languages.
+
+    The twin of the TypeScript handler. These vectors exist because the trailing-dot rule
+    was only ever asserted inside each language's own suite, and a wall-clock-seeded fuzz
+    run was the only thing that ever compared them (PLAN.md O62).
+    """
+    assert normalize_policy_host(vector["input"]["url"]) == vector["expected"]["host"]
+
+
+register_handler("policy.host-normalization", _policy_host_normalization)
 
 
 def _protocol_decode_payment_required(vector: dict[str, Any]) -> None:

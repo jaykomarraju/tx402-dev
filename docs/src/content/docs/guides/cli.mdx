@@ -14,13 +14,23 @@ tx402 call <URL> [options]
   --method <METHOD>     HTTP method (default: GET)
   --body @<file>        Request body, read from a file
   --max-spend <MONEY>   Per-request cap, e.g. "0.10 USDC"
-  --network <CAIP2>     Restrict payment to one network
+  --network <CAIP2>     Allow only this network. Required to pay on a testnet:
+                        the default policy allows production networks only.
   --dry-run             Parse, evaluate policy, and plan routes. Never signs.
+                        Needs a configured key — planning reads your balance.
   --json                Emit one JSON object on stdout
   --timeout <MS>        Paid-retry timeout in whole milliseconds
   -h, --help            Show this message
   -v, --version         Show version
 ```
+
+:::caution[`--network` is mandatory on a testnet]
+The default policy allows only **production** networks — Base and Solana mainnet (SPEC §4.3).
+That is not an oversight: SPEC §16 forbids any silent fallback from production to testnet, so a
+testnet has to be asked for by name. Every testnet command on this site therefore carries
+`--network eip155:84532` or `--network solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`. Without it you
+get `TX402_SCHEME_UNSUPPORTED` and exit `5`, and the error lists what the merchant offered.
+:::
 
 ## `--dry-run` is the one to start with
 

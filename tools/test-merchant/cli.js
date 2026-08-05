@@ -72,10 +72,58 @@ for (const key of requirementKeys) {
   }
 }
 
+/**
+ * Replaces the static Solana fee payer with the one this facilitator actually publishes.
+ *
+ * The static default in `scenarios.js` keeps the deterministic merchant plannable, but a
+ * facilitator that rotates its fee payer would otherwise make the documented quickstart
+ * fail at `/settle` with a transaction the facilitator will not sign — and the buyer would
+ * see a signing-time error for a merchant-side configuration fact. Reading `/supported` is
+ * what `tools/ttv` has always done; the quickstart merchant now does it too (PLAN.md O64).
+ *
+ * A facilitator that cannot be reached, or that publishes no fee payer, leaves the static
+ * default in place: this is a test fixture, and failing to start would be a worse answer
+ * than starting with the value that was correct at the time of writing.
+ *
+ * @param {Record<string, unknown>[]} requirements
+ * @param {string} facilitatorUrl
+ */
+async function withPublishedFeePayer(requirements, facilitatorUrl) {
+  let supported;
+  try {
+    const response = await fetch(`${facilitatorUrl}/supported`);
+    supported = await response.json();
+  } catch (error) {
+    console.error(
+      `warning: could not read ${facilitatorUrl}/supported ` +
+        `(${error instanceof Error ? error.message : String(error)}); ` +
+        "keeping the built-in Solana fee payer.",
+    );
+    return requirements;
+  }
+  return requirements.map((requirement) => {
+    if (!String(requirement["network"]).startsWith("solana:")) return requirement;
+    const kind = (supported?.kinds ?? []).find(
+      (entry) =>
+        entry.x402Version === 2 &&
+        entry.scheme === "exact" &&
+        entry.network === requirement["network"],
+    );
+    const feePayer = kind?.extra?.feePayer;
+    if (typeof feePayer !== "string" || feePayer.length === 0) return requirement;
+    return { ...requirement, extra: { ...requirement["extra"], feePayer } };
+  });
+}
+
+let requirements = requirementKeys.map((key) => DEFAULT_REQUIREMENTS[key]);
+if (flags.facilitator !== undefined) {
+  requirements = await withPublishedFeePayer(requirements, flags.facilitator);
+}
+
 const merchant = await createTestMerchant({
   scenario: flags.scenario ?? "pay-once",
   port: Number(flags.port ?? 0),
-  requirements: requirementKeys.map((key) => DEFAULT_REQUIREMENTS[key]),
+  requirements,
   // Exposed so the documented quickstart can reach a *settled* payment without a public
   // demo merchant. `tools/ttv` has used this since S12; leaving it off the CLI meant the
   // quickstart could not offer a merchant URL that actually moves money (PLAN.md O50).

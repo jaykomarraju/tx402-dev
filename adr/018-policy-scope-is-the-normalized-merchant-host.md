@@ -175,6 +175,40 @@ than being discovered by an audit.
 **O43 is unaffected and stays accepted.** `https://./x` still normalizes to the empty string
 in both languages, for the reasons recorded there.
 
+## Amendment, S17 — the one-dot rule is normative, and now pinned outside the suites
+
+**Decision: `normalizePolicyHost` strips exactly one trailing dot, and that is the contract.
+The `pnpm fuzz` gate was wrong, not the normalizer.**
+
+The gate asserted, for every non-empty host, that re-normalizing its own output returned that
+output unchanged. That is strictly stronger than this ADR promises and the two cannot both
+hold: `https://a.test..` → `a.test.` → `a.test`. Because the fuzz seed is wall-clock derived,
+any push could go red without a code change, and one did — measured at 10 failures in 200
+deterministic seeds (5.0%) at CI's 200,000 iterations (PLAN.md O62).
+
+Which side to correct was a real choice, and the normalizer keeps its behaviour for four
+reasons. The one-dot rule is what this ADR already documents and what the parity table above
+already asserts. `a.test..` is not a resolvable DNS name, so no reachable merchant is
+affected. Changing it would move the spend-ledger scope key — the identity under which money
+is reserved — for a gain of nothing. And it is **not** a security question in either
+direction: `normalizeDomainPattern` routes allowlist entries through this same function, so a
+pattern and a host receive identical treatment and matching stays fail-closed both ways.
+
+Two things changed instead, and they close the gap the disagreement revealed — that the rule
+was only ever asserted _inside_ each language's own suite:
+
+- **The gate now asserts the contract, and asserts it from the input side.** An output-side
+  check cannot see this rule at all: a normalizer that stripped _every_ trailing dot emits a
+  host that never ends in one, so any assertion about re-normalizing the output would agree
+  with it. The gate now checks that the output is the lowercased hostname with exactly one
+  trailing dot removed, and separately that repeated application converges. Verified by
+  mutation: a strip-all normalizer and a strip-none normalizer are both rejected, and the
+  shipped one passes — none of which the previous assertion could distinguish.
+- **Six conformance vectors under `policy.host-normalization` pin it across languages**,
+  including `double-dot` for the exact case the gate and the implementation disagreed about.
+  A parity table inside two suites is two assertions; a vector is one fixture both languages
+  must answer identically.
+
 ## References
 
 - `SPEC.md` §4.1, §4.3, §5.3, §6.3

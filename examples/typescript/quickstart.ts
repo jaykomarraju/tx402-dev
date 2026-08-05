@@ -25,8 +25,18 @@ if (MERCHANT_URL === undefined || PRIVATE_KEY === undefined) {
 // implement the same two-method interface. See docs/security/keys.
 const evm = privateKeyToEvmSigner(PRIVATE_KEY as `0x${string}`);
 
+// The SDK requires HTTPS for every merchant, and the only way out is this explicit opt-in —
+// which the SDK itself scopes to `localhost`, `127.0.0.1` and `::1`, so it cannot downgrade a
+// real merchant even if it is left on. It is derived from the URL rather than hardcoded so
+// that copying this file does not carry an unnecessary relaxation into your own code.
+const merchantHost = new URL(MERCHANT_URL).hostname.replace(/^\[|\]$/gu, "");
+const isLocalhost = ["localhost", "127.0.0.1", "::1"].includes(merchantHost);
+
 const tx402 = createTx402Client({
   signers: { evm },
+
+  // Needed only for the quickstart's local test merchant, which speaks plain HTTP.
+  ...(isLocalhost ? { allowInsecureLocalhost: true } : {}),
 
   // These are the guardrails, and they run before the signer is reachable. `maxPerHour` is
   // the one that bounds a compromise: if something induces this process to pay repeatedly,

@@ -224,14 +224,42 @@ function fuzzUrl() {
     if (host !== host.toLowerCase()) throw new Error(`not lowercased: ${host}`);
     if (normalizePolicyHost(value) !== host) throw new Error(`unstable: ${value}`);
 
-    // Round-tripping the *output* back through the parser is a stronger check than tx402
-    // needs, and it is only meaningful for a non-empty host: `https://./x` has hostname "."
-    // which normalizes to "", and "https://" is not a URL. An empty host is not a bypass —
-    // it matches only the `"*"` pattern, which already allows everything — so this is a
-    // curiosity, not a hole, and the check is scoped rather than deleted.
+    // Re-normalizing the *output* must not be asserted to be a no-op, because ADR-018 does
+    // not promise that: `normalizePolicyHost` strips **exactly one** trailing dot, so
+    // `a.test..` → `a.test.` → `a.test`. Asserting full idempotence here asserted more than
+    // the contract, and the two could not both hold — the gate went red on any seed that
+    // happened to generate a host with two or more trailing dots, on a wall-clock seed, with
+    // no code change (PLAN.md O62).
+    //
+    // What the contract *does* promise is checked instead, and it is strictly more specific
+    // than the assertion it replaces: one more pass removes one more trailing dot and
+    // nothing else, and a host that does not end in a dot is already a fixed point. That
+    // pins the one-dot rule in both directions — a normalizer that stripped every dot, or
+    // none, now fails here.
+    //
+    // Only meaningful for a non-empty host: `https://./x` has hostname "." which normalizes
+    // to "", and "https://" is not a URL. An empty host is not a bypass — it matches only
+    // the `"*"` pattern, which already allows everything (O43).
+    // Checked against the *input*, because that is the only side on which the rule is
+    // observable: a normalizer that stripped every trailing dot would emit a host that never
+    // ends in one, and any output-side check would agree with it. `slice` rather than a
+    // regex, so the oracle is not the implementation's own expression restated.
+    const raw = new URL(value).hostname.toLowerCase();
+    const expected = raw.endsWith(".") ? raw.slice(0, -1) : raw;
+    if (host !== expected) {
+      throw new Error(`one-dot rule broken: ${raw} -> ${host}, expected ${expected}`);
+    }
+
+    // And re-normalizing takes exactly one more dot off, so repeated application converges
+    // rather than oscillating. Only meaningful for a non-empty host: `https://./x` has
+    // hostname "." which normalizes to "", and "https://" is not a URL. An empty host is not
+    // a bypass — it matches only the `"*"` pattern, which already allows everything (O43).
     if (host.length > 0) {
       const again = normalizePolicyHost(`https://${host}`);
-      if (again !== host) throw new Error(`not idempotent: ${host} -> ${again}`);
+      const converged = host.endsWith(".") ? host.slice(0, -1) : host;
+      if (again !== converged) {
+        throw new Error(`does not converge: ${host} -> ${again}, expected ${converged}`);
+      }
     }
   });
 }

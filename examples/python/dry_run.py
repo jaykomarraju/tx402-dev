@@ -28,10 +28,28 @@ if not MERCHANT_URL:
 
 
 def main() -> int:
+    from urllib.parse import urlsplit
+
+    # The SDK requires HTTPS for every merchant; this opt-in is scoped to localhost by the
+    # SDK itself and derived from the URL, so copying this file carries no relaxation.
+    is_localhost = (urlsplit(MERCHANT_URL).hostname or "") in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }
+
     # No signers configured at all. Route planning reports every offered requirement as a
     # candidate with `no-signer-configured`, which is exactly what you want to see when you
     # are asking "what would this cost me?" rather than "pay this".
-    with Tx402Client(policy=Policy(max_per_request="1.00 USDC")) as tx402:
+    with Tx402Client(
+        allow_insecure_localhost=is_localhost,
+        policy=Policy(
+            max_per_request="1.00 USDC",
+            # Testnets are never allowed by default (SPEC §4.3): a silent fall back from
+            # production to a testnet is worse than a refusal (SPEC §16).
+            allowed_networks=["eip155:84532", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
+        ),
+    ) as tx402:
         try:
             plan = tx402.plan("GET", MERCHANT_URL)
         except Tx402Error as error:

@@ -24,6 +24,7 @@
         "canonical-json",
         "manifest.verify",
         "manifest.network-resolution",
+        "policy.host-normalization",
         "protocol.decode-payment-required",
         "request.fingerprint",
         "spend-ledger.behavior",

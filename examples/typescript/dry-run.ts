@@ -22,11 +22,22 @@ if (MERCHANT_URL === undefined) {
   process.exit(2);
 }
 
+// The SDK requires HTTPS for every merchant; this opt-in is scoped to localhost by the SDK
+// itself and is derived from the URL, so copying this file carries no relaxation with it.
+const merchantHost = new URL(MERCHANT_URL).hostname.replace(/^\[|\]$/gu, "");
+const isLocalhost = ["localhost", "127.0.0.1", "::1"].includes(merchantHost);
+
 // No signers configured at all. Route planning will report every offered requirement as a
 // candidate with `no-signer-configured`, which is exactly what you want to see when you
 // are asking "what would this cost me?" rather than "pay this".
 const tx402 = createTx402Client({
-  policy: { maxPerRequest: "1.00 USDC" },
+  ...(isLocalhost ? { allowInsecureLocalhost: true } : {}),
+  policy: {
+    maxPerRequest: "1.00 USDC",
+    // Testnets are never allowed by default (SPEC §4.3), because a silent fall back from
+    // production to a testnet is worse than a refusal (SPEC §16). Naming them is the opt-in.
+    allowedNetworks: ["eip155:84532", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
+  },
 });
 
 try {

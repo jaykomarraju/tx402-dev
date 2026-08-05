@@ -1375,6 +1375,22 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
     context: context("configuration", "initial"),
   });
   const logger = config.logger ?? NOOP_LOGGER;
+  // SPEC §10 specifies the logger as an *object* carrying debug/info/warn/error. Checked
+  // here for the same reason `spendStore` is checked below: `emit` deliberately swallows
+  // logger failures so that a broken logger can never fail a payment that already settled,
+  // and that isolation turned a misconfigured hook into perfect silence — a function passed
+  // where an object belongs produced zero events and no error (PLAN.md O71). The
+  // suppression is correct and stays; accepting a value that can never work is not.
+  for (const level of ["debug", "info", "warn", "error"] as const) {
+    // Optional chaining covers null and every non-object in one comparison, which matters
+    // here: this sits on the core import path, against ADR-008's total-size ceiling.
+    if (typeof logger?.[level] !== "function") {
+      throw new ConfigurationError("logger must implement Tx402Logger", {
+        context: context("configuration", "initial"),
+        details: { configPath: "logger", reason: "invalid-logger" },
+      });
+    }
+  }
   const clock = config.clock ?? SYSTEM_CLOCK;
   const allowInsecureLocalhost = config.allowInsecureLocalhost ?? false;
   const paymentRetryMs = validateTimeouts(config.timeouts);

@@ -1287,6 +1287,23 @@ def _validate_retry_timeout(value: object) -> int:
     return value
 
 
+def _validate_logger(logger: object) -> None:
+    """Reject a logger that cannot receive events, rather than dropping them in silence.
+
+    SPEC §10 specifies the sink as an *object* carrying ``debug``/``info``/``warn``/
+    ``error``. ``emit`` suppresses logger failures on purpose — a logger fault must never
+    fail a payment that already settled — and that isolation is exactly what turned a
+    misconfigured hook into perfect silence: a callable passed where an object belongs
+    produced zero events and no error (PLAN.md O71). The suppression stays; accepting a
+    value that can never work does not. The TypeScript client checks the same four
+    attributes at the same point (ADR-005).
+    """
+    if not all(
+        callable(getattr(logger, name, None)) for name in ("debug", "info", "warn", "error")
+    ):
+        raise _configuration("logger", "invalid-logger")
+
+
 def _build_core(
     *,
     evm_signer: object,
@@ -1311,6 +1328,7 @@ def _build_core(
         now_epoch_ms=clock(),
     )
     _validate_retry_timeout(payment_retry_timeout_ms)
+    _validate_logger(logger)
     # `is None`, not `or`: a perfectly valid adapter that defines `__len__` or `__bool__`
     # — an empty-at-startup database-backed store is the obvious one — is falsey, and `or`
     # silently replaced it with an in-memory store, so a fleet-wide cap became per-process

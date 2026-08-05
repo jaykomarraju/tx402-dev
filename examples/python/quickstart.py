@@ -54,8 +54,19 @@ def main() -> int:
     # which implement the same two-method protocol. See docs/security/keys.
     evm = private_key_to_evm_signer(PRIVATE_KEY)
 
+    # The SDK requires HTTPS for every merchant, and this explicit opt-in is the only way
+    # out. The SDK scopes it to localhost/127.0.0.1/::1 itself, so it cannot downgrade a
+    # real merchant; it is derived from the URL so copying this file carries nothing with it.
+    is_localhost = (urlsplit(MERCHANT_URL).hostname or "") in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }
+
     with Tx402Client(
         evm_signer=evm,
+        # Needed only for the quickstart's local test merchant, which speaks plain HTTP.
+        allow_insecure_localhost=is_localhost,
         # These are the guardrails, and they run before the signer is reachable.
         # `max_per_hour` is the one that bounds a compromise: if something induces this
         # process to pay repeatedly, the ceiling is this number, not the wallet balance.

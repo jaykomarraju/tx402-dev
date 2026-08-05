@@ -22,7 +22,7 @@ requires a major version.
 
 `tx402` on [npm](https://www.npmjs.com/package/tx402) and `tx402` on
 [PyPI](https://pypi.org/project/tx402/) are **released at the same version, from the same commit,
-at the same time.** They are one product in two languages, held to identical behaviour by 67 shared
+at the same time.** They are one product in two languages, held to identical behaviour by 73 shared
 conformance vectors, and a version number that meant different things in the two ecosystems would
 make that guarantee unreadable.
 

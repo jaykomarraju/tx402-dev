@@ -88,7 +88,44 @@ async function load() {
   const dist = join(ROOT, "packages", "tx402", "dist");
   const errors = await import(pathToFileURL(join(dist, "index.js")).href);
   const cli = await import(pathToFileURL(join(dist, "cli", "exit-codes.js")).href);
-  return { errors, cli };
+  const client = clientMethods(errors, join(dist, "core", "client.d.ts"));
+  return { errors, cli, client };
+}
+
+/**
+ * The methods a constructed client actually carries, with the signatures it ships.
+ *
+ * Existence comes from a **real client instance**, for the same reason the tables above read
+ * the built package: a list of methods transcribed by hand is a second source of truth. The
+ * signature comes from the shipped `.d.ts`, which is the file a reader's editor loads.
+ *
+ * This exists because the API page listed only top-level module exports, so `inspect`,
+ * `plan`, `getBudgetState` and `queryBudgetState` — the entire client surface, and the only
+ * way to reconcile a settlement from code — appeared nowhere on the documentation site
+ * (PLAN.md O71).
+ *
+ * @param {Record<string, unknown>} errors the built core entry point
+ * @param {string} declarationPath
+ */
+function clientMethods(errors, declarationPath) {
+  const instance = errors["createTx402Client"]({});
+  const names = Object.keys(instance).filter((key) => typeof instance[key] === "function");
+
+  let declarations = "";
+  try {
+    declarations = readFileSync(declarationPath, "utf8");
+  } catch {
+    declarations = "";
+  }
+
+  return names.map((name) => {
+    // The declaration line for this member, if the interface is where we expect it. A
+    // missing match degrades to the bare name rather than failing the build: the page is
+    // still correct, just less specific.
+    const match = new RegExp(`^\\s*${name}\\((.*)$`, "mu").exec(declarations);
+    if (match === null) return { name, signature: `${name}(…)` };
+    return { name, signature: `${name}(${match[1]}`.trim().replace(/;$/u, "") };
+  });
 }
 
 function table(rows) {
@@ -217,7 +254,7 @@ ${detail}
 `;
 }
 
-function apiPage({ errors }) {
+function apiPage({ errors, client }) {
   const exported = Object.keys(errors).sort((a, b) => a.localeCompare(b));
   const isType = (name) => /^[A-Z]/.test(name) && !name.startsWith("TX402_");
   const constants = exported.filter((name) => /^[A-Z0-9_]+$/.test(name));
@@ -260,6 +297,20 @@ ${list(classes)}
 ### Constants
 
 ${list(constants)}
+
+## The client itself
+
+\`createTx402Client(config)\` returns an object carrying these methods. They are read from a
+constructed instance, so this list cannot claim a method the package does not ship.
+
+${client.map(({ signature }) => `- \`${signature}\``).join("\n")}
+
+\`fetch\` is the one most code calls. The other five are what you reach for when a payment has
+to be reasoned about rather than simply made: \`plan\` answers "what would this cost" without
+signing or reserving, \`inspect\` returns the raw challenge, and \`getBudgetState\` /
+\`queryBudgetState\` read the spend ledger — the latter for any scope, including one written by
+another process. Reconciling a settlement from code starts with \`plan\` and ends with
+\`queryBudgetState\`.
 
 ## Optional subpath exports
 

@@ -266,8 +266,10 @@ Options:
   --method <METHOD>     HTTP method (default: GET)
   --body @<file>        Request body, read from a file
   --max-spend <MONEY>   Per-request cap, e.g. "0.10 USDC"
-  --network <CAIP2>     Restrict payment to one network
+  --network <CAIP2>     Allow only this network. Required to pay on a testnet:
+                        the default policy allows production networks only.
   --dry-run             Parse, evaluate policy, and plan routes. Never signs.
+                        Needs a configured key — planning reads your balance.
   --json                Emit one JSON object on stdout
   --timeout <MS>        Paid-retry timeout in whole milliseconds
   -h, --help            Show this message

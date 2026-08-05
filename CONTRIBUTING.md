@@ -20,7 +20,7 @@ old one.
 
 ### 2. The conformance fixtures are frozen
 
-`core-spec/conformance/` holds 67 vectors that both SDKs execute. They are the contract that
+`core-spec/conformance/` holds 73 vectors that both SDKs execute. They are the contract that
 keeps TypeScript and Python identical.
 
 **Adding** a vector is ordinary work. **Changing or removing** one is a contract change.

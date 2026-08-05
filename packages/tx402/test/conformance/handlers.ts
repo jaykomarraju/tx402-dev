@@ -31,6 +31,7 @@ import {
   type SvmManifestAsset,
   type SvmManifestNetwork,
 } from "../../src/core/manifest.js";
+import { normalizePolicyHost } from "../../src/core/policy.js";
 import { decodePaymentRequired } from "../../src/core/protocol.js";
 import { orderRouteCandidates, type RouteCandidate } from "../../src/core/routing.js";
 import {
@@ -388,6 +389,14 @@ registerHandler("routing.candidate-order", (vector: ConformanceVector) => {
     const selected = ordered.find((candidate) => candidate.viable);
     expect(selected?.requirementIndex ?? null).toEqual(expected.selected);
   }
+});
+
+/* M0 — policy scope identity (SPEC §6.3, ADR-018). --------------------------------------- */
+
+registerHandler("policy.host-normalization", (vector: ConformanceVector) => {
+  const { url } = vector.input as { url: string };
+  const { host } = vector.expected as { host: string };
+  expect(normalizePolicyHost(url)).toBe(host);
 });
 
 /* M6 — completion semantics (SPEC §6.7). ------------------------------------------------ */

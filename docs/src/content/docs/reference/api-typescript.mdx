@@ -105,6 +105,25 @@ only when a payment on that family is actually planned (ADR-008, ADR-009).
 - `TX402_ERROR_TAXONOMY`
 - `X402_PROTOCOL_VERSION`
 
+## The client itself
+
+`createTx402Client(config)` returns an object carrying these methods. They are read from a
+constructed instance, so this list cannot claim a method the package does not ship.
+
+- `inspect(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<PaymentInspection>`
+- `plan(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<PaymentPlan>`
+- `fetch(input: Tx402RequestInfo, init?: Tx402RequestInit): Promise<Response>`
+- `getBudgetState(): BudgetState`
+- `queryBudgetState(query: BudgetQuery): Promise<BudgetState>`
+- `resetHealth(): void`
+
+`fetch` is the one most code calls. The other five are what you reach for when a payment has
+to be reasoned about rather than simply made: `plan` answers "what would this cost" without
+signing or reserving, `inspect` returns the raw challenge, and `getBudgetState` /
+`queryBudgetState` read the spend ledger — the latter for any scope, including one written by
+another process. Reconciling a settlement from code starts with `plan` and ends with
+`queryBudgetState`.
+
 ## Optional subpath exports
 
 | Import | Loads | Use when |

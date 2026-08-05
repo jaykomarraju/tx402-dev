@@ -9,7 +9,33 @@
  * scenario nobody can justify is visible as such.
  */
 
-/** Default requirements offered when a caller does not supply their own. */
+/**
+ * The fee payer the public x402 facilitator publishes on `/supported` for Solana.
+ *
+ * Solana's fee payer is the *facilitator's*, not the buyer's — that is what keeps the
+ * buyer's SOL untouched across a payment. It is a static default here so that the
+ * deterministic (no-`--facilitator`) merchant still emits a **plannable** challenge; when
+ * `--facilitator` is supplied, `cli.js` re-reads this from `/supported` so a rotated fee
+ * payer cannot silently break the documented quickstart.
+ */
+export const FACILITATOR_FEE_PAYER = "CKPKJWNdJEqa81x7CkZ14BVPiY6y16Sxs7owznqtWYp5";
+
+/**
+ * Default requirements offered when a caller does not supply their own.
+ *
+ * **`extra` is not decoration.** Every entry here must carry what its chain family needs to
+ * produce an authorization, because these are the requirement sets the documented
+ * quickstart offers a first-time reader: EVM needs the token's EIP-712 domain name and
+ * version for EIP-3009, and SVM needs the fee payer that will pay for the transfer. All
+ * four shipped `extra: {}` through S16, which made the quickstart's merchant emit a
+ * challenge tx402 itself rejects — `eip712-domain-missing` and `svm-feePayer-missing` — so
+ * the one command the docs tell a stranger to run could not settle on either chain
+ * (PLAN.md O64).
+ *
+ * That survived every green gate because `tools/ttv`, which measures SPEC §16 and reports
+ * PASS, builds its own requirement object and never reads this one. The parity is now
+ * pinned by `ux-regressions-s16.test.ts`, which plans directly from these values.
+ */
 export const DEFAULT_REQUIREMENTS = {
   base: {
     scheme: "exact",
@@ -18,7 +44,9 @@ export const DEFAULT_REQUIREMENTS = {
     amount: "50000",
     payTo: "0x1234567890AbcdEF1234567890aBcdef12345678",
     maxTimeoutSeconds: 60,
-    extra: {},
+    // Mainnet USDC's on-chain EIP-712 domain name is "USD Coin"; a mismatch here produces a
+    // signature the token rejects on-chain, so the name is per-network rather than shared.
+    extra: { name: "USD Coin", version: "2" },
   },
   baseSepolia: {
     scheme: "exact",
@@ -27,7 +55,8 @@ export const DEFAULT_REQUIREMENTS = {
     amount: "50000",
     payTo: "0x1234567890AbcdEF1234567890aBcdef12345678",
     maxTimeoutSeconds: 60,
-    extra: {},
+    // Base Sepolia's test USDC uses "USDC". Verified by a real settled payment at S16.
+    extra: { name: "USDC", version: "2" },
   },
   solana: {
     scheme: "exact",
@@ -36,7 +65,7 @@ export const DEFAULT_REQUIREMENTS = {
     amount: "50000",
     payTo: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     maxTimeoutSeconds: 60,
-    extra: {},
+    extra: { feePayer: FACILITATOR_FEE_PAYER },
   },
   solanaDevnet: {
     scheme: "exact",
@@ -45,7 +74,7 @@ export const DEFAULT_REQUIREMENTS = {
     amount: "50000",
     payTo: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     maxTimeoutSeconds: 60,
-    extra: {},
+    extra: { feePayer: FACILITATOR_FEE_PAYER },
   },
 };
 

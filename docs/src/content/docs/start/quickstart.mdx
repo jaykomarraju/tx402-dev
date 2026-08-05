@@ -99,21 +99,7 @@ The SDK requires HTTPS everywhere except localhost, where the CLI opts in explic
 merchant on any other host must be `https://`, and there is no flag to change that.
 :::
 
-## 3. See what the merchant is asking, without paying
-
-No key, no signature, no money — just the challenge and what tx402 would do with it:
-
-```bash
-npx tx402 call <merchant-url> --max-spend "0.10 USDC" --dry-run
-```
-
-You will see the requirement count, the route tx402 would take, the atomic amount, and the
-candidate ranking. `--dry-run` **never invokes a signer** and **never reserves budget**, so you
-can run it as many times as you like.
-
-Add `--json` to get one machine-readable object on stdout instead.
-
-## 4. Point tx402 at your key
+## 3. Point tx402 at your key
 
 ```bash
 # Base Sepolia — 0x-prefixed 32-byte hex
@@ -132,10 +118,44 @@ noise: anything that can read this process's environment can read the key.
 The CLI accepts **no flag that carries a key**, and never will — a flag lands in shell history,
 in `ps` output, and in CI logs.
 
+## 4. See what the merchant is asking, without paying
+
+No signature and no money — just the challenge and what tx402 would do with it:
+
+```bash
+npx tx402 call <merchant-url> \
+  --network eip155:84532 \
+  --max-spend "0.10 USDC" --dry-run
+```
+
+Use `--network solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` for the Solana route instead.
+
+You will see the requirement count, the route tx402 would take, the atomic amount, and the
+candidate ranking. `--dry-run` **never invokes a signer** and **never reserves budget**, so you
+can run it as many times as you like.
+
+Add `--json` to get one machine-readable object on stdout instead.
+
+:::note[Why `--network`, and why the key had to come first]
+Two things about this command are not obvious, and both are deliberate.
+
+**`--network` is required here, not optional.** tx402's default policy allows only the
+**production** networks — Base and Solana mainnet (SPEC §4.3). A testnet is never allowed by
+default, because the one thing worse than refusing a payment is silently falling back from the
+network you meant to a different one (SPEC §16). Without the flag you get
+`TX402_SCHEME_UNSUPPORTED` and exit `5`, listing what the merchant offered.
+
+**A dry run needs a configured key, even though it never signs with it.** `--dry-run` plans
+routes, and planning means reading your address and your balance on each offered chain in order
+to rank them — a route it cannot price is a route it cannot rank. So the key must already be set,
+which is why it is step 3 and not step 5. What `--dry-run` guarantees is narrower and stronger
+than "no key": it **never invokes a signer**, enforced structurally rather than by convention.
+:::
+
 ## 5. Make the paid call
 
 ```bash
-npx tx402 call <merchant-url> --max-spend "0.10 USDC"
+npx tx402 call <merchant-url> --network eip155:84532 --max-spend "0.10 USDC"
 ```
 
 The response body goes to stdout and nothing else does, so `> out.json` gives you a clean file.
@@ -237,8 +257,21 @@ Steps 3 and 5 happening before step 6 is the property the whole design is built 
 | ---- | -------------------------------- | ---------------------------------------------------------------------- |
 | `3`  | Your own cap refused it          | Raise `--max-spend`, or accept it — this is the guardrail working      |
 | `4`  | Wallet cannot cover it           | Fund the wallet, and check you funded the network the merchant offered |
-| `5`  | No usable route or bad challenge | Check the right extra is installed and a signer is configured          |
+| `5`  | No usable route or bad challenge | Read the message — it says which of the four causes below it is        |
 | `7`  | Network failure                  | Transient; retry is safe here                                          |
 | `8`  | **Ambiguous**                    | Money may have moved. Do not retry — reconcile with the merchant first |
+
+Exit `5` is the one worth expanding, because it is the code you are most likely to see and it
+covers four unrelated causes. The message names which:
+
+| Message                                             | What is actually wrong                                                                       |
+| :-------------------------------------------------- | :------------------------------------------------------------------------------------------- |
+| `No allowed payment network was offered`            | You omitted `--network`, or pointed it at a network this merchant does not offer. The error lists `offeredNetworks` — copy one from there |
+| `No offered network has a configured signer…`       | No key is exported for any offered chain, or the chain's optional peer dependency is missing — `@x402/evm` + `viem` for Base, the Solana trio for Solana |
+| `…requirement is unusable: eip712-domain-missing`   | The **merchant's** challenge is malformed: it did not publish the token's EIP-712 domain. Nothing on your side fixes this |
+| `Solana requirement is missing an address`          | The same, on Solana: the merchant's challenge names no fee payer                              |
+
+The last two are merchant defects, not yours. `--json` puts the machine-readable form of any of
+them on stdout, and `details.schemaPath` points at the exact field.
 
 Full detail for every code is in the [error reference](../../reference/errors/).

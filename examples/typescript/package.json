@@ -7,8 +7,10 @@
   "scripts": {
     "quickstart": "node --experimental-strip-types quickstart.ts",
     "dry-run": "node --experimental-strip-types dry-run.ts",
-    "agent-loop": "node --experimental-strip-types agent-loop.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6.0"
   },
   "dependencies": {
     "tx402": "workspace:*"
