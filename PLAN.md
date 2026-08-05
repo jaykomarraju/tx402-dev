@@ -2398,6 +2398,17 @@ before every page agreed, with `operations/publishing` the last to settle and on
 serving new bytes for one assertion and old bytes for another. Polling until every claim agrees,
 rather than until the first one does, is the form of this check that works.
 
+**The payment path was smoke-tested after the edits**, on Node v20.19.5 against the packed
+tarball: exit 0, `"events": 9`, settlement committed. Two settlements, not one — the first
+invocation redirected stderr into the JSON file, so its document could not be parsed even
+though it had exited 0 and paid. Both were recovered from Base Sepolia `Transfer` logs rather
+than from tool output: `0xc5925c77809623047733fbbe75c5431b7299966b79c6a4580ad18ca1c5a01be5`
+(block 45,094,535) and `0x64c0c3b866b768f3f09c9adef91fe65b9065a9777c2ba56af415c166d0075aed`
+(block 45,094,540), 50,000 atomic each. Balance reconciles exactly: 17,298,000 → 17,198,000.
+Solana Devnet untouched at **29,198,000**. Recorded including the double-spend of testnet funds,
+because a settled payment that the operator could not read is exactly the situation the exit-code
+documentation exists for.
+
 **§11.3 is still not discharged, and S25 cannot discharge it.** Four consecutive cold re-runs
 have now returned findings. The trend is real and worth stating plainly: S22 and S24 both found
 **zero defects in payment behaviour**, and the findings have moved from blockers to prose and
