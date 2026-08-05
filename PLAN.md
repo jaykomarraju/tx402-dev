@@ -2488,6 +2488,20 @@ import path, unchanged despite the `run.ts` edit. Python gates exit 0 — ruff, 
 
 **CI at `290d69c` verified independently before starting:** run **#58 is 11 / 11**.
 
+**CI and the publish, both measured after the fact.** `main` was fast-forwarded to `27155ae`
+and pushed to `jaykomarraju/tx402-dev`. **CI run #59 on `27155ae` is 11 / 11 green**, read from
+the GitHub API. **Docs run #11 fails as designed**, step for step identical to #8 through #10:
+only `A deploy from main requires the deploy credentials` fails, with the three deploy steps
+skipped. That is O56 fail-closed.
+
+**The documentation was rebuilt and published** — deployment `e4f34a78`, source `27155ae`.
+Verified over the public internet afterwards: `docs:live` **8 / 8**, and a sweep of **all sixteen
+live pages for `SPEC §…`, `ADR-…` and `SEC-…` returns zero**, against ninety-seven before.
+**Propagation staggered the hardest yet** — five sweeps before every page agreed, with pages
+clearing in no particular order and `/operations/running/` last. Polling until every page and
+every claim agrees, rather than until the first does, remains the only form of this check that
+works.
+
 **§11.3 is still not discharged, and S27 cannot discharge it.** Five cold re-runs, five
 remediations. The direction is nonetheless consistent: **three consecutive passes have found no
 payment-correctness defect**, and what remains is what the product says about itself.
