@@ -2281,6 +2281,28 @@ have now returned findings, and each time some of what they found sat immediatel
 the previous remediation had touched. The session after this one must be another cold
 fresh-eyes re-run; only a zero-finding result advances the project to §11.4.
 
+**CI and the publish, both measured after the fact.** `main` was fast-forwarded to `743719f` and
+pushed to `jaykomarraju/tx402-dev` — not `neogeeks/tx402`. **CI run #54 on `743719f` is 11 / 11
+green**, read from the GitHub API. **Docs run #9 fails as designed**, step for step identical to
+#8: steps 1 through 9 pass and only `A deploy from main requires the deploy credentials` fails,
+with the three deploy steps skipped. That is O56 fail-closed and not a regression.
+
+**The documentation was rebuilt and published**, on the user's in-session authorization, because
+S23 changed seven pages and §11.3 sends a cold agent to read the site — deployment `6cbf7fa3`,
+source `743719f`. Verified over the public internet afterwards: `docs:live` **8 / 8**; an
+internal-citation sweep across **all sixteen** live pages returns clean; and each corrected claim
+was checked against the live bytes rather than the built `dist/`. **Propagation staggered again**,
+as it did at S21 — three pages still served the old text on the first sweep and cleared by the
+third, about forty seconds later. Polling until the live bytes agree, rather than checking once,
+is the only reliable form of this verification.
+
+**The documented path was re-run end to end after the edits**, on Node v20.19.5 against the
+packed tarball: `--dry-run` renders the plan, and the paid call settled as
+`0x070147dd50054337bfe86332c40352f6d3b3e82f68758b5f188d2a3c6f4fc6c4` — receipt `0x1`, block
+45,092,329, 50,000 atomic. Both dry-run examples were run with **no key set at all**, in both
+languages, and both exit 0. Base Sepolia balance closed the session at **17,698,000 atomic**;
+Solana Devnet was untouched at **29,348,000**.
+
 ---
 
 ## 8. Session Protocol (how this stays a living document)
