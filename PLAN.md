@@ -2065,6 +2065,22 @@ only on one developer's machine, the workflow still has no `CLOUDFLARE_API_TOKEN
 next push to `main` will fail exactly the same way. A manual deploy is a published site, not
 a pipeline.
 
+**CI is measured on `main`, not inherited.** `main` was fast-forwarded to `15284eb` and
+pushed directly — no pull request, consistent with every previous session on this repository
+— to `jaykomarraju/tx402-dev`, which is **not** `neogeeks/tx402`; the standing instruction
+not to touch the public repository is unaffected. **CI run #50 on `15284eb` is 11 / 11
+green**: Docs site, conformance parity, TypeScript on Node 20 and 22, Python 3.10 / 3.11 /
+3.12 / 3.13, macOS and Windows cross-platform legs, and Release gates (fuzz, perf, supply
+chain). For the first time this figure was read from the GitHub API rather than copied from a
+commit message; the baseline was checked the same way and **run #49 on `7376245` was likewise
+11 / 11**, which retrospectively substantiates the claim S18 and S19 were both handed.
+
+**Docs run #7 fails as designed**, exactly as #6 did: checkout, install, SDK build,
+generated-page currency, site build and deployable-root all succeed, and only
+`A deploy from main requires the deploy credentials` fails, with all three deploy steps
+skipped. That is O56's fail-closed condition and **not** a product regression. The site
+itself is already current, from the manual deploy recorded above.
+
 **§11.3 is still not discharged, and S19 cannot discharge it.** A remediation session is not a
 re-run. Under §11.1 the pass must be re-run cold by an agent that has not read `PLAN.md`,
 `SPEC.md`, `PRD.md`, `adr/` or any source file — exactly as S17's fixes did not discharge
