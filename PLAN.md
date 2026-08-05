@@ -2580,6 +2580,22 @@ exit 0 — **597 passed at 93.01 % coverage**.
 
 **CI at `08df8f7` verified independently before starting:** run **#60 is 11 / 11**.
 
+**CI and the publish, both measured after the fact.** `main` was fast-forwarded to `2974184`
+and pushed to `jaykomarraju/tx402-dev`. **CI run #61 on `2974184` is 11 / 11 green**, read from
+the GitHub API. **Docs run #12 fails as designed**, step for step identical to #8 through #11:
+only `A deploy from main requires the deploy credentials` fails, deploy steps skipped. O56
+fail-closed.
+
+**The documentation was rebuilt and published** — deployment `1bbb4d10`, source `2974184`.
+`docs:live` **8 / 8**, and every corrected page verified against the live bytes. **Propagation
+was clean on the first sweep this time**, unlike the previous three deploys; the polling loop
+stays regardless, because a single clean sweep is not evidence that the next one will be.
+
+**No testnet funds were spent.** Every S29 probe ran against the RPC stub and the in-process
+test merchant, so the balances are exactly where S28 left them: Base Sepolia **16,348,000
+atomic**, Solana Devnet **28,748,000 atomic**, both re-read on-chain at the close of this
+session rather than carried forward on trust.
+
 **§11.3 is still not discharged, and S29 cannot discharge it.** Six cold re-runs, six
 remediations.
 
