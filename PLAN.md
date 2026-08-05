@@ -1792,6 +1792,25 @@ still **0.05 KiB**, untouched here because documentation assets are not in the S
 main requires the deploy credentials`, which is the fail-closed condition working, not a
 regression. **O8**, **O10** and **O12** remain USER release blockers.
 
+**The restyled site was published manually, on the user's explicit in-session authorization**,
+after CI run [#44](https://github.com/jaykomarraju/tx402-dev/actions/runs/30975692587) came back
+green on `69feb99` — which, differing from the red `71c13dd` only in this file, is itself further
+evidence for O62's intermittency. The site was rebuilt from the committed tree
+(`pnpm docs:check` current, 17 pages, deployable root present) and deployed with
+`wrangler pages deploy docs/dist --project-name tx402-docs --branch main`, the same project and
+command the workflow uses, from the user's own authenticated Cloudflare account. Verified over
+the public internet afterwards: `docs-live check` **8 / 8** against `https://docs.tx402.io`, both
+`.woff2` files and `favicon.svg` returning `200` with the correct content types, and the served
+`_astro/common.*.css` **byte-identical** to the local build. An initial probe that reported the
+fonts as `404` was propagation lag on a just-published deployment, not a missing asset; the
+re-probe returns `200 font/woff2` with the deployment's etag. The `.wrangler/` scratch directory
+the CLI creates was removed, and the working tree is clean.
+
+**This does not close O56.** Nothing about the repository's ability to deploy changed: the
+credentials still live only on one developer's machine, the workflow still has no
+`CLOUDFLARE_API_TOKEN`, and the next push to `main` will fail exactly the same way. A manual
+deploy is a published site, not a pipeline.
+
 ---
 
 ## 8. Session Protocol (how this stays a living document)
