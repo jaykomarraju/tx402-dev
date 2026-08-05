@@ -1941,10 +1941,27 @@ designed**: build, generated-page, site and deployable-root steps all succeeded,
 `A deploy from main requires the deploy credentials` failed, with deploy skipped. That is
 O56's fail-closed condition working and **not** a product regression.
 
-**Nothing was published.** The docs content changed in this session — the quickstart, the CLI
-guide, the base-testnet page, the configuration reference and the generated API page — so
-`docs.tx402.io` is now **behind this commit** until either O56's secrets exist or someone runs
-the manual `wrangler pages deploy` with the user's authorization. Neither was done here.
+**The docs were published manually, on the user's explicit in-session authorization, and this
+was a precondition for S18 rather than a convenience.** S17 changed the quickstart, the CLI
+guide, the base-testnet page, the configuration reference and the generated API page, which
+left `docs.tx402.io` serving the **pre-S17** text — verified directly: the live quickstart
+still carried the false "No key, no signature" promise and no `--network` flag. §11.3 sends a
+cold agent to read the documentation site, so starting S18 against that site would have made
+it re-find O65, O66 and O67 — three findings that are already fixed — and the re-run would
+have failed for reasons that are no longer true.
+
+Rebuilt from the committed tree (`docs:check` current, 17 pages) and deployed with
+`wrangler pages deploy docs/dist --project-name tx402-docs --branch main`, the same project
+and command the workflow uses, from the user's own authenticated Cloudflare account. Verified
+over the public internet afterwards: `docs:live` **8 / 8**, the live quickstart now carrying
+`--network eip155:84532` and "No signature and no money", the stale promise gone (0
+occurrences), and `inspect`, `getBudgetState` and `queryBudgetState` present on the API page
+for the first time. The `.wrangler/` scratch directory was removed and the tree left clean.
+
+**This does not close O56.** The repository still cannot deploy itself: the credentials live
+only on one developer's machine, the workflow still has no `CLOUDFLARE_API_TOKEN`, and the
+next push to `main` will fail exactly the same way. A manual deploy is a published site, not
+a pipeline.
 
 **O6, O43, O55 and O56 are re-deferred**, and **O8, O10 and O12 remain USER release blockers.**
 Nothing here touched registries, keys, or Cloudflare.
