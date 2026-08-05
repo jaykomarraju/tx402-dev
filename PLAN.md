@@ -2690,6 +2690,19 @@ it.
 / 25.00** and **32.05 / 32.25 KiB gz**, unchanged (this session touched no shipped code). Python
 gates exit 0 — **597 passed at 93.01 % coverage**.
 
+**CI and the publish, both measured after the fact.** `main` was fast-forwarded to `e664027` and
+pushed to `jaykomarraju/tx402-dev`. **CI run #63 on `e664027` is 11 / 11 green**, read from the
+GitHub API. **Docs run #13 fails as designed**, step for step identical to #8 through #12: only
+`A deploy from main requires the deploy credentials` fails, deploy steps skipped. O56 fail-closed.
+
+**The documentation was rebuilt and published** — deployment `1aa216c0`, source `e664027`.
+`docs:live` **8 / 8**, and every corrected claim checked against the live bytes: propagation was
+clean on the first sweep, as it was at S29. The polling loop stays regardless.
+
+**No testnet funds were spent.** Every probe ran against the RPC stub and the in-process test
+merchant, so balances are where S30 left them: Base Sepolia **16,048,000 atomic**, Solana Devnet
+**28,698,000 atomic**.
+
 **§11.3 is still not discharged, and S31 cannot discharge it.** Seven cold re-runs, seven
 remediations — but the trend is worth reading rather than the count: **four consecutive passes
 have found no defect in payment behaviour**, and across all seven only two software defects were
