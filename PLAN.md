@@ -2154,6 +2154,26 @@ two failures in the safe direction would be as wrong as collapsing them in the u
 **Gates measured.** `pnpm check` green on Node v22.23.1 (569 passed, 11 skipped; size 17.27 /
 25.00 and 32.00 / 32.00 KiB gz), Python gates green (576 passed, 92.64 % coverage).
 
+**CI and the publish, both measured.** `main` was fast-forwarded to `32ca84a` and pushed
+directly to `jaykomarraju/tx402-dev` — not `neogeeks/tx402`. **CI run #52 on `32ca84a` is
+11 / 11 green**, read from the GitHub API. **Docs run #8 fails as designed**, step for step
+identical to #6 and #7: every build and currency step passes and only
+`A deploy from main requires the deploy credentials` fails, with the deploy steps skipped.
+That is O56 fail-closed and not a regression.
+
+**The documentation was rebuilt and published**, on the user's standing in-session
+authorization, because S21 changed six pages and §11.3 sends a cold agent to read the site —
+deployment `974ed9b7`, source `32ca84a`. Verified over the public internet afterwards:
+`docs:live` **8 / 8**; an internal-citation sweep across **all sixteen** pages returns clean
+for `PLAN.md`, open-item numbers, audit references and session identifiers; and the O80 link
+that previously missed its target now resolves to `/operations/release-manifest/` with a 200.
+
+**Cloudflare Pages propagates per file and staggers.** A sweep run immediately after the
+deploy still reported two pages carrying the old text while the rest had updated, and both
+cleared on their own within a minute. The source and the built `dist/` were clean throughout.
+Recorded because a verification run immediately after a deploy can produce a false positive,
+and the honest fix is to poll until the live bytes agree rather than to check once.
+
 **§11.3 is still not discharged, and S21 cannot discharge it** — for the same reason S19 could
 not. Two consecutive cold re-runs have now come back with findings, and in both cases some of
 what they found sat immediately beside what the previous remediation had touched. That is the
