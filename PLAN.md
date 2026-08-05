@@ -2040,6 +2040,31 @@ of 6 after. The assertions that pass in both states are deliberate do-not-regres
 SPEC §11 stdout/stderr split, and the event stream keeping `settlementIdHash` hashed, which is
 the half of ADR-019 that must **not** change.
 
+**The documentation was published manually, on the user's explicit in-session
+authorization, and this is a precondition for S20 rather than a convenience.** Measured
+before the deploy: `docs.tx402.io` was still serving the **pre-S19** quickstart — the
+both-chain step-6 snippet live, the scaffold line and the exit-9 row absent. §11.3 sends a
+cold agent to read the documentation site, so starting S20 against that site would have made
+it re-find O72, O73 and O76 — three findings that are already fixed — and the re-run would
+have failed for reasons that are no longer true. That is the same trap S17 defused before
+S18, and it recurs every time a remediation session changes the docs.
+
+Rebuilt from the committed tree (`docs:check` current, 17 pages) and deployed with
+`wrangler pages deploy docs/dist --project-name tx402-docs --branch main`, the same project
+and command the workflow uses, from the user's own authenticated Cloudflare account —
+deployment `ddbc4b4b`, source `b313d99`, Production on `main`. The production alias lagged
+the deployment by roughly half a minute; both the deployment URL and `docs.tx402.io` were
+polled until they agreed, so "published" here means verified over the public internet rather
+than inferred from a successful upload. Confirmed afterwards: `docs:live` **8 / 8**, and ten
+specific S19 markers present on the live quickstart and CLI guide, including the scaffold
+line, both runner commands, the chain-scoped snippet titles, the exit-9 row and the ADR-019
+reference. The `.wrangler/` scratch directory was removed and the tree left clean.
+
+**This does not close O56.** The repository still cannot deploy itself: the credentials live
+only on one developer's machine, the workflow still has no `CLOUDFLARE_API_TOKEN`, and the
+next push to `main` will fail exactly the same way. A manual deploy is a published site, not
+a pipeline.
+
 **§11.3 is still not discharged, and S19 cannot discharge it.** A remediation session is not a
 re-run. Under §11.1 the pass must be re-run cold by an agent that has not read `PLAN.md`,
 `SPEC.md`, `PRD.md`, `adr/` or any source file — exactly as S17's fixes did not discharge
