@@ -5,10 +5,10 @@ sidebar:
   order: 1
 ---
 
-**The authoritative field table is SPEC §4.3, and every field in it is implemented.** This
-page is not a second copy of that table; it is the set of fields whose behaviour is not
-obvious from a one-line description, written out in full so the reasoning is not
-rediscovered — or quietly re-invented — later.
+**Every configuration field the SDKs accept is implemented in both languages.** This page is
+not a flat list of them; it is the set of fields whose behaviour is not obvious from a
+one-line description, written out in full so the reasoning is not rediscovered — or quietly
+re-invented — later. The complete field table is at the bottom.
 
 Fields are given in both spellings where they differ: TypeScript's nested, camel-cased form and
 Python's flat, snake-cased keyword arguments. Where a field is offered by one language only, the
@@ -23,10 +23,10 @@ page yet; Python's signatures are on the objects themselves and in the
 
 ## `routing.maxQuoteAgeMs` — conditional, and inert for standard v2 challenges
 
-**Default:** `5000` · **SPEC §4.3, §6.3 step 12** · **ADR-010 decision 3**
+**Default:** `5000`
 
-SPEC describes this as "Reject older `PaymentRequired` timestamps **when present**", and
-SPEC §6.3 step 12 likewise says "when defined by protocol".
+The rule is "reject older `PaymentRequired` timestamps **when present**" — and "when present"
+is doing all the work.
 
 > **Upstream x402 v2 `PaymentRequired` carries no timestamp.**
 
@@ -52,16 +52,15 @@ and where none is present — which is every standard v2 challenge — it does n
 stale quotes. Setting it lower does not tighten anything, and the field being non-zero should
 not be read as evidence that challenge freshness is being enforced. What _does_ bound the
 window is the authorization lifetime: `min(60s, maxTimeoutSeconds)`, never exceeding the
-merchant's own bound (SPEC §6.6).
+merchant's own bound.
 
-The field is kept rather than removed for two reasons: SPEC §4.3 defines it, and a scheme
+The field is kept rather than removed for two reasons: it is part of the configuration
+contract, and a scheme
 that starts putting a timestamp in `extra` gets the check for free.
 
 ---
 
 ## `routing.rpcOverrides` — your endpoint instead of the manifest's
-
-**ADR-015**
 
 The signed manifest ships keyless public RPC endpoints, because those are the only ones that
 can be published to every installation. A keyless public endpoint has a per-IP quota, and at
@@ -102,7 +101,7 @@ applies:
 :::note[This does not weaken the signed manifest]
 The manifest's signature protects against a *third party* redirecting your balance reads.
 An override is you, in your own source. And it cannot make tx402 pay on the wrong chain
-regardless: SPEC §7.1 and §7.2 require chain identity — `eth_chainId`, the Solana genesis
+regardless: chain identity — `eth_chainId`, the Solana genesis
 hash — to be proven on the same endpoint that serves the balance, on **every** read, and
 that check runs against whatever endpoint is in use. An override pointing somewhere wrong
 opens that endpoint's circuit and is skipped.
@@ -118,9 +117,7 @@ environment variable, your code passes it in.
 
 ## `policy.allowedNetworks` and `routing.preferNetworks` — aliases in, canonical out
 
-**SPEC §4.1, §4.3, §7.2** · **ADR-010 decision 4**
-
-SPEC §4.1's example writes `"solana:mainnet"`. Upstream never emits that. Solana CAIP-2
+It is tempting to write `"solana:mainnet"`. Upstream never emits that. Solana CAIP-2
 identifiers are genesis-hash based:
 
 | Cluster | Canonical CAIP-2                          | Alias            |
@@ -147,8 +144,6 @@ accept a network the SDK cannot pay on.
 
 ## `manifest` — verified at construction, offline, against compiled-in keys
 
-**SPEC §4.3, §5.4** · **ADR-012**
-
 Defaults to the signed manifest bundled with the build. A caller-supplied manifest is
 verified on identical terms; there is no "trust me" mode.
 
@@ -162,24 +157,24 @@ Two consequences worth knowing:
 - **Expiry is real.** The bundled manifest stops verifying on **2027-08-02**, at which point
   client construction fails until it is re-issued. See
   [the manifest runbook](../../operations/release-manifest/).
-- **`requiredNetworks` is not applied by default.** SPEC §5.4's four-network requirement binds
-  the _bundled_ manifest, which a test asserts directly. A caller-supplied manifest may
+- **`requiredNetworks` is not applied by default.** The four-network requirement binds the
+  _bundled_ manifest, which a test asserts directly. A caller-supplied manifest may
   legitimately declare a single network — a local integration fixture, for instance — so
   verification requires nothing unless asked.
 
 ---
 
-## `signers` — abstractions only (SEC-001)
+## `signers` — abstractions only
 
-`signers.evm` takes anything satisfying SPEC §7.1's `EvmSigner`: a `kind`, an async
+`signers.evm` takes anything satisfying the `EvmSigner` contract: a `kind`, an async
 `getAddress()`, and `signTypedData(request)`. The core client never accepts a private key, and
-there is no environment-variable fallback — SPEC §15 forbids silently substituting an
-environment key for a configured signer.
+there is no environment-variable fallback: silently substituting an environment key for a
+configured signer is forbidden outright.
 
 The address is resolved on **first use** and cached per signer object, not at construction:
-`createTx402Client` validates synchronously (SPEC §4.1) and cannot await an async lookup. A failed
+`createTx402Client` validates synchronously and cannot await an async lookup. A failed
 lookup is not cached, so a transient KMS outage does not disable a signer for the life of the
-process. ADR-010 decision 5a records this.
+process.
 
 Chain adapters load lazily. `signers.evm` alone is enough — importing `tx402/evm` by hand is only
 necessary to build a signer or inspect a plan. A configured signer for a family whose adapter is
@@ -193,7 +188,7 @@ import { privateKeyToEvmSigner } from "tx402/signers";
 ```
 
 It exists for development and for dedicated low-balance wallets. Prefer a KMS, a hardware wallet,
-or a remote signing service — SPEC §9.1 lists prompt injection extracting a wallet key as a live
+or a remote signing service — the threat model lists prompt injection extracting a wallet key as a live
 threat for the agent runtimes this SDK targets, and a key in process memory is a key an in-process
 compromise can read.
 
@@ -206,7 +201,7 @@ Python takes them as flat keyword arguments and exports no `Timeouts` type. Both
 because a Python reader who follows only the TypeScript spelling constructs something that does
 not exist.
 
-| SPEC §4.3 field             | TypeScript                  | Python                          | Default                 |
+| Field                       | TypeScript                  | Python                          | Default                 |
 | :-------------------------- | :-------------------------- | :------------------------------ | :---------------------- |
 | `timeouts.initialRequestMs` | `timeouts.initialRequestMs` | `initial_request_timeout_ms`    | absent                  |
 | `timeouts.paymentRetryMs`   | `timeouts.paymentRetryMs`   | `payment_retry_timeout_ms`      | `10000`, minimum `1000` |
@@ -236,17 +231,17 @@ Python — so the path in the error is always one you could have typed.
 
 **`paymentRetryMs` covers the signature-bearing attempt**, and a paid retry that hits its
 deadline is **ambiguous**, not failed: the signature was already transmitted, so
-`AmbiguousPaymentError` is raised and the reservation is retained until its 120-second TTL
-(SPEC §6.7). Setting this very low does not make failures cleaner — it makes ambiguous outcomes
-more likely. The initial request carries no such hazard, which is why it is the one that may be
+`AmbiguousPaymentError` is raised and the reservation is retained until its 120-second TTL.
+Setting this very low does not make failures cleaner — it makes ambiguous outcomes more
+likely. The initial request carries no such hazard, which is why it is the one that may be
 bounded freely: nothing has been signed yet.
 
 ---
 
 ## `disableRequestIdHeader`
 
-Omits `X-TX402-REQUEST-ID` from the paid retry. The header carries a UUIDv7 and no payment meaning
-(SPEC §6.7); turn it off for merchants that reject unknown headers. The caller's own
+Omits `X-TX402-REQUEST-ID` from the paid retry. The header carries a UUIDv7 and no payment
+meaning; turn it off for merchants that reject unknown headers. The caller's own
 `Idempotency-Key` is always preserved and is never synthesized — merchant semantics are unknown, so
 inventing one would be guessing.
 
@@ -254,8 +249,7 @@ inventing one would be guessing.
 
 ## Every remaining field
 
-Implemented with exactly the semantics SPEC §4.3 states, and listed here so this page is a
-complete reference rather than a selective one.
+Listed here so this page is a complete reference rather than a selective one.
 
 | Field                     | Default                     | Behaviour                                                                                                                              |
 | ------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -268,10 +262,10 @@ complete reference rather than a selective one.
 | `policy.maxPaidAttempts`  | `2`                         | Range 1–3. Counts signed retries only, never the initial unpaid request. Exhaustion is a typed terminal error, not a loop that stops.     |
 | `timeouts.initialRequestMs`<br />`initial_request_timeout_ms` | caller's own | Absent by default: the SDK never silently shortens a caller's timeout.                                            |
 | `timeouts.paymentRetryMs`<br />`payment_retry_timeout_ms` | `10000`         | Covers the one signature-bearing request. Minimum 1000.                                                                 |
-| `routing.preferNetworks`  | `[]`                        | **Implemented.** A tie-break preference only — it cannot make a non-viable route viable, and it ranks below viability. See SPEC §6.4 step 18. |
-| `routing.rpcOverrides`    | `{}`                        | Caller-supplied RPC endpoints per network, for keyed or private providers (ADR-015).                                                     |
-| `spendStore`              | `MemorySpendStore`          | The pluggable ledger. Its scope key is the normalized merchant host, so two processes sharing a store share a cap (ADR-018).              |
-| `logger`                  | no-op                       | An **object** with `debug`, `info`, `warn` and `error`, each taking one event mapping — not a single callback. Receives redacted structured events (SPEC §10); the SDK never writes to the console itself. A value missing any of the four is rejected at construction. |
+| `routing.preferNetworks`  | `[]`                        | **Implemented.** A tie-break preference only — it cannot make a non-viable route viable, and it ranks below viability. |
+| `routing.rpcOverrides`    | `{}`                        | Caller-supplied RPC endpoints per network, for keyed or private providers.                                                     |
+| `spendStore`              | `MemorySpendStore`          | The pluggable ledger. Its scope key is the normalized merchant host, so two processes sharing a store share a cap.              |
+| `logger`                  | no-op                       | An **object** with `debug`, `info`, `warn` and `error`, each taking one event mapping — not a single callback. Receives redacted structured events; the SDK never writes to the console itself. A value missing any of the four is rejected at construction. |
 | `clock`                   | system + monotonic          | Injectable for tests only.                                                                                                               |
 | `manifest`                | bundled signed manifest     | Signature and expiry verified synchronously at construction; a failure is a construction failure, not a warning.                         |
 | `allowInsecureLocalhost`  | `false`                     | Permits `http://` to localhost. For a local test merchant, and nothing else.                                                             |

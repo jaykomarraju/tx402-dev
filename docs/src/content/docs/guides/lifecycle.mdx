@@ -43,7 +43,8 @@ you nothing but the request itself.
 ### Policy and reservation both precede signing
 
 Steps 5 and 7 complete before step 8, always, on **every** attempt — not just the first. This
-is SEC-002 and SPEC §6.6, and it is what makes the guarantees below true rather than usually
+is the ordering the whole design rests on, and it is what makes the guarantees below true rather
+than usually
 true:
 
 - A request your policy refuses costs **zero signatures**. Not "a signature that is discarded"
@@ -66,7 +67,7 @@ bounds the loop, and exhausting it is a typed terminal error rather than a bare 
 
 ### Release before transmission, retain after
 
-This is the asymmetry that protects your money, and it is SPEC §6.7.
+This is the asymmetry that protects your money.
 
 **Before** the signature reaches the network, any failure releases the reservation. Nothing was
 sent, so nothing can have settled, and holding budget would be wrong.
@@ -89,7 +90,7 @@ moved, and the same dollar could then be spent again inside the same hour.
 | Planning                  | No signer for any offered chain        | none taken   | `TX402_SCHEME_UNSUPPORTED`                      |
 | Signing                   | Signer refused or returned garbage     | **released** | `TX402_SIGNER`                                  |
 | After transmission        | Timeout, reset, 5xx, same-origin 3xx   | **retained** | `TX402_PAYMENT_AMBIGUOUS`                       |
-| After transmission        | Cross-origin redirect (SEC-005)        | **retained** | `TX402_REDIRECT_BLOCKED`, `paid: "unknown"`     |
+| After transmission        | Cross-origin redirect                  | **retained** | `TX402_REDIRECT_BLOCKED`, `paid: "unknown"`     |
 | After transmission        | `PAYMENT-RESPONSE` present, undecodable | **retained** | `TX402_PAYMENT_AMBIGUOUS`, `settlement-metadata-unparseable` |
 | Refused, no settlement    | 4xx with no `PAYMENT-RESPONSE`         | **released** | `TX402_RESOURCE_DELIVERY`, `paid: false`        |
 | Delivered, not settled    | `success: false` in `PAYMENT-RESPONSE` | **released** | `TX402_RESOURCE_DELIVERY`, `paid: false`        |
@@ -102,7 +103,7 @@ reports a successful settlement, the money moved, so the spend is **committed** 
 told `paid: true` whatever the status line said. The same 403 with no settlement claim is a
 refusal and releases. And a settled payment whose ledger write fails is still a settled
 payment, so it is reported `paid: true` and is never retryable — retrying is the one action
-that can pay twice. See ADR-016 and ADR-017.
+that can pay twice.
 
 `TX402_LIQUIDITY` and `TX402_SCHEME_UNSUPPORTED` are deliberately different errors. "Everything
 was attempted and fell short" and "nothing was even attempted" send an operator to two

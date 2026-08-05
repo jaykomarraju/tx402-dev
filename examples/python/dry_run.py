@@ -47,8 +47,8 @@ def main() -> int:
         allow_insecure_localhost=is_localhost,
         policy=Policy(
             max_per_request="1.00 USDC",
-            # Testnets are never allowed by default (SPEC §4.3): a silent fall back from
-            # production to a testnet is worse than a refusal (SPEC §16).
+            # Testnets are never allowed by default: a silent fall back from production
+            # to a testnet is worse than a refusal.
             allowed_networks=["eip155:84532", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
         ),
     ) as tx402:

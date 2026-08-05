@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-tx402's main configuration accepts **signer abstractions, never a raw private key** (SEC-001).
+tx402's main configuration accepts **signer abstractions, never a raw private key**.
 That is not a style preference — it is the seam that lets the key live somewhere your process
 cannot read it.
 
@@ -90,7 +90,7 @@ deliberate one.
 2. **Environment variables are a development convenience.** Any child process and most crash
    reporters can read them. tx402 warns on stderr every time it reads one.
 3. **Use a dedicated, low-balance wallet** for anything automated. The blast radius of a
-   compromise is the wallet balance, so keep it small — this is SPEC §13's rule and it is the
+   compromise is the wallet balance, so keep it small — that is the rule for these wallets and it is the
    cheapest control available.
 4. **Set `maxPerHour` even with a hardware signer.** A cap bounds a compromise that a signing
    boundary does not: an attacker with request-forging ability but no key still has to get past
@@ -100,7 +100,7 @@ deliberate one.
 
 ## Prompt injection is a live threat here
 
-SPEC §9.1 names it explicitly, and it is the reason for the `maxPerHour` advice above. An agent
+It is named explicitly in the threat model, and it is the reason for the `maxPerHour` advice above. An agent
 that reads untrusted content and can make HTTP requests can be induced to fetch a URL that
 answers `402`. If the agent's wallet has no cap, the attacker's ceiling is the wallet balance.
 With a cap, it is the cap.

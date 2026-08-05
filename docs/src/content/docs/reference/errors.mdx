@@ -12,8 +12,8 @@ sidebar:
   section. Edit the source and regenerate; `pnpm docs:check` fails if this file is stale.
 */}
 
-tx402 raises **15 typed errors** (SPEC §8) and the CLI reports them
-through **9 exit codes** (SPEC §11). Both tables below are
+tx402 raises **15 typed errors** and the CLI reports them
+through **9 exit codes**. Both tables below are
 generated from the shipped source — `TX402_ERROR_TAXONOMY` and `EXIT_CODE_BY_ERROR` — so a
 code documented here is a code the binary actually returns.
 
@@ -85,9 +85,9 @@ Grouped the other way — which errors produce which code:
 Exit 8 means the signature reached the merchant and tx402 could not determine the outcome. Two
 codes produce it, and they are exactly the two that can only be reached **after** a signature
 was transmitted: `TX402_PAYMENT_AMBIGUOUS` — a timeout, a 5xx, a connection reset, a
-same-origin redirect it declined to follow (ADR-014), or a `PAYMENT-RESPONSE` that is present
-and does not decode (ADR-016) — and `TX402_REDIRECT_BLOCKED`, a cross-origin redirect refused
-by SEC-005 after the merchant already had the signature. In both cases the budget reservation
+same-origin redirect it declined to follow, or a `PAYMENT-RESPONSE` that is present and does
+not decode — and `TX402_REDIRECT_BLOCKED`, a cross-origin redirect refused after the merchant
+already had the signature. In both cases the budget reservation
 is deliberately **retained** until its TTL rather than released, so the same money cannot be
 spent twice against the hourly cap. Retrying without reconciling against the merchant can pay
 twice.
@@ -101,7 +101,7 @@ twice.
 
 **Retryability:** `no` — Never. The condition will not change on its own.
 
-**Always carries** (SPEC §8 required context): `configPath`, `reason`
+**Always carries**: `configPath`, `reason`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -113,7 +113,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `no` — Never. The condition will not change on its own.
 
-**Always carries** (SPEC §8 required context): `headerName`
+**Always carries**: `headerName`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -125,7 +125,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `no` — Never. The condition will not change on its own.
 
-**Always carries** (SPEC §8 required context): `reason`
+**Always carries**: `reason`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -137,7 +137,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `no` — Never. The condition will not change on its own.
 
-**Always carries** (SPEC §8 required context): `observedVersion`, `supportedVersions`
+**Always carries**: `observedVersion`, `supportedVersions`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -149,7 +149,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `no` — Never. The condition will not change on its own.
 
-**Always carries** (SPEC §8 required context): `offeredSchemes`, `offeredNetworks`
+**Always carries**: `offeredSchemes`, `offeredNetworks`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -161,7 +161,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `no` — Never. The condition will not change on its own.
 
-**Always carries** (SPEC §8 required context): `reason`, `schemaPath`
+**Always carries**: `reason`, `schemaPath`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -173,7 +173,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `no` — Never. The condition will not change on its own.
 
-**Always carries** (SPEC §8 required context): `requestedAtomic`, `capAtomic`, `committedAtomic`, `reservedAtomic`, `capKind`
+**Always carries**: `requestedAtomic`, `capAtomic`, `committedAtomic`, `reservedAtomic`, `capKind`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -185,7 +185,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `no` — Never. The condition will not change on its own.
 
-**Always carries** (SPEC §8 required context): `normalizedHost`
+**Always carries**: `normalizedHost`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -197,7 +197,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `conditional` — Only after the underlying condition changes — fund the wallet, fix the signer.
 
-**Always carries** (SPEC §8 required context): `deficits`
+**Always carries**: `deficits`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -209,7 +209,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `conditional` — Only after the underlying condition changes — fund the wallet, fix the signer.
 
-**Always carries** (SPEC §8 required context): `signerKind`, `causeCategory`
+**Always carries**: `signerKind`, `causeCategory`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -221,7 +221,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `after-correction` — Only after the clock is corrected. tx402 never adjusts the system clock.
 
-**Always carries** (SPEC §8 required context): `observedSkewMs`, `thresholdMs`
+**Always carries**: `observedSkewMs`, `thresholdMs`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -233,7 +233,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `no-automatic-retry` — **Never automatically.** Money may have moved. Reconcile with the merchant first.
 
-**Always carries** (SPEC §8 required context): `reservationExpiresAtEpochMs`, `causeCategory`
+**Always carries**: `reservationExpiresAtEpochMs`, `causeCategory`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -245,7 +245,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `app-dependent` — The caller decides; tx402 has no way to know whether the resource is idempotent.
 
-**Always carries** (SPEC §8 required context): `status`, `reason`
+**Always carries**: `status`, `reason`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -257,7 +257,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `no` — Never. The condition will not change on its own.
 
-**Always carries** (SPEC §8 required context): `fromOrigin`, `toOrigin`
+**Always carries**: `fromOrigin`, `toOrigin`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,
@@ -269,7 +269,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 
 **Retryability:** `caller-policy` — Yes, under the caller's own backoff policy. This is the only `retryable: true` row.
 
-**Always carries** (SPEC §8 required context): `causeCategory`
+**Always carries**: `causeCategory`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
 an existence check. Everything in `details` is redaction-safe by construction: identifiers,

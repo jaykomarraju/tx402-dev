@@ -180,7 +180,7 @@ function errorsPage({ errors, cli }) {
 
 **Retryability:** \`${entry.retryability}\` — ${RETRYABILITY_GLOSS[entry.retryability]}
 
-**Always carries** (SPEC §8 required context): ${details || "_nothing beyond the shared context_"}
+**Always carries**: ${details || "_nothing beyond the shared context_"}
 
 These keys are guaranteed present in \`error.details\`, so a handler can read them without
 an existence check. Everything in \`details\` is redaction-safe by construction: identifiers,
@@ -203,8 +203,8 @@ sidebar:
 
 ${BANNER}
 
-tx402 raises **${TX402_ERROR_TAXONOMY.length} typed errors** (SPEC §8) and the CLI reports them
-through **${Object.keys(EXIT_CODES).length} exit codes** (SPEC §11). Both tables below are
+tx402 raises **${TX402_ERROR_TAXONOMY.length} typed errors** and the CLI reports them
+through **${Object.keys(EXIT_CODES).length} exit codes**. Both tables below are
 generated from the shipped source — \`TX402_ERROR_TAXONOMY\` and \`EXIT_CODE_BY_ERROR\` — so a
 code documented here is a code the binary actually returns.
 
@@ -243,9 +243,9 @@ ${grouped}
 Exit 8 means the signature reached the merchant and tx402 could not determine the outcome. Two
 codes produce it, and they are exactly the two that can only be reached **after** a signature
 was transmitted: \`TX402_PAYMENT_AMBIGUOUS\` — a timeout, a 5xx, a connection reset, a
-same-origin redirect it declined to follow (ADR-014), or a \`PAYMENT-RESPONSE\` that is present
-and does not decode (ADR-016) — and \`TX402_REDIRECT_BLOCKED\`, a cross-origin redirect refused
-by SEC-005 after the merchant already had the signature. In both cases the budget reservation
+same-origin redirect it declined to follow, or a \`PAYMENT-RESPONSE\` that is present and does
+not decode — and \`TX402_REDIRECT_BLOCKED\`, a cross-origin redirect refused after the merchant
+already had the signature. In both cases the budget reservation
 is deliberately **retained** until its TTL rather than released, so the same money cannot be
 spent twice against the hourly cap. Retrying without reconciling against the merchant can pay
 twice.
@@ -287,7 +287,7 @@ files, which your editor reads directly — this page answers "what is available
 
 Importing this path **must not load a chain library**, and a package-contract test asserts it.
 \`viem\`, \`@solana/kit\`, \`@x402/evm\`, and \`@x402/svm\` are reached through a lazy \`import()\`
-only when a payment on that family is actually planned (ADR-008, ADR-009).
+only when a payment on that family is actually planned.
 
 ### Functions
 
@@ -321,7 +321,7 @@ another process. Reconciling a settlement from code starts with \`plan\` and end
 | ------ | ----- | -------- |
 | \`tx402/evm\` | \`viem\`, \`@x402/evm\` | You pay on an EVM network and want the bundled adapter. |
 | \`tx402/solana\` | \`@solana/kit\`, \`@x402/svm\` | You pay on Solana and want the bundled adapter. |
-| \`tx402/signers\` | \`viem/accounts\` | Development only — wraps a raw private key as an \`EvmSigner\` (SEC-001). |
+| \`tx402/signers\` | \`viem/accounts\` | Development only — wraps a raw private key as an \`EvmSigner\`. |
 
 The Python package mirrors this split with extras: \`pip install tx402\` is the core,
 \`tx402[evm]\`, \`tx402[svm]\`, and \`tx402[all]\` add the chain libraries. \`import tx402\` loads no

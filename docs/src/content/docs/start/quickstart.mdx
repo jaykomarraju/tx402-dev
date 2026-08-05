@@ -15,7 +15,7 @@ page that formats cleanly and fails to build. Headings cost nothing and cannot b
 */}
 
 This page is the one tx402 is measured against: **a fresh user gets to a real settled payment
-in under five minutes without reading source code** (SPEC §16). If it takes longer than that,
+in under five minutes without reading source code**. If it takes longer than that,
 that is a bug in this page.
 
 Everything here happens on **testnets** with valueless tokens. Nothing on this page can spend
@@ -146,9 +146,9 @@ Add `--json` to get one machine-readable object on stdout instead.
 Two things about this command are not obvious, and both are deliberate.
 
 **`--network` is required here, not optional.** tx402's default policy allows only the
-**production** networks — Base and Solana mainnet (SPEC §4.3). A testnet is never allowed by
+**production** networks — Base and Solana mainnet. A testnet is never allowed by
 default, because the one thing worse than refusing a payment is silently falling back from the
-network you meant to a different one (SPEC §16). Without the flag you get
+network you meant to a different one. Without the flag you get
 `TX402_SCHEME_UNSUPPORTED` and exit `5`, listing what the merchant offered.
 
 **A dry run needs a configured key, even though it never signs with it.** `--dry-run` plans

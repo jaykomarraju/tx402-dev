@@ -21,7 +21,7 @@ Base rather than just "no route".
 
 ## The ordering cascade
 
-Candidates are ordered by these keys, in this order (SPEC §6.4 step 18, plus SPEC §6.5's
+Candidates are ordered by these keys, in this order (with the
 open-circuit rule):
 
 1. **Viable first** — can this route actually pay?
@@ -33,7 +33,7 @@ open-circuit rule):
 6. **Lower observed latency.**
 7. **Original requirement index** — the merchant's own ordering, as the final tie-break.
 
-The open-circuit key sits above preference deliberately. SPEC §6.5 says an open endpoint "is
+The open-circuit key sits above preference deliberately. An open endpoint "is
 ranked last", which is a stronger statement than a low health score — a large enough preference
 bonus would outrank a mere score — so it cannot be folded into the number.
 
@@ -54,7 +54,7 @@ still wins.
 
 ## Determinism, precisely
 
-SPEC §6.4 step 19 requires identical output for identical inputs **and health state**. That is a
+Identical inputs **and health state** must produce identical output. That is a
 property of the ordering function, and it holds: the same candidates in any order produce the
 same ranking, and an exact tie on every key above the index falls through to the merchant's own
 ordering.

@@ -35,8 +35,8 @@ const tx402 = createTx402Client({
   ...(isLocalhost ? { allowInsecureLocalhost: true } : {}),
   policy: {
     maxPerRequest: "1.00 USDC",
-    // Testnets are never allowed by default (SPEC §4.3), because a silent fall back from
-    // production to a testnet is worse than a refusal (SPEC §16). Naming them is the opt-in.
+    // Testnets are never allowed by default, because a silent fall back from production to
+    // a testnet is worse than a refusal. Naming them is the opt-in.
     allowedNetworks: ["eip155:84532", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
   },
 });

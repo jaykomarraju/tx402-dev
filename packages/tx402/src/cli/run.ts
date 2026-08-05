@@ -568,21 +568,31 @@ export async function run(io: CliIo): Promise<ExitCode> {
     } else if (isTx402Error(error)) {
       io.stderr(`${error.code}: ${error.message}\n`);
       renderDetailsHuman(io, error.details);
-      if (error.code === "TX402_PAYMENT_AMBIGUOUS") {
-        // Worth spelling out: this is the one exit code where retrying may pay twice.
-        io.stderr(
-          "the payment may have settled — do not retry without checking the merchant\n",
-        );
-      }
+
+      // **One line of advice, derived from `paid` rather than from the error code.**
+      //
+      // This was previously two renderers that could each speak: an advisory keyed on
+      // `TX402_PAYMENT_AMBIGUOUS`, and the settlement block's own header. An ambiguous
+      // payment therefore said "the payment may have settled" twice, and — the half that
+      // actually mattered — `TX402_REDIRECT_BLOCKED` said it once *without* the "do not
+      // retry" instruction, though it is the other code reachable only after a signature
+      // was transmitted and is exactly as dangerous.
+      //
+      // `paid` is the field that carries "money may have moved", so keying on it is what
+      // stops the two exit-8 codes drifting apart again. It is also why this advisory
+      // survives when no settlement object could be built.
+      const advisory =
+        paid === "unknown"
+          ? "the payment may have settled — do not retry without checking the merchant\n"
+          : settlement?.status === "committed"
+            ? "the payment settled — the resource is what failed\n"
+            : undefined;
+      if (advisory !== undefined) io.stderr(advisory);
+
       // The two outcomes that tell someone to reconcile are the two that must hand them
       // what to reconcile *with*, without making them re-run the call under `--json` — a
       // re-run of a payment is the one thing this advice exists to prevent (O74).
       if (settlement !== undefined) {
-        io.stderr(
-          settlement.status === "committed"
-            ? "the payment settled — the resource is what failed\n"
-            : "the payment may have settled\n",
-        );
         if (settlement.payer !== null)
           io.stderr(`  payer${" ".repeat(23)}${settlement.payer}\n`);
         if (settlement.transaction !== null) {

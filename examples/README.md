@@ -82,6 +82,6 @@ Every example names its networks explicitly:
 allowedNetworks: ["eip155:84532", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"]
 ```
 
-tx402's default policy allows only **production** networks (SPEC §4.3). This is deliberate: a
+tx402's default policy allows only **production** networks. This is deliberate: a
 silent fall back from the network you meant to a different one is worse than a refusal, so
-SPEC §16 forbids it. The CLI's equivalent is `--network`.
+it is forbidden outright. The CLI's equivalent is `--network`.

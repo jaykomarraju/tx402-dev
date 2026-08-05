@@ -44,7 +44,7 @@ Every field is optional and every default is conservative. The full table is in 
 
 ## Evaluation order is fixed
 
-SPEC §6.3 fixes the order, and both SDKs implement exactly it:
+The order is fixed, and both SDKs implement exactly it:
 
 1. **Domain** — the normalized host against `allowedDomains`.
 2. **Network** — the CAIP-2 network against `allowedNetworks` and the signed release manifest.
@@ -112,7 +112,7 @@ best-effort conversion. `0.1 + 0.2 !== 0.3` is a curiosity in most code and a di
 between the quote and the signature here — and a discrepancy in a signed authorization is not
 recoverable after the fact.
 
-This is ADR-006, and it is not negotiable anywhere in either SDK.
+This is not negotiable anywhere in either SDK.
 
 ## Domain patterns
 
@@ -129,7 +129,7 @@ An internationalized domain normalizes to its **ASCII (A-label) form** — the p
 parser produces, which is also what goes on the wire. `bücher.example` and
 `xn--bcher-kva.example` are the same host to the allowlist, to the ledger, and to
 `normalizePolicyHost` / `normalize_policy_host`, so you may write either one in
-`allowedDomains` and query the budget with either one (ADR-018).
+`allowedDomains` and query the budget with either one.
 
 The default is `["*"]`, because a domain allowlist that is subtly wrong is worse than no
 allowlist — it fails closed on the wrong things and teaches people to disable it. Set it
@@ -141,14 +141,14 @@ explicitly once you know your merchants.
 - **It is not shared across processes _by default_.** The default ledger is in-memory, so two
   processes have two budgets. Supply your own `SpendStore` and they share one — see below.
 - **It does not survive a restart.** A fresh client starts with a fresh hourly window. This is a
-  deliberate v0.1 scope decision (ADR-007), not an oversight.
+  deliberate v0.1 scope decision, not an oversight.
 - **It cannot stop a merchant from asking.** It stops tx402 from paying.
 
 ## Checking your budget
 
 Both languages let you **query the store** for any scope, including one another process wrote.
 TypeScript additionally offers a **synchronous snapshot** of the most recent paid request, which
-SPEC §4.1 requires of it; Python has no snapshot form and does not need one.
+the TypeScript client's own contract requires of it; Python has no snapshot form and does not need one.
 
 **TypeScript — two calls, and the difference matters.**
 
@@ -203,4 +203,4 @@ check_spend_store(lambda: MySpendStore())   # shipped conformance suite
 it runs the whole contract — including twenty concurrent reservations against a five-unit
 cap, because the rule an adapter is most likely to break is that `reserve` must be atomic.
 TypeScript publishes the same contract as the `SpendStore` interface. Both are documented in
-full on the type itself; the rules are in ADR-018.
+full on the type itself.

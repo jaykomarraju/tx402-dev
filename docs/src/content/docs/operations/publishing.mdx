@@ -93,7 +93,7 @@ Publication verification on 2026-08-03:
 
 Placeholder publishing is a one-off. Every subsequent release goes through CI, never a laptop.
 
-### Preconditions — all of SPEC §12.4 must hold
+### Preconditions — all of these must hold
 
 - [ ] All P0/P1 tests green on protected `main`
 - [ ] No unresolved critical/high severity finding in reachable production code
@@ -117,7 +117,7 @@ long-lived token exists anywhere:
   [https://pypi.org/manage/project/tx402/settings/publishing/](https://pypi.org/manage/project/tx402/settings/publishing/) pointing at this repository and the
   release workflow. Then `uv publish` needs no token at all.
 
-### Version and compatibility rules (SPEC §15)
+### Version and compatibility rules
 
 - Semantic versioning applies. During `0.x`, release notes **must** explicitly call out breaks.
 - After `1.0`, any exported type removal, error code change, default policy relaxation, or wire

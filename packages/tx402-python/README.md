@@ -54,7 +54,7 @@ Solana (SPL exact transfer).
 - **Same-chain only.** It pays on a network the merchant offered and you can sign for. It will not
   bridge or swap behind your back; if you can't pay, you get a typed `InsufficientLiquidityError`.
 - **The buyer never talks to a facilitator.** `/verify` and `/settle` are the merchant's
-  calls, not yours (ADR-002).
+  calls, not yours.
 
 ## Sharing one budget across processes
 

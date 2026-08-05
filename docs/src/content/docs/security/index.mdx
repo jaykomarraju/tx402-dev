@@ -58,7 +58,7 @@ person what they are approving.
 
 A paid retry that would follow a redirect to a different origin fails **before** the signature is
 transmitted. Same-origin redirects are not followed either in v0.1 — see
-[ADR-014](https://github.com/neogeeks/tx402/blob/main/adr/014-paid-retry-redirects-are-not-followed.md)
+a deliberate v0.1 narrowing
 for why, and what it would take to change.
 
 ### Nothing sensitive is logged
@@ -102,7 +102,7 @@ Stated plainly, because a security page that only lists strengths is not useful.
 - **A hostile RPC endpoint's data, beyond chain identity.** tx402 proves the chain, caps the
   time, and fails over. It does not independently verify a returned balance.
 - **Cross-process budget.** The default ledger is in-memory and per-client. Two processes have
-  two budgets, and the hourly window resets on restart (ADR-007).
+  two budgets, and the hourly window resets on restart.
 - **Anything after v0.1's scope**: no cross-chain swaps, no asynchronous settlement, no
   streaming payments.
 

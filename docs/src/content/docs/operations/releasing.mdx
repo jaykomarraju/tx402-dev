@@ -25,7 +25,16 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow has four jobs, in order: **verify → npm + PyPI → smoke**.
+The workflow has five jobs:
+
+```
+verify ──▶ docs-published ──┬──▶ npm  ──┐
+                            └──▶ pypi ──┴──▶ smoke
+```
+
+`npm` and `pypi` both declare `needs: [verify, docs-published]`, so **either of the first two
+jobs failing blocks the release outright** — nothing is published and nothing is partially
+published.
 
 ### verify
 
@@ -40,6 +49,20 @@ It also checks three things a human typed:
 
 That last check is why the release key matters, and it is a hard failure rather than a
 warning.
+
+### docs-published
+
+Probes the **live** `https://docs.tx402.io` and requires every page the site must serve to
+return 200, before either registry is touched. It runs `tools/docs-live` twice: first
+`selftest`, which proves the probe is capable of failing, then `check`. A published package is
+permanent, and pointing it at documentation that is unreachable is not something re-running a
+workflow can undo.
+
+**Look at this job first when a tag does not publish.** It is the one gate that depends on
+something outside this repository — the documentation site is deployed by a separate workflow,
+so a tag pushed while the site is stale or down stops here with both publish jobs never
+starting. From the registry side the only symptom is that nothing was published, which is why
+it is worth knowing the job exists.
 
 ### npm and PyPI
 
@@ -119,7 +142,7 @@ That writes two files:
 ### Storing it
 
 Put the private PEM in a secret manager, or in a GitHub Actions secret scoped to the
-`release` environment — SPEC §13 requires "CI OIDC or secret manager; never repository
+`release` environment — the rule is "CI OIDC or secret manager; never repository
 variables in plaintext." Then delete the local copy. Verify you can still sign before you
 delete it, not after.
 

@@ -25,11 +25,12 @@ tx402 call <URL> [options]
 ```
 
 :::caution[`--network` is mandatory on a testnet]
-The default policy allows only **production** networks — Base and Solana mainnet (SPEC §4.3).
-That is not an oversight: SPEC §16 forbids any silent fallback from production to testnet, so a
-testnet has to be asked for by name. Every testnet command on this site therefore carries
-`--network eip155:84532` or `--network solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`. Without it you
-get `TX402_SCHEME_UNSUPPORTED` and exit `5`, and the error lists what the merchant offered.
+The default policy allows only **production** networks — Base and Solana mainnet. That is not
+an oversight: a silent fallback from production to a testnet is the worst failure this SDK
+could have, so a testnet has to be asked for by name. Every testnet command on this site
+therefore carries `--network eip155:84532` or
+`--network solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`. Without it you get
+`TX402_SCHEME_UNSUPPORTED` and exit `5`, and the error lists what the merchant offered.
 :::
 
 ## `--dry-run` is the one to start with
@@ -124,9 +125,22 @@ A `settlement` object is emitted only for the last two rows, which is why its ab
 is information rather than an omission: it means the money is still yours.
 
 `transaction` can also be `null` on a committed payment, when the merchant supplied no
-identifier at all: the pinned protocol marks `PAYMENT-RESPONSE` optional and that case commits
-with a warning rather than failing. `null` there means "tx402 has no identifier", never "there
-was no payment" — `status` is what carries that.
+identifier at all: the pinned protocol marks `PAYMENT-RESPONSE` optional, and that case commits
+with a warning rather than failing. The warning is a `payment.completed` event at `warn` with
+`reason: "payment-response-absent"`.
+
+**Read `null` there as "tx402 has no identifier", not as proof that money moved.** A `200` to a
+signature-bearing request is the merchant asserting it accepted payment, and tx402 takes it at
+its word — it never calls a facilitator to check, by design. So `status: "committed"` with
+`transaction: null` means the merchant claimed settlement and offered nothing to verify it with,
+and tx402 **cannot distinguish** that from a merchant that accepted without settling at all.
+
+This errs in the safe direction for you: your local ledger records the spend, so it can
+over-count what you have paid but never under-count it, and no cap is loosened by a merchant
+behaving this way. It matters only when you are reconciling against the chain, and it is the one
+committed outcome for which you have no on-chain identifier to reconcile with. If that matters
+for a given merchant, treat an absent `PAYMENT-RESPONSE` as a reason to ask them, not as a
+receipt.
 
 The raw identifier is reported here, and only here. The structured event stream carries a
 `settlementIdHash` instead, because events are the thing that reaches a log aggregator and a
