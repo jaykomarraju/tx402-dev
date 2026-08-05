@@ -30,7 +30,6 @@ from tx402 import (
     AmbiguousPaymentError,
     AsyncTx402Client,
     InsufficientLiquidityError,
-    InvalidPaymentRequiredError,
     MemorySpendStore,
     PaidRedirectBlockedError,
     Policy,
@@ -518,15 +517,23 @@ class TestRechallengeLoop:
     def test_a_rechallenge_that_fails_to_decode_fails_cleanly(self) -> None:
         """The reservation is released before the fresh challenge is parsed, so a malformed
         one cannot strand budget.
+
+        **The error class changed at ADR-022 and the release did not.** This used to assert
+        ``InvalidPaymentRequiredError``, which maps to exit 5 — a band documented as "no
+        signature was ever produced", though one had been sent. It is now a
+        ``ResourceDeliveryError`` with ``paid: False``: signature sent, nothing delivered,
+        no money moved. The budget assertion below must not move, and does not.
         """
         merchant = Merchant(paid_statuses=[402])
         merchant.offers = [challenge(evm_requirement()), "not-base64!"]
         store = MemorySpendStore()
         with (
             client(merchant, spend_store=store) as sdk,
-            pytest.raises(InvalidPaymentRequiredError),
+            pytest.raises(ResourceDeliveryError) as raised,
         ):
             sdk.get(URL)
+        assert raised.value.context.paid is False
+        assert raised.value.details["reason"] == "rechallenge-undecodable"
         state = budget(store, f"{BASE}/erc20:{BASE_ASSET}")
         assert [item.state for item in state.reservations] == ["released"]
 

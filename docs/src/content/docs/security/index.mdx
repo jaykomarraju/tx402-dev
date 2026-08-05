@@ -57,9 +57,14 @@ person what they are approving.
 ### Cross-origin redirects are blocked
 
 A paid retry that would follow a redirect to a different origin fails **before** the signature is
-transmitted. Same-origin redirects are not followed either in v0.1 — see
-a deliberate v0.1 narrowing
-for why, and what it would take to change.
+transmitted.
+
+**Same-origin redirects are not followed either**, which is a deliberate v0.1 narrowing rather
+than an oversight. Following one would mean re-sending a request that already carries a payment
+signature, and tx402 cannot know whether the merchant treats the second URL as the same
+operation or a new one — so a redirect that looks like a formality could be a second charge. The
+redirect is surfaced instead: you get the response, see the `Location`, and decide. Lifting this
+would require a merchant-side idempotency signal the protocol does not currently define.
 
 ### Nothing sensitive is logged
 

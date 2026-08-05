@@ -332,6 +332,10 @@ def _origin(url: httpx.URL) -> str:
 #: Diagnostic reason for a merchant that sent no settlement metadata at all.
 SETTLEMENT_ABSENT_REASON: Final = "payment-response-absent"
 
+#: A 402 re-challenge whose ``PAYMENT-REQUIRED`` does not decode, after a
+#: signature (ADR-022).
+RECHALLENGE_UNDECODABLE_REASON: Final = "rechallenge-undecodable"
+
 #: Diagnostic reason for a merchant whose settlement metadata does not decode.
 SETTLEMENT_UNPARSEABLE_REASON: Final = "payment-response-unparseable"
 
@@ -544,15 +548,24 @@ class _Core:
         )
 
     def log_request_failed(self, error: Tx402Error) -> None:
+        """The one place ``request.failed`` is emitted, at a level derived from ``paid``.
+
+        ``warn`` while the money is still reserved and the outcome unknown, ``error`` for
+        everything settled enough to act on. TypeScript emits at the same single point on
+        the same rule; before ADR-022 it emitted twice on every ambiguous path and Python
+        emitted once but always at ``error``, so neither matched the documented contract
+        nor each other.
+        """
+        paid = error.context.paid if error.context.paid is not None else False
         emit(
             self.logger,
-            "error",
+            "warn" if paid == "unknown" else "error",
             {
                 "event": "request.failed",
                 "requestId": error.context.request_id,
                 "errorCode": error.code,
                 "phase": error.context.phase,
-                "paid": error.context.paid if error.context.paid is not None else False,
+                "paid": paid,
             },
         )
 
@@ -1202,9 +1215,44 @@ class _Core:
 
         if disposition.kind == "rechallenge":
             # Parsed from scratch, with the same binding checks the first challenge got.
-            # The reservation is already gone, so a challenge that fails to decode fails
-            # cleanly rather than stranding budget.
-            return _Rechallenged(self.decode(response, prepared.request, request_id))
+            #
+            # **A decode failure here is a post-transmission outcome and is classified as
+            # one.** The reservation is already released above — an HTTP ``402`` is
+            # intelligible whatever its header says, and it is the merchant declining the
+            # payment, so releasing stays right and settlement evidence still outranks the
+            # status line. What was wrong was letting the raw
+            # ``PaymentRequiredInvalidError``
+            # escape: it carries no ``paid`` context and maps to exit ``5``, a band
+            # documented
+            # as "no signature was ever produced". A signature *was* produced and
+            # transmitted.
+            # See ADR-022.
+            try:
+                return _Rechallenged(self.decode(response, prepared.request, request_id))
+            except Tx402Error as error:
+                details: dict[str, Any] = {
+                    "status": response.status_code,
+                    "reason": RECHALLENGE_UNDECODABLE_REASON,
+                    "attempt": attempt,
+                    "maxPaidAttempts": self.policy.max_paid_attempts,
+                }
+                # Carried through so the operator still learns *how* the header is
+                # malformed, which is the only actionable part of the original error.
+                for key in ("reason", "schemaPath"):
+                    value = error.details.get(key)
+                    if isinstance(value, str):
+                        details["decodeReason" if key == "reason" else key] = value
+                raise ResourceDeliveryError(
+                    "Merchant re-challenged after the signature with a PAYMENT-REQUIRED "
+                    "that does not decode",
+                    context=Tx402ErrorContext(
+                        request_id=request_id,
+                        phase="complete",
+                        paid=False,
+                    ),
+                    details=details,
+                    cause=error,
+                ) from error
 
         if disposition.kind == "failed":
             raise ResourceDeliveryError(

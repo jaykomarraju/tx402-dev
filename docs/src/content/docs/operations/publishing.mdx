@@ -75,8 +75,14 @@ only for a manual reservation publish.
 
 ```bash
 curl -s https://pypi.org/pypi/tx402/json | python3 -c \
-  "import sys,json; d=json.load(sys.stdin)['info']; print(d['name'], d['version'], d['license'])"
+  "import sys,json; d=json.load(sys.stdin)['info']; \
+   print(d['name'], d['version'], d.get('license_expression') or d['license'])"
 ```
+
+`info.license` is `null` for anything published with modern metadata — PyPI serves the SPDX
+string as **`info.license_expression`** instead, and reading only the old field prints `None` on
+a package whose licence is perfectly well declared. The fallback keeps the command working
+against both.
 
 Then update the table at the top of this file.
 

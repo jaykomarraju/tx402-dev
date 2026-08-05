@@ -167,6 +167,11 @@ The level is part of the contract, and it is not uniform:
 | `info` **or** `warn` | `payment.completed` — `warn` when the merchant supplied no settlement evidence and it committed anyway |
 | `warn` **or** `error` | `request.failed` — `warn` when the outcome is ambiguous and the money is still reserved, `error` otherwise |
 
+**Each event is emitted exactly once per request**, at exactly one level. `request.failed` in
+particular is emitted from a single place that picks its level from the final disposition, so a
+counter over the stream counts requests and never double-counts one. Both languages do this at
+the same point and by the same rule.
+
 **`budget.reserved` is the one to watch.** It is emitted at `info` immediately before a signer
 becomes reachable, which makes it the last event before money can move — so it is the event
 worth alerting on, and it is one of the nine a successful paid call emits (`"events": 9` under

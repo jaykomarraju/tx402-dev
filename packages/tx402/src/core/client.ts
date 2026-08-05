@@ -1032,7 +1032,7 @@ async function attemptPayment(
           ? { kind: "redirect-blocked" }
           : { kind: "transport-failure" },
     });
-    throw transmissionUnresolved(runtime, error, reservation, errorContext, disposition);
+    throw transmissionUnresolved(error, reservation, errorContext, disposition);
   } finally {
     // Held until the attempt settles, then released — the timer must outlive the request and
     // must not outlive it by longer than necessary.
@@ -1065,13 +1065,7 @@ async function attemptPayment(
         reason: SETTLEMENT_UNPARSEABLE_REASON,
       });
     }
-    throw transmissionUnresolved(
-      runtime,
-      undefined,
-      reservation,
-      errorContext,
-      disposition,
-    );
+    throw transmissionUnresolved(undefined, reservation, errorContext, disposition);
   }
 
   // SPEC §5.3: the settlement stands and the resource does not. Commit first — the money
@@ -1106,17 +1100,42 @@ async function attemptPayment(
 
   if (disposition.kind === "rechallenge") {
     // Parsed from scratch, with the same binding checks the first challenge got. The
-    // reservation is already gone, so a challenge that fails to decode fails cleanly.
-    const fresh = decodePaymentRequired(
-      response.headers.get(PROTOCOL_HEADERS.paymentRequired),
-      {
-        requestUrl: prepared.url,
-        requestMethod: prepared.method,
-        requestId,
-        clockEpochMs: runtime.clock.now(),
-        allowInsecureLocalhost: runtime.allowInsecureLocalhost,
-      },
-    );
+    // reservation is already gone, so a challenge that fails to decode cannot strand budget.
+    //
+    // **A decode failure here is a post-transmission outcome and is classified as one.** The
+    // release above stays right: an HTTP `402` is intelligible whatever its header says, and
+    // it is the merchant declining, so settlement evidence still outranks the status line and
+    // a merchant that settles *and* says so is caught before this point. What was wrong was
+    // letting the raw `PaymentRequiredInvalidError` escape — it carries no `paid` context and
+    // maps to exit `5`, a band documented as "no signature was ever produced" whose advice is
+    // that nothing local helps, when a signature had already gone out. It is re-banded to the
+    // outcome that already means "signature sent, nothing delivered, no money moved": exit `9`
+    // with `paid: false`. The decode details are spread in first so `schemaPath` survives and
+    // this error's own `reason` still wins. See ADR-022.
+    let fresh;
+    try {
+      fresh = decodePaymentRequired(
+        response.headers.get(PROTOCOL_HEADERS.paymentRequired),
+        {
+          requestUrl: prepared.url,
+          requestMethod: prepared.method,
+          requestId,
+          clockEpochMs: runtime.clock.now(),
+          allowInsecureLocalhost: runtime.allowInsecureLocalhost,
+        },
+      );
+    } catch (cause) {
+      if (!isTx402Error(cause)) throw cause;
+      throw new ResourceDeliveryError("Merchant re-challenged undecodably", {
+        context: { ...errorContext, phase: "complete", paid: false },
+        details: {
+          ...cause.details,
+          status: response.status,
+          reason: "rechallenge-undecodable",
+        },
+        cause,
+      });
+    }
     emit(runtime.logger, "info", {
       event: "payment.required",
       requestId,
@@ -1282,19 +1301,15 @@ async function commitOrFail(
  * fix is an identity fix and nothing more.
  */
 function transmissionUnresolved(
-  runtime: ClientRuntime,
   cause: unknown,
   reservation: SpendReservation,
   errorContext: Tx402ErrorContext,
   disposition: AmbiguousDisposition,
 ): Tx402Error {
-  emit(runtime.logger, "warn", {
-    event: "request.failed",
-    requestId: errorContext.requestId,
-    errorCode: disposition.errorCode,
-    phase: "retry",
-    paid: "unknown",
-  });
+  // **No `request.failed` here.** It used to be emitted at `warn`, and the catch-all in
+  // `failure()` then emitted the same event again at `error` with an identical payload — so
+  // every ambiguous outcome logged twice. The level is now derived from `paid` at that one
+  // emission point, which is also the only place that sees the final disposition (ADR-022).
   const context: Tx402ErrorContext = { ...errorContext, phase: "retry", paid: "unknown" };
 
   if (disposition.errorCode === TX402_ERROR_CODES.redirectBlocked) {
@@ -1498,12 +1513,16 @@ export function createTx402Client(config: Tx402ClientConfig = {}): Tx402Client {
           details: { causeCategory: "runtime" },
           cause: error,
         });
-    emit(logger, "error", {
+    // The one place `request.failed` is emitted, so it cannot be double-counted, and the
+    // level is derived rather than chosen per raise site: `warn` while the money is still
+    // reserved and the outcome unknown, `error` otherwise. Python matches, at the same point.
+    const paid = typed.context.paid ?? false;
+    emit(logger, paid === "unknown" ? "warn" : "error", {
       event: "request.failed",
       requestId,
       errorCode: typed.code,
       phase: typed.context.phase,
-      paid: typed.context.paid ?? false,
+      paid,
     });
     return typed;
   };

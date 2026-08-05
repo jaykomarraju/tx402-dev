@@ -309,8 +309,16 @@ describe("T-010 repeated 402 with a fresh challenge", () => {
 
     // The re-challenge is parsed with the same strictness the first one got. The reservation
     // is released before the parse, so an undecodable challenge cannot strand budget.
+    //
+    // **The error class changed at ADR-022; the money disposition did not.** This asserted
+    // `TX402_PAYMENT_REQUIRED_INVALID`, which maps to exit 5 — a band documented as "no
+    // signature was ever produced", though one had already been transmitted. It is now the
+    // post-transmission outcome it always was: exit 9 with `paid: false`. The three
+    // assertions below are the ones that must not move, and none of them does.
     await expect(tx402.fetch(`${server.url}/resource`)).rejects.toMatchObject({
-      code: "TX402_PAYMENT_REQUIRED_INVALID",
+      code: "TX402_RESOURCE_DELIVERY",
+      details: { reason: "rechallenge-undecodable" },
+      context: { paid: false },
     });
     expect(log).toEqual(["reserve", "release"]);
     expect(tx402.getBudgetState().reservedAtomic).toBe("0");
