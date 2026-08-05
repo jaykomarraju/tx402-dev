@@ -319,7 +319,11 @@ body {
  * `backdrop-filter` is progressive: without it the rgba background still reads.
  */
 
-.header {
+/* `header.header`, not `.header`: Starlight nests a `<div class="header">` inside the
+ * `<header class="header">`. A bare class selector styles both, and the inner one is inset
+ * by the nav padding — so the bar gets a second, shorter rule drawn across it and a second
+ * coat of the translucent background. */
+header.header {
   background: var(--tx-header-bg);
   backdrop-filter: saturate(180%) blur(14px);
   -webkit-backdrop-filter: saturate(180%) blur(14px);
