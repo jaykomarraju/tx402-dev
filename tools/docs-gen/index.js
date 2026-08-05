@@ -183,7 +183,7 @@ function errorsPage({ errors, cli }) {
 **Always carries** (SPEC §8 required context): ${details || "_nothing beyond the shared context_"}
 
 These keys are guaranteed present in \`error.details\`, so a handler can read them without
-a existence check. Everything in \`details\` is redaction-safe by construction: identifiers,
+an existence check. Everything in \`details\` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.`;
   }).join("\n\n");
 

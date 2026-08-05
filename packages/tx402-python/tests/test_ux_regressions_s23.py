@@ -57,12 +57,16 @@ def test_initial_request_timeout_defaults_to_the_callers_own() -> None:
 def test_initial_request_timeout_is_validated_at_construction() -> None:
     """A mistake is an error, not a setting that quietly never applies.
 
-    Mirrors the TypeScript validation exactly: a positive integer or nothing.
+    The *rule* mirrors TypeScript exactly — a positive integer or nothing, reported with
+    ``reason: "expected-positive-integer"``. The ``configPath`` deliberately does not: this
+    assertion originally pinned ``timeouts.initialRequestMs``, and that spelling was
+    reversed by the ADR-021 amendment because it named a path Python does not accept. The
+    full argument, and the regression holding the rule generally, are in the S25 module.
     """
     for bad in (0, -1, 1.5, "1000"):
         with pytest.raises(ConfigurationError) as caught:
             Tx402Client(initial_request_timeout_ms=bad)  # type: ignore[arg-type]
-        assert caught.value.details["configPath"] == "timeouts.initialRequestMs"
+        assert caught.value.details["configPath"] == "initial_request_timeout_ms"
         assert caught.value.details["reason"] == "expected-positive-integer"
 
 

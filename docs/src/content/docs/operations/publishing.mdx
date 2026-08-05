@@ -52,12 +52,24 @@ Rebuild and publish:
 ```bash
 cd packages/tx402-python
 uv build                       # regenerates dist/
-uv publish --token pypi-AgEI...   # paste the token; do NOT commit it
+read -rs UV_PUBLISH_TOKEN && export UV_PUBLISH_TOKEN   # paste at the prompt; never echoed
+uv publish
+unset UV_PUBLISH_TOKEN
 ```
 
-Do not put the token in `.pypirc`, a shell profile, or any tracked file. `.pypirc` and `.env*`
-are already gitignored, but the safe path is passing it once on the command line in an
-interactive shell.
+**The token does not go on the command line.** `uv publish` reads `UV_PUBLISH_TOKEN` from the
+environment, and that is the form to use: argv is visible to every process on the machine and is
+routinely captured by shell history, `ps` output, and CI logs. This is the same rule the SDK
+applies to itself — the CLI accepts no flag that carries a key, and the
+[manifest runbook](../../operations/release-manifest/) refuses one for the signing key on
+identical grounds. A publish token is a credential for the package name; it gets the same
+treatment.
+
+Do not put it in `.pypirc`, a shell profile, or any tracked file either. `.pypirc` and `.env*`
+are gitignored, which protects against committing it and not against anything else.
+
+Real releases go through trusted publishing (OIDC) and need no token at all. Reach for this path
+only for a manual reservation publish.
 
 ### 3. Verify
 

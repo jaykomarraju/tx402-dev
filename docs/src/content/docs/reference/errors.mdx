@@ -104,7 +104,7 @@ twice.
 **Always carries** (SPEC §8 required context): `configPath`, `reason`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_RESERVED_HEADER`
@@ -116,7 +116,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `headerName`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_NON_REPLAYABLE`
@@ -128,7 +128,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `reason`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_PROTOCOL_UNSUPPORTED`
@@ -140,7 +140,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `observedVersion`, `supportedVersions`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_SCHEME_UNSUPPORTED`
@@ -152,7 +152,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `offeredSchemes`, `offeredNetworks`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_PAYMENT_REQUIRED_INVALID`
@@ -164,7 +164,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `reason`, `schemaPath`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_POLICY_BUDGET`
@@ -176,7 +176,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `requestedAtomic`, `capAtomic`, `committedAtomic`, `reservedAtomic`, `capKind`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_POLICY_DOMAIN`
@@ -188,7 +188,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `normalizedHost`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_LIQUIDITY`
@@ -200,7 +200,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `deficits`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_SIGNER`
@@ -212,7 +212,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `signerKind`, `causeCategory`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_CLOCK_SKEW`
@@ -224,7 +224,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `observedSkewMs`, `thresholdMs`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_PAYMENT_AMBIGUOUS`
@@ -236,7 +236,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `reservationExpiresAtEpochMs`, `causeCategory`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_RESOURCE_DELIVERY`
@@ -248,7 +248,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `status`, `reason`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_REDIRECT_BLOCKED`
@@ -260,7 +260,7 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `fromOrigin`, `toOrigin`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.
 
 ### `TX402_TRANSPORT`
@@ -272,5 +272,5 @@ atomic amounts, and categories, never a signature, a key, or an authorization pa
 **Always carries** (SPEC §8 required context): `causeCategory`
 
 These keys are guaranteed present in `error.details`, so a handler can read them without
-a existence check. Everything in `details` is redaction-safe by construction: identifiers,
+an existence check. Everything in `details` is redaction-safe by construction: identifiers,
 atomic amounts, and categories, never a signature, a key, or an authorization payload.

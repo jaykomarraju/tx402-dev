@@ -230,7 +230,9 @@ Tx402Client(
 caller's own transport timeout — or `AbortSignal` in TypeScript — governs. Supplying one adds a
 deadline **alongside** that, never replacing it, because a caller who set a timeout meant it.
 A non-integer or non-positive value is a `ConfigurationError` at construction in both languages,
-reported with `configPath: "timeouts.initialRequestMs"`.
+with `reason: "expected-positive-integer"`. Each language reports the `configPath` **in its own
+spelling** — `timeouts.initialRequestMs` from TypeScript, `initial_request_timeout_ms` from
+Python — so the path in the error is always one you could have typed.
 
 **`paymentRetryMs` covers the signature-bearing attempt**, and a paid retry that hits its
 deadline is **ambiguous**, not failed: the signature was already transmitted, so

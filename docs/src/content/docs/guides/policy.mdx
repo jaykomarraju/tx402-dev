@@ -86,8 +86,26 @@ policy: {
 } // ✓
 policy: {
   maxPerRequest: "100000";
-} // ✓ atomic units, if you prefer
+} // ✗ throws TX402_CONFIG_INVALID — invalid-format
 ```
+
+**A cap is always written `<decimal> <SYMBOL>`.** One ASCII space, no sign, no exponent. There
+is no atomic-unit input form: `"100000"` on its own is rejected, in both languages, with
+`configPath: "policy.maxPerRequest"` and `reason: "invalid-format"`. Atomic units are how tx402
+*represents* money internally and what `getBudgetState` reports back — they are not how you
+write a limit.
+
+:::danger[Do not "fix" a rejected integer by appending the symbol]
+`"100000"` is refused, and the obvious repair is silently a completely different number.
+`"100000 USDC"` is **valid** and parses to 100 000 000 000 atomic — a cap **one million times**
+larger than the `100000` atomic you meant, because the symbol makes the number a decimal
+quantity of USDC rather than a count of its smallest unit.
+
+Nothing downstream can catch this for you: it is a well-formed cap, just an enormous one. The
+only thing standing between it and a large payment is `maxPerHour`, which must be at least
+`maxPerRequest` and will reject the pair at construction if you left it at its default. Write
+`"0.10 USDC"`.
+:::
 
 Passing a JavaScript `number` or a Python `float` is a configuration error rather than a
 best-effort conversion. `0.1 + 0.2 !== 0.3` is a curiosity in most code and a discrepancy

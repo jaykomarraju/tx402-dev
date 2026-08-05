@@ -1296,13 +1296,20 @@ def _validate_initial_timeout(value: object) -> int | None:
     caller's own timeout, so with nothing set the httpx timeout the caller configured is the
     only deadline. Supplying one adds a deadline *alongside* that, never replacing it.
 
-    The ``configPath`` reported on failure is the SPEC field name rather than the Python
-    keyword, so the same mistake is diagnosed identically in both languages (ADR-005).
+    The ``configPath`` reported on failure is the **Python** keyword, not SPEC's
+    ``timeouts.initialRequestMs``. An earlier revision reported the SPEC name, reasoning
+    that one spelling across both languages diagnoses the same mistake identically
+    (ADR-005). That trade was wrong in both directions: every other Python ``configPath``
+    uses the Python spelling — including this field's own sibling
+    ``payment_retry_timeout_ms`` — and the SPEC name points at a nested ``timeouts`` object
+    that Python does not accept, so the diagnostic named a path the caller could not have
+    used and could not switch to. A path a reader can act on beats one that matches the
+    other language. See the ADR-021 amendment.
     """
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise _configuration("timeouts.initialRequestMs", "expected-positive-integer")
+        raise _configuration("initial_request_timeout_ms", "expected-positive-integer")
     return value
 
 

@@ -152,8 +152,25 @@ const tx402 = createTx402Client({
 });
 ```
 
-Events cover `request.started`, `payment.required`, `policy.checked`, `route.planned`,
-`sign.started`, `request.retried`, `payment.completed`, and `request.failed`. Every event is
+Events cover all ten names the client emits, in the order a paid call produces them:
+`request.started`, `payment.required`, `policy.checked`, `route.planned`, `budget.reserved`,
+`sign.started`, `sign.completed`, `request.retried`, `payment.completed`, and `request.failed`.
+Python exports the same list as `EVENT_NAMES`.
+
+The level is part of the contract, and it is not uniform:
+
+| Level                | Events                                                                                          |
+| :------------------- | :------------------------------------------------------------------------------------------------ |
+| `info`               | `request.started`, `payment.required`, `policy.checked`, `route.planned`, `budget.reserved`, `request.retried` |
+| `debug`              | `sign.started`, `sign.completed` — a signature attempt is detail, not a milestone                |
+| `info` **or** `warn` | `payment.completed` — `warn` when the merchant supplied no settlement evidence and it committed anyway |
+| `warn` **or** `error` | `request.failed` — `warn` when the outcome is ambiguous and the money is still reserved, `error` otherwise |
+
+**`budget.reserved` is the one to watch.** It is emitted at `info` immediately before a signer
+becomes reachable, which makes it the last event before money can move — so it is the event
+worth alerting on, and it is one of the nine a successful paid call emits (`"events": 9` under
+`--json`). A listener that only handles `sign.started` sees nothing at `info` at all. Every
+event is
 **redaction-safe by construction**: identifiers, hashes, atomic amounts, and categories only.
 Signatures, keys, authorization payloads, and RPC URLs with credentials never enter the stream,
 and the test suite proves it by seeding real secrets into every input and searching the whole

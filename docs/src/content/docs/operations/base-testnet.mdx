@@ -17,10 +17,15 @@ and do not reuse one that has ever touched mainnet — a testnet key that leaks 
 it controls nothing else.
 
 ```sh
-# Any tool that produces a secp256k1 key works. This one uses viem, already in the workspace.
-node -e "const {generatePrivateKey,privateKeyToAccount}=require('viem/accounts');
+# Any tool that produces a secp256k1 key works. This one uses viem, which the workspace
+# already has — run it through pnpm so it resolves from the package that depends on it.
+pnpm --filter tx402 exec node -e "const {generatePrivateKey,privateKeyToAccount}=require('viem/accounts');
 const k=generatePrivateKey();console.log('key    ', k);console.log('address', privateKeyToAccount(k).address)"
 ```
+
+Run it from the repository root, like every other command on this page. `viem` is an optional
+peer dependency of `tx402` rather than a workspace-root dependency, so a bare `node -e` from the
+root cannot resolve it — `pnpm --filter` is what runs the command inside the package that has it.
 
 Store the key in a password manager or a secret manager. Never commit it, never pass it as a
 command-line flag (SPEC §11 forbids that for the CLI), and never paste it into an issue.

@@ -1,8 +1,13 @@
 # ADR-021 — Configuration parity is a SPEC obligation; client API shape is not
 
-**Status:** Accepted · **implements `SPEC.md` §4.3 in Python; changes no MUST**
+**Status:** Accepted, amended S25 · **implements `SPEC.md` §4.3 in Python; changes no MUST**
 
 Closes PLAN.md open item **O84** (MEDIUM), filed by the S22 fresh-eyes UX pass.
+
+> **Amendment (S25) — the `configPath` decision below is reversed.** Python reports
+> `configPath: "initial_request_timeout_ms"`, not `"timeouts.initialRequestMs"`. See
+> [the amendment section](#amendment-s25--the-configpath-spelling-was-decided-wrongly) at the
+> end of this record. Everything else stands.
 
 ## Context
 
@@ -99,3 +104,41 @@ read more evenly.
 - The Python public surface grows by one keyword argument on each client and nothing else.
   `Timeouts` is deliberately not exported, and a regression asserts it stays that way so the
   decision is not quietly reversed by someone reading only the TypeScript page.
+
+## Amendment (S25) — the `configPath` spelling was decided wrongly
+
+The decision above says:
+
+> The SPEC field name survives where it is load-bearing: a validation failure reports
+> `configPath: "timeouts.initialRequestMs"` in both languages, so the same mistake is diagnosed
+> identically (ADR-005).
+
+**That is reversed.** Python now reports `configPath: "initial_request_timeout_ms"`.
+
+The S24 fresh-eyes pass filed it, and the argument against the original is stronger than the
+argument for it on both counts:
+
+1. **It was inconsistent within Python, which matters more than consistency across languages.**
+   Every other Python `configPath` uses the Python spelling — `policy.allowed_networks[0]`,
+   `policy.max_paid_attempts`, `routing.rpc_overrides[…]` — including this field's own sibling
+   `payment_retry_timeout_ms`, which the S23 change left untouched while introducing the
+   exception beside it. A caller reads one error at a time, in one language.
+2. **It named a path the caller could neither have typed nor switch to.** `Tx402Client` accepts
+   no `timeouts` argument; `Tx402Client(timeouts=…)` raises `TypeError`, and `Timeouts` is not
+   exported — facts this same ADR establishes and the configuration page states outright. So the
+   diagnostic pointed at a construction the reader had just been told does not exist in their
+   language. A cross-language-consistent path that is unusable is worse than two paths that each
+   work.
+
+ADR-005 is not weakened by this. It binds _public behavior, error codes, route ordering, and
+policy arithmetic_ — the error **code** (`TX402_CONFIG_INVALID`) and the **reason**
+(`expected-positive-integer`) remain identical across both languages, and those are the parts a
+program branches on. `configPath` is a human-facing pointer into a language's own configuration
+surface, and it should therefore be spelled in that language.
+
+**The wider lesson, recorded because it is the second time this shape has occurred.** The
+original decision was not an oversight — it was reasoned, written down, and defended in this
+document, and being written down is what made it look settled. A cross-language rule was applied
+to a field whose whole point, established four paragraphs earlier in this same ADR, was that the
+two languages spell it differently. When an ADR argues for uniformity, it is worth checking the
+claim against the exception the same ADR just created.

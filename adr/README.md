@@ -34,7 +34,7 @@ added together with this line.
 | [018](018-policy-scope-is-the-normalized-merchant-host.md)               | Policy scope is the normalized merchant host                | Accepted, amended S15d | Fixes SPEC §5.3 conformance        |
 | [019](019-settlement-metadata-in-the-cli-json-document.md)               | Settlement metadata in the CLI `--json` document            | Accepted               | Concretizes SPEC §11               |
 | [020](020-inspect-is-the-keyless-question-plan-is-not.md)                | `inspect()` is keyless; `plan()` is not                     | Accepted               | Clarifies SPEC §11                 |
-| [021](021-configuration-parity-is-a-spec-obligation-api-shape-is-not.md) | Configuration parity is a SPEC obligation; API shape is not | Accepted               | Implements SPEC §4.3 in Python     |
+| [021](021-configuration-parity-is-a-spec-obligation-api-shape-is-not.md) | Configuration parity is a SPEC obligation; API shape is not | Accepted, amended S25  | Implements SPEC §4.3 in Python     |
 
 ## Format
 
