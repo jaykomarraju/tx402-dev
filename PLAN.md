@@ -697,7 +697,8 @@ nothing touches `neogeeks/tx402` until the first two run clean.
 | S15c | Audit re-run | 🟥 Findings filed | 2026-08-04. **Audit verdict: not release-ready.** The eleven S15 findings remain fixed under independently derived probes, but four new medium findings were reproduced and filed as O57–O60. No production file was changed. The pushed S15b baseline `0fad6c5` has **11 / 11 green CI jobs**; its separate docs deployment run is red exactly because O56's Cloudflare repository secrets are absent, while the deployed site itself passes 8 / 8 live probes. S16 remains out of sequence; ordinary S15d remediation and another findings-only audit re-run are required first. |
 | S15d | S15c audit remediation | ✅ Complete | 2026-08-04. **All four findings O57–O60 resolved**, with independently derived regressions run against the S15c commit `38155c3` first and failing there: **TypeScript 4 of 18, Python 15 of 22**, plus the new documented-count gate reporting **9 stale claims** on that commit and 0 now. **O57:** the settlement-header reader emits nothing; `payment.completed` is now emitted from the disposition — `warn`/`paid: true`/`reason: payment-response-absent` only on the commit row, `warn`/`paid: "unknown"` from the ambiguous row, and nothing at all for a refusal or a re-challenge. **O58:** an **ADR-018 amendment** fixes the canonical policy host as the A-label; Python punycodes through httpx — the parser that already converts every request URL — and gains bracketed IPv6 and a single-dot strip, pinned by an eleven-row parity table both suites answer. **O59:** eight documents corrected and a `conformance:check` claims scanner plus ten-case `conformance:selftest` keeps them correct. **O60:** the workspace declares Node **22.12+** (Astro) while the published SDK keeps **20.19+**; `tools/toolchain-check` derives both floors from the manifests, the installed Astro, and the CI matrix, and runs first in `pnpm check`. It also caught that `release.yml`'s verify job ran `pnpm check` on Node 20 — the release gate would have failed on the tag. `pnpm check` is green end to end on Node 22, including the 17-page docs build. **New finding filed: O61**, the perf harness's budget-rejection gate is runtime-sensitive. |
 | S15e | Findings-only audit re-run | ✅ Audit clean | 2026-08-04. **No O62+ product finding.** The exact audited commit `a0fdc52` has **11 / 11 successful CI jobs**; its separate docs run built every surface and failed only at `A deploy from main requires the deploy credentials`, exactly O56. Public-contract probes — not S15d's regressions — re-established O44–O54 and O57–O60 across both completion classifiers, a real TypeScript paid call through the local merchant and RPC stub, an independent Python paid-path probe, a packed npm tarball, and an isolated built wheel. **O61 resolved from Linux CI:** Ubuntu/Node 20 measured the full budget-rejection harness at **0.574 ms p95** including loopback, while Ubuntu/Node 22's normative 500-sample in-memory T-006 measurement passed **<2 ms p95** with no store or signer call. The macOS Node 22 overage is therefore loopback/runtime noise under O61's stated decision rule; no threshold moved. The implementation audit is clean enough to proceed to S16, but publication remains blocked by USER items O8/O10/O12 and O56 still prevents an all-green main status. |
-| S16 | Fresh-eyes UX pass | ⬜ Not started | **§11.3.** On `tx402-dev`, **cold start** — reads the README and docs site only, never `PLAN.md`, until the pass is done. Installs and uses the product as a stranger; times TTV with a stopwatch. |
+| S15f | Docs visual alignment | ✅ Complete | 2026-08-04. **Presentation only.** The documentation site now carries the tx402.io landing page's visual language — palette, self-hosted Inter/JetBrains Mono, 6/10/14 px radii, surface-and-hairline hierarchy, mono-caps labels, and the hero grid motif — through `docs/src/styles/tx402.css` plus two font files and the brand favicon in `docs/public/`. **`docs/src/content/**`, both READMEs, and every generated page have a zero-byte diff.** No route, label, sidebar order, title, description, or behaviour changed. Verified by measurement, not by eye: **0 horizontal overflow across all 17 pages × 2 themes at 390 px**, a 2 px accent focus ring on every interactive control in both themes, and a contrast audit that moved every small label off the landing's `--text-faint` (4.29:1 dark / 4.21:1 light) onto `--text-muted` (7.64:1 / 6.24:1). Four defects found and fixed mid-session, three of them introduced by the restyle. `pnpm check` green on Node 22.23.1; Python gates green. |
+| S16 | Fresh-eyes UX pass | ⬜ Not started | **§11.3.** On `tx402-dev`, **cold start** — reads the README and docs site only, never `PLAN.md`, until the pass is done. Installs and uses the product as a stranger; times TTV with a stopwatch. **Pre-publication substitution applies:** neither package is published, so S16 installs the local tarball and wheel prepared at the end of S15f rather than resolving `tx402` from npm or PyPI. |
 | S17 | Publish | ⬜ Not started | **§11.4.** Planned only once S15 and S16 run clean. `neogeeks/tx402` migration, npm + PyPI trusted publishing, SPEC §12.4 gates. |
 
 Legend: ⬜ not started · 🟨 in progress · ✅ complete · 🟥 blocked
@@ -1676,6 +1677,102 @@ findings-only session did not change pins. O43 remains accepted and nonblocking.
 informational with only **0.05 KiB** total-size headroom; the own-code gate remains comfortable.
 O56 remains USER and exactly reproduced in CI. O8, O10, and O12 remain USER release blockers.
 No O62+ item was filed.
+
+---
+
+### S15f — documentation visual alignment: presentation only
+
+**Scope: how the documentation looks, and nothing else.** The docs and the landing page at
+`tx402.io` are one product and were two visual systems. This session made them one. It is not
+S16, it is not a content pass, and it changed no product behaviour, route, or workflow.
+
+**What changed — three paths, and that is the whole list.**
+
+| Path                        | Change                                                                              |
+| --------------------------- | ----------------------------------------------------------------------------------- |
+| `docs/src/styles/tx402.css` | 33 lines → the full theme: tokens, header, sidebar, TOC, prose, code, tables        |
+| `docs/public/fonts/*.woff2` | Inter + JetBrains Mono, the same latin variable subsets the landing serves (80 KiB) |
+| `docs/public/favicon.svg`   | the tx402 route mark                                                                |
+
+`docs/src/content/**`, `README.md`, both package READMEs, the generated error and API pages,
+SPEC, PRD, the ADRs, CHANGELOG, VERSIONING, SECURITY, CONTRIBUTING and CODE_OF_CONDUCT are
+byte-identical: `git diff -- docs/src/content README.md packages/tx402/README.md` is empty, and
+the whole working tree at commit time was those three paths plus this file.
+
+**The approach was to re-point tokens, not to write selectors.** Starlight's components are
+written against `--sl-color-gray-1…7`, so the landing palette is mapped onto that scale once and
+the rest follows. Custom CSS is emitted **outside** Starlight's `@layer starlight.*`, so it wins
+at equal specificity and the file contains no `!important`. No rule targets an `astro-*` class:
+those hashes change every build.
+
+**Where the two designs disagree, the documentation won.** Code blocks keep Expressive Code's
+per-scheme syntax theme rather than staying dark in light mode as the landing article does —
+only the frame, border, radius and tab bar were re-skinned. There is no scroll-triggered motion,
+no marketing hero density, and the only animation is hover/focus transitions, which
+`prefers-reduced-motion` neutralises.
+
+**Four defects were found and fixed during the session; three were mine.**
+
+1. **Tables drew short of their own frame.** `display: block` makes a table its own scroll
+   container, but the internal table box still shrink-wraps, so at `width: 100%` the header fill
+   and row rules stopped short of the border and left a dead strip. Fixed with `width:
+fit-content; max-width: 100%`.
+2. **The mobile menu button rendered as an empty box.** Starlight ships it as a filled disc —
+   page-coloured glyph on a text-coloured fill. Re-skinning the fill without setting the glyph
+   colour left a `#0a0c11` icon on a `#12161f` surface.
+3. **A border on the search button drew a rule across the mobile header**, because below 50rem
+   Starlight's open-modal button is a bare icon stretched by the header's flex row. The border is
+   now scoped to the breakpoint that gives the button a box.
+4. **`/favicon.svg` 404'd**, and had since the site was first built: Starlight emits no default
+   favicon but references one. Not filed as an open item — it is a missing presentation asset,
+   fixed in the same session by the same change that gave the docs the brand mark.
+
+A fifth, cosmetic: pages that separate sections with `---` printed the authorial rule and the
+automatic section rule as two lines. The automatic rule now yields to an explicit one.
+
+**Verification was measured, not eyeballed.** A local static server rendered the built site;
+phone viewports go through an exactly-sized same-origin iframe because headless Chrome will not
+open a window narrower than 500 px.
+
+| Check                                                             | Result                                                                                                                                                            |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Horizontal overflow, 17 pages × dark/light × 390 px               | **0 of 34** overflow; the probe was proved to have teeth against a deliberately 2000 px-wide fixture                                                              |
+| Focus ring, 9 interactive controls × both themes                  | 2 px solid accent at 3 px offset on **every** one                                                                                                                 |
+| Contrast of introduced label colours                              | landing `--text-faint` measured **4.29:1** dark / **4.21:1** light — under 4.5:1, so all seven small-label uses moved to `--text-muted` (**7.64:1** / **6.24:1**) |
+| Body and link colours                                             | body **13.41:1** dark / **12.16:1** light; links **7.45:1** / **5.48:1**                                                                                          |
+| Wide tables and long code blocks                                  | scroll inside their own container on every page at 390 px                                                                                                         |
+| Sidebar, TOC, mobile menu, search dialog                          | screenshotted open in both themes; all still operable                                                                                                             |
+| `git diff -- docs/src/content README.md packages/tx402/README.md` | empty                                                                                                                                                             |
+| `pnpm docs:check`                                                 | generated pages current                                                                                                                                           |
+| `pnpm check` (Node 22.23.1)                                       | green end to end, including the 17-page docs build                                                                                                                |
+| TypeScript tests / coverage                                       | **516 passed**, 11 skipped; **94.18 % statements / 90.66 % branch**                                                                                               |
+| Python ruff / format / mypy / pytest                              | clean; **544 passed**, **92.51 %**                                                                                                                                |
+| `pnpm size`                                                       | own **17.22 / 25.00 KiB**; total **31.95 / 32.00 KiB** — PASS                                                                                                     |
+| `tx402-landing` working tree                                      | byte-identical to its initial dirty state; never written to                                                                                                       |
+
+`tx402-landing` was read only. Its seven modified and four untracked files were fingerprinted
+by SHA-256 at session start and again at the end, and are unchanged; the fonts and favicon were
+copied out of it, nothing was copied in.
+
+**S16 must not install from the registries.** Neither package is published, so
+`npm install tx402` or `uv pip install tx402` would fail or fetch something unrelated. A tarball
+and a wheel were built from the final committed tree, verified by installing each into an empty
+temporary environment, and left **outside the repository**; their absolute paths, SHA-256
+digests, source commit, and build commands are carried in the S16 handoff prompt. They are not
+committed and not published. Substituting those paths where the documentation says `tx402` is
+declared setup, **not a UX finding**; every other documented instruction is followed literally.
+The S16 stopwatch starts after that bootstrap, when the cold agent begins following the docs.
+
+**Open items re-deferred, none filed.** No O62+ item: no product or documentation defect was
+found beyond the presentation gaps this session was authorised to fix. **O6** stays on its
+watch — installed pins remain `@x402/*` 2.20.0 and Python `x402` 2.17.0 while the registries
+advertise 2.21.0 and 2.18.0; a later implementation session must read the changelogs and replay
+the conformance and artifact gates before any bump, and a styling session is not that session.
+**O43** remains accepted and nonblocking. **O55** remains informational: total-size headroom is
+still **0.05 KiB**, untouched here because documentation assets are not in the SDK bundle.
+**O56** remains USER — the separate docs workflow will fail again on this push at `A deploy from
+main requires the deploy credentials`, which is the fail-closed condition working, not a
+regression. **O8**, **O10** and **O12** remain USER release blockers.
 
 ---
 
