@@ -235,11 +235,19 @@ describe("O98 — no page sends a reader to something that is not there", () => 
     // answer — the reader wanted the reason, and it is a short one.
     // Not a ban on the phrase — it is honest prose in its own right, and the sibling
     // assertion above is what catches it being used as a link substitute. What matters here
-    // is that the page now answers the question it raises instead of deferring it.
-    const source = read(SECURITY);
-    const section = source.slice(source.indexOf("Same-origin redirects are not followed"));
-    expect(section.slice(0, 700)).toMatch(/idempot/iu);
-    expect(section.slice(0, 700)).toMatch(/second charge|charge twice|pay twice/iu);
+    // is that the page answers the question it raises instead of deferring it.
+    //
+    // Searched over the whole page with whitespace collapsed, rather than a slice anchored on
+    // one sentence. The first version anchored on "Same-origin redirects are not followed",
+    // which S31 legitimately reworded — `indexOf` returned -1, `slice(-1)` yielded a newline,
+    // and the assertion failed for a reason that had nothing to do with what it guards. An
+    // anchor that can silently miss is the same hazard as a pattern that cannot match.
+    const flat = read(SECURITY).replace(/\s+/gu, " ");
+    expect(flat, "the page must still discuss same-origin redirects").toMatch(
+      /same-origin/iu,
+    );
+    expect(flat).toMatch(/idempot/iu);
+    expect(flat).toMatch(/second charge|charge twice|pay twice/iu);
   });
 });
 

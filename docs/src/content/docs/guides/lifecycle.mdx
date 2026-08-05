@@ -164,13 +164,36 @@ The level is part of the contract, and it is not uniform:
 | :------------------- | :------------------------------------------------------------------------------------------------ |
 | `info`               | `request.started`, `payment.required`, `policy.checked`, `route.planned`, `budget.reserved`, `request.retried` |
 | `debug`              | `sign.started`, `sign.completed` — a signature attempt is detail, not a milestone                |
-| `info` **or** `warn` | `payment.completed` — `warn` when the merchant supplied no settlement evidence and it committed anyway |
+| `info` **or** `warn` | `payment.completed` — `warn` on any of three merchant faults, listed below |
 | `warn` **or** `error` | `request.failed` — `warn` when the outcome is ambiguous and the money is still reserved, `error` otherwise |
 
-**Each event is emitted exactly once per request**, at exactly one level. `request.failed` in
-particular is emitted from a single place that picks its level from the final disposition, so a
-counter over the stream counts requests and never double-counts one. Both languages do this at
-the same point and by the same rule.
+**Three of the ten are emitted once per request. The other seven are emitted once per
+attempt**, so a call the merchant re-challenges emits each of those seven twice — as the
+"every attempt re-plans from scratch" section above implies, and as both languages do
+identically:
+
+| Cardinality           | Events                                                                                                          |
+| :-------------------- | :---------------------------------------------------------------------------------------------------------------- |
+| Once per **request**  | `request.started`, `payment.completed`, `request.failed`                                                        |
+| Once per **attempt**  | `payment.required`, `policy.checked`, `route.planned`, `budget.reserved`, `sign.started`, `sign.completed`, `request.retried` |
+
+**This matters for anything that counts.** `budget.reserved` is in the second group, so a metric
+built on it counts *attempts at spending*, not requests — which is usually what you want, but only
+if you know it. `request.failed` is in the first: it is emitted from a single place that picks its
+level from the final disposition, so a failure counter counts failed requests and never
+double-counts one.
+
+`payment.completed` is emitted at `warn` rather than `info` for exactly three reasons, and only
+the first two mean the merchant gave you nothing to reconcile with:
+
+| `reason`                                 | What the merchant did                                                        |
+| :--------------------------------------- | :----------------------------------------------------------------------------- |
+| `payment-response-absent`                | Answered `200` with no `PAYMENT-RESPONSE` at all — committed on its word alone |
+| `payment-response-unparseable`           | Sent settlement metadata that does not decode                                 |
+| `settlement-succeeded-resource-unusable` | Reported a **successful** settlement and then failed to deliver — `paid` is `true` here |
+
+An alert that treats `payment.completed` at `warn` as "merchant supplied no settlement evidence"
+will fire on the third row too, where the evidence exists and the delivery is what broke.
 
 **`budget.reserved` is the one to watch.** It is emitted at `info` immediately before a signer
 becomes reachable, which makes it the last event before money can move — so it is the event

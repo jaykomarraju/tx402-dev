@@ -350,7 +350,7 @@ covers four unrelated causes. The message names which:
 | Message                                             | What is actually wrong                                                                       |
 | :-------------------------------------------------- | :------------------------------------------------------------------------------------------- |
 | `No allowed payment network was offered`            | You omitted `--network`, or pointed it at a network this merchant does not offer. The error prints `offeredNetworks` directly beneath it — copy one from there |
-| `No offered network has a configured signer…`       | No key is exported for any offered chain, or the chain's optional peer dependency is missing — `@x402/evm` + `viem` for Base, the Solana trio for Solana |
+| `No offered network has a configured signer…`       | No key is exported for any offered chain, or the chain's optional peer dependency is missing — `@x402/evm` + `viem` for Base, and `@solana-program/token` + `@solana/kit` + `@x402/svm` + `viem` for Solana. **`viem` is on both rows**: `tx402/signers` imports it whichever chain you pay on, so a Solana-only install without it fails here too |
 | `…requirement is unusable: eip712-domain-missing`   | The **merchant's** challenge is malformed: it did not publish the token's EIP-712 domain. Nothing on your side fixes this |
 | `Solana requirement is missing an address`          | The same, on Solana: the merchant's challenge names no fee payer                              |
 

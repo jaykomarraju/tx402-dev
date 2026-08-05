@@ -54,17 +54,30 @@ Alongside that, the signer receives a human-readable presentation: domain, asset
 decimal amount, recipient, network, expiry, and request hash. A hardware wallet can show a
 person what they are approving.
 
-### Cross-origin redirects are blocked
+### Redirects are never followed after a signature
 
-A paid retry that would follow a redirect to a different origin fails **before** the signature is
-transmitted.
+**No redirect is followed on a paid retry — and by the time one arrives, your signature is
+already with the merchant.** A redirect is a response, so the request that provoked it had to be
+sent first. What tx402 refuses is the *second* request, to the redirect target.
 
-**Same-origin redirects are not followed either**, which is a deliberate v0.1 narrowing rather
-than an oversight. Following one would mean re-sending a request that already carries a payment
-signature, and tx402 cannot know whether the merchant treats the second URL as the same
-operation or a new one — so a redirect that looks like a formality could be a second charge. The
-redirect is surfaced instead: you get the response, see the `Location`, and decide. Lifting this
-would require a merchant-side idempotency signal the protocol does not currently define.
+That makes both kinds of redirect an **exit `8`** outcome, with `context.paid` of `"unknown"` and
+the budget reservation **retained** until its TTL. Treat them exactly as the error reference tells
+you to treat exit 8: money may have moved, do not retry blindly, reconcile with the merchant.
+
+| Redirect       | Error                    | Details it carries                                            |
+| :------------- | :----------------------- | :-------------------------------------------------------------- |
+| Cross-origin   | `TX402_REDIRECT_BLOCKED` | `fromOrigin`, `toOrigin`, `causeCategory`, `reservationExpiresAtEpochMs` |
+| Same-origin    | `TX402_PAYMENT_AMBIGUOUS` | `causeCategory` (`redirect-not-followed`), `reservationExpiresAtEpochMs` |
+
+Both **throw**. You do not get the response back, and the same-origin error does not carry the
+`Location` — so a merchant that redirects a paid retry is a merchant you reconcile with, not one
+you follow.
+
+Same-origin is refused as well as cross-origin, and that is a deliberate v0.1 narrowing rather
+than an oversight: re-sending a request that already carries a payment signature means tx402
+cannot know whether the merchant treats the second URL as the same operation or a new one, so a
+redirect that looks like a formality could be a second charge. Lifting this would require a
+merchant-side idempotency signal the protocol does not currently define.
 
 ### Nothing sensitive is logged
 

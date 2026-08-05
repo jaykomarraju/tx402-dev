@@ -36,6 +36,7 @@ added together with this line.
 | [020](020-inspect-is-the-keyless-question-plan-is-not.md)                            | `inspect()` is keyless; `plan()` is not                                | Accepted               | Clarifies SPEC §11                 |
 | [021](021-configuration-parity-is-a-spec-obligation-api-shape-is-not.md)             | Configuration parity is a SPEC obligation; API shape is not            | Accepted, amended S25  | Implements SPEC §4.3 in Python     |
 | [022](022-a-post-transmission-failure-is-never-classified-as-a-pre-signature-one.md) | A post-transmission failure is never classified as a pre-signature one | Accepted               | Changes one exit-code mapping      |
+| [023](023-behavioural-prose-is-written-from-execution-not-from-reading.md)           | Behavioural prose is written from execution                            | Accepted               | Process rule; changes no MUST      |
 
 ## Format
 
