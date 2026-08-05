@@ -15,9 +15,6 @@ ranking the offered routes, which means reading your address and balance on each
 route it cannot price is a route it cannot rank, so ``plan()`` — and the CLI's
 ``--dry-run``, which is the same call — require a configured signer. Neither ever produces
 a signature.
-
-Until S21 this file called ``plan()`` while promising to need no key, so it failed on every
-run with ``TX402_SCHEME_UNSUPPORTED`` (O78). See ADR-020.
 """
 
 from __future__ import annotations

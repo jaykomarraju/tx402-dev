@@ -16,9 +16,8 @@
  * under test is "how is this error classified", and a mock states that directly.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { createEvmRpcStub, type EvmRpcStub } from "@tx402-dev/evm-rpc-stub";
 import { createTestMerchant } from "@tx402-dev/test-merchant";
@@ -31,12 +30,9 @@ import { CHAIN_INSTALL_COMMANDS } from "../src/core/client.js";
 import type { EvmManifestAsset, EvmManifestNetwork } from "../src/core/manifest.js";
 import type * as signersModule from "../src/signers/index.js";
 import { privateKeyToEvmSigner } from "../src/signers/index.js";
+import { EXAMPLES, read, readerSurfaces, relative, sitePages } from "./reader-surfaces.js";
 
 type SignersModule = typeof signersModule;
-
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const DOCS = join(REPO, "docs", "src", "content", "docs");
-const EXAMPLES = join(REPO, "examples");
 
 const BASE = BUNDLED_MANIFEST.networks["eip155:8453"] as EvmManifestNetwork;
 const USDC = BASE.assets[0] as EvmManifestAsset;
@@ -250,18 +246,14 @@ describe("O78 — the dry-run examples are keyless because they ask the keyless 
 });
 
 describe("O80/O81 — the published site resolves, and cites nothing a reader cannot reach", () => {
-  /** Every authored page on the site, generated ones included. */
-  const pages = (): string[] => {
-    const files: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.isDirectory()) walk(join(dir, entry.name));
-        else if (entry.name.endsWith(".mdx")) files.push(join(dir, entry.name));
-      }
-    };
-    walk(DOCS);
-    return files;
-  };
+  /**
+   * Link resolution is a property of the *site*, so it is checked over site pages. The
+   * citation rule below is not — it is a property of anything a reader reads — and it is
+   * checked over every reader-facing surface instead. Scoping that one to `docs/` is what
+   * let the very commit that removed thirteen citations from `docs/` add two more to
+   * `examples/`: this file bound `EXAMPLES` and never swept it. See `reader-surfaces.ts`.
+   */
+  const pages = sitePages;
 
   it("has no site-relative link to a file the site does not publish", () => {
     // `../../adr/…md` and `../../core-spec/…json` render as site URLs and 404: neither
@@ -275,16 +267,23 @@ describe("O80/O81 — the published site resolves, and cites nothing a reader ca
     }
   });
 
-  it("cites no internal planning artifact", () => {
+  it("cites no internal planning artifact, on any surface a reader reads", () => {
     // PLAN.md is not published, so an open-item number or a session identifier resolves to
     // nothing for a stranger — and "an earlier revision of this page was wrong" tells a new
     // reader nothing while undercutting the page they are reading.
-    for (const file of pages()) {
-      const source = readFileSync(file, "utf8");
-      expect(source).not.toMatch(/PLAN\.md/u);
-      expect(source).not.toMatch(/open item \*{0,2}O\d/u);
-      expect(source).not.toMatch(/the S\d+ audit/u);
-      expect(source).not.toMatch(/session S\d+/u);
+    //
+    // Widened twice over the original: to every reader-facing surface rather than the site
+    // alone, and to the bare `S21` / `(O78)` forms as well as the prose ones. The narrow
+    // version matched `session S12` and `open item O3` and so could not see the citations
+    // that were added to the examples while it was passing. The bare-identifier sweep lives
+    // in the S23 suite alongside the finding that motivated it; these four stay because a
+    // prose citation is worth naming distinctly when it fails.
+    for (const file of readerSurfaces()) {
+      const source = read(file);
+      expect(source, relative(file)).not.toMatch(/PLAN\.md/u);
+      expect(source, relative(file)).not.toMatch(/open item \*{0,2}O\d/u);
+      expect(source, relative(file)).not.toMatch(/the S\d+ audit/u);
+      expect(source, relative(file)).not.toMatch(/session S\d+/u);
     }
   });
 });

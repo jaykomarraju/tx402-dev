@@ -102,11 +102,26 @@ required detail keys.
 merchant reported — the hash you paste into a block explorer — and `payer` is the address that
 paid, on the chain the route selected.
 
-- `"status": "committed"` — the money moved. This is exit `0` and exit `9`.
+- `"status": "committed"` — the money moved. Exit `0`, and the paid half of exit `9`.
 - `"status": "unknown"` — the signature was transmitted and the outcome could not be
   determined. This is exit `8`. `transaction` is `null`, because tx402 has none.
-- `"settlement": null` — nothing was ever signed. A dry run, or any policy or protocol
-  refusal.
+- `"settlement": null` — **tx402 holds no settlement**. Usually that is because nothing was
+  ever signed: a dry run, or any policy or protocol refusal. It is also what you get when a
+  signature *was* transmitted and the merchant reported the settlement as unsuccessful, which
+  is the unpaid half of exit `9`.
+
+`settlement` alone therefore does not tell you whether you paid. `error.context.paid` does, and
+it is the field the CLI itself branches on:
+
+| `context.paid` | Meaning                                              | Where it appears           |
+| :------------- | :----------------------------------------------------- | :--------------------------- |
+| absent         | No signature was ever produced                        | Exits `2`–`7`, and dry runs |
+| `false`        | A signature was transmitted and **no money moved** — the merchant refused the settlement, or re-challenged until `maxPaidAttempts` ran out | Exit `9` |
+| `"unknown"`    | A signature was transmitted and the outcome cannot be determined | Exit `8`                    |
+| `true`         | The payment settled                                   | Exit `0`, and exit `9` when the resource then failed |
+
+A `settlement` object is emitted only for the last two rows, which is why its absence on exit `9`
+is information rather than an omission: it means the money is still yours.
 
 `transaction` can also be `null` on a committed payment, when the merchant supplied no
 identifier at all: the pinned protocol marks `PAYMENT-RESPONSE` optional and that case commits
@@ -143,8 +158,14 @@ case $code in
   7) echo "network failure — safe to retry" >&2; exit 75 ;;
   8) echo "AMBIGUOUS: payment may have settled. Do not retry." >&2
      jq -r '"payer \(.settlement.payer)"' out.json >&2; exit 1 ;;
-  9) echo "PAID but not delivered. Do not retry." >&2
-     jq -r '"payer \(.settlement.payer)  tx \(.settlement.transaction)"' out.json >&2
+  9) # Not delivered — but exit 9 alone does not say whether you paid for it.
+     if [ "$(jq -r '.error.context.paid' out.json)" = "true" ]; then
+       echo "PAID but not delivered. Do not retry." >&2
+       jq -r '"payer \(.settlement.payer)  tx \(.settlement.transaction)"' out.json >&2
+     else
+       echo "not delivered, and nothing settled — safe to retry" >&2
+       jq -r '"reason \(.error.details.reason)"' out.json >&2
+     fi
      exit 1 ;;
   *) echo "failed with $code" >&2; exit 1 ;;
 esac

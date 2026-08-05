@@ -174,7 +174,7 @@ compiled into both packages; construction fails if the signature does not verify
 | [Routing & health](https://docs.tx402.io/guides/routing/)       | How a route is chosen, and why it is deterministic |
 | [CLI](https://docs.tx402.io/guides/cli/)                        | Flags and exit codes                               |
 | [Error reference](https://docs.tx402.io/reference/errors/)      | All fifteen codes — generated from shipped source  |
-| [Configuration](https://docs.tx402.io/reference/configuration/) | Every option in both languages                     |
+| [Configuration](https://docs.tx402.io/reference/configuration/) | Every option, in both languages' spellings         |
 | [Key management](https://docs.tx402.io/security/keys/)          | What to do instead of an environment variable      |
 
 ## Repository layout

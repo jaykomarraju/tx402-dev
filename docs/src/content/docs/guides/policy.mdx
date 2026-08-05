@@ -128,9 +128,11 @@ explicitly once you know your merchants.
 
 ## Checking your budget
 
-Two calls, and the difference matters. `getBudgetState()` is a synchronous snapshot of the
-most recent paid request; `queryBudgetState()` reads the store, so it can answer about any
-scope — including one another process wrote.
+Both languages let you **query the store** for any scope, including one another process wrote.
+TypeScript additionally offers a **synchronous snapshot** of the most recent paid request, which
+SPEC §4.1 requires of it; Python has no snapshot form and does not need one.
+
+**TypeScript — two calls, and the difference matters.**
 
 ```ts
 import { normalizePolicyHost } from "tx402";
@@ -146,6 +148,10 @@ const state = await tx402.queryBudgetState({
 });
 ```
 
+**Python — one call, and it is the query.** `get_budget_state` carries the shorter name and the
+querying behaviour: both keyword arguments are **required**, so there is no snapshot form to
+reach for and calling it bare raises `TypeError` rather than returning the last request.
+
 ```python
 from tx402 import normalize_policy_host
 
@@ -154,6 +160,11 @@ state = client.get_budget_state(
     asset_id="eip155:8453/erc20:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 )
 ```
+
+The asymmetry is deliberate rather than a gap waiting to be filled: the snapshot answers "what
+did *this client object* last pay", which is a natural question of a TypeScript client that owns
+`fetch()`, and a much less natural one of a Python client that is an httpx transport wrapper. The
+store query answers everything the snapshot does and more, in both languages.
 
 Budgets are scoped **per host and per asset**, so spending against one merchant does not consume
 another's allowance, and USDC on Base is a different budget from USDC on Solana.

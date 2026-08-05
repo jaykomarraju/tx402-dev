@@ -10,8 +10,14 @@ page is not a second copy of that table; it is the set of fields whose behaviour
 obvious from a one-line description, written out in full so the reasoning is not
 rediscovered — or quietly re-invented — later.
 
-Read the [API reference](../api-typescript/) for signatures and the
-[policy guide](../../guides/policy/) for how the caps compose.
+Fields are given in both spellings where they differ: TypeScript's nested, camel-cased form and
+Python's flat, snake-cased keyword arguments. Where a field is offered by one language only, the
+row says so.
+
+Read the [TypeScript API reference](../api-typescript/) for TypeScript signatures and the
+[policy guide](../../guides/policy/) for how the caps compose. There is no generated Python API
+page yet; Python's signatures are on the objects themselves and in the
+[package README](https://github.com/neogeeks/tx402/blob/main/packages/tx402-python/README.md).
 
 ---
 
@@ -195,15 +201,43 @@ compromise can read.
 
 ## `timeouts` — the caller's own deadline is never shortened
 
-| Field                       | Default                 | Behaviour                                                                                                                                            |
-| :-------------------------- | :---------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `timeouts.initialRequestMs` | absent                  | No SDK deadline. The caller's transport or `AbortSignal` governs. Supplying one adds a deadline **alongside** any caller signal, never replacing it. |
-| `timeouts.paymentRetryMs`   | `10000`, minimum `1000` | Covers the signature-bearing attempt.                                                                                                                |
+**The two languages spell these differently.** TypeScript nests them under a `timeouts` object;
+Python takes them as flat keyword arguments and exports no `Timeouts` type. Both are listed here
+because a Python reader who follows only the TypeScript spelling constructs something that does
+not exist.
 
-A paid retry that hits its deadline is **ambiguous**, not failed: the signature was already
-transmitted, so `AmbiguousPaymentError` is raised and the reservation is retained until its
-120-second TTL (SPEC §6.7). Setting this very low does not make failures cleaner — it makes
-ambiguous outcomes more likely.
+| SPEC §4.3 field             | TypeScript                  | Python                          | Default                 |
+| :-------------------------- | :-------------------------- | :------------------------------ | :---------------------- |
+| `timeouts.initialRequestMs` | `timeouts.initialRequestMs` | `initial_request_timeout_ms`    | absent                  |
+| `timeouts.paymentRetryMs`   | `timeouts.paymentRetryMs`   | `payment_retry_timeout_ms`      | `10000`, minimum `1000` |
+
+```ts
+const tx402 = createTx402Client({
+  signers: { evm },
+  timeouts: { initialRequestMs: 5000, paymentRetryMs: 15000 },
+});
+```
+
+```python
+Tx402Client(
+    evm_signer=evm,
+    initial_request_timeout_ms=5000,
+    payment_retry_timeout_ms=15000,
+)
+```
+
+**`initialRequestMs` is absent by default**, and absent means no SDK deadline at all: the
+caller's own transport timeout — or `AbortSignal` in TypeScript — governs. Supplying one adds a
+deadline **alongside** that, never replacing it, because a caller who set a timeout meant it.
+A non-integer or non-positive value is a `ConfigurationError` at construction in both languages,
+reported with `configPath: "timeouts.initialRequestMs"`.
+
+**`paymentRetryMs` covers the signature-bearing attempt**, and a paid retry that hits its
+deadline is **ambiguous**, not failed: the signature was already transmitted, so
+`AmbiguousPaymentError` is raised and the reservation is retained until its 120-second TTL
+(SPEC §6.7). Setting this very low does not make failures cleaner — it makes ambiguous outcomes
+more likely. The initial request carries no such hazard, which is why it is the one that may be
+bounded freely: nothing has been signed yet.
 
 ---
 
@@ -230,8 +264,8 @@ complete reference rather than a selective one.
 | `policy.allowedDomains`   | `["*"]`                     | Matched against the normalized host before the first request **and** before the paid retry.                                              |
 | `policy.allowedNetworks`  | Base + Solana production    | Empty list is invalid. Aliases accepted in, canonical CAIP-2 out — see above.                                                            |
 | `policy.maxPaidAttempts`  | `2`                         | Range 1–3. Counts signed retries only, never the initial unpaid request. Exhaustion is a typed terminal error, not a loop that stops.     |
-| `timeouts.initialRequestMs` | caller's own              | Absent by default: the SDK never silently shortens a caller's timeout.                                                                   |
-| `timeouts.paymentRetryMs` | `10000`                     | Covers the one signature-bearing request. Minimum 1000.                                                                                  |
+| `timeouts.initialRequestMs`<br />`initial_request_timeout_ms` | caller's own | Absent by default: the SDK never silently shortens a caller's timeout.                                            |
+| `timeouts.paymentRetryMs`<br />`payment_retry_timeout_ms` | `10000`         | Covers the one signature-bearing request. Minimum 1000.                                                                 |
 | `routing.preferNetworks`  | `[]`                        | **Implemented.** A tie-break preference only — it cannot make a non-viable route viable, and it ranks below viability. See SPEC §6.4 step 18. |
 | `routing.rpcOverrides`    | `{}`                        | Caller-supplied RPC endpoints per network, for keyed or private providers (ADR-015).                                                     |
 | `spendStore`              | `MemorySpendStore`          | The pluggable ledger. Its scope key is the normalized merchant host, so two processes sharing a store share a cap (ADR-018).              |

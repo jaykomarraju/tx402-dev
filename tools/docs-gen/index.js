@@ -79,7 +79,10 @@ const EXIT_CODE_MEANING = {
     "ambiguous payment",
     "Money may have moved and tx402 cannot tell. **Never retry blindly.**",
   ],
-  9: ["resource failure", "Payment was fine; the resource was not delivered."],
+  9: [
+    "resource failure",
+    "The resource was not delivered. Read `context.paid` — it is `false` when the merchant refused the settlement and no money moved, and `true` when it settled and delivery then failed.",
+  ],
 };
 
 async function load() {

@@ -92,7 +92,7 @@ moved, and the same dollar could then be spent again inside the same hour.
 | After transmission        | Cross-origin redirect (SEC-005)        | **retained** | `TX402_REDIRECT_BLOCKED`, `paid: "unknown"`     |
 | After transmission        | `PAYMENT-RESPONSE` present, undecodable | **retained** | `TX402_PAYMENT_AMBIGUOUS`, `settlement-metadata-unparseable` |
 | Refused, no settlement    | 4xx with no `PAYMENT-RESPONSE`         | **released** | `TX402_RESOURCE_DELIVERY`, `paid: false`        |
-| Delivered, not settled    | `success: false` in `PAYMENT-RESPONSE` | **released** | `TX402_RESOURCE_DELIVERY`                       |
+| Delivered, not settled    | `success: false` in `PAYMENT-RESPONSE` | **released** | `TX402_RESOURCE_DELIVERY`, `paid: false`        |
 | Settled, resource refused | 403 **with** a successful settlement   | **committed** | `TX402_RESOURCE_DELIVERY`, `paid: true`        |
 | Settled, ledger write failed | Your spend store rejected the commit | **retained** | `TX402_RESOURCE_DELIVERY`, `paid: true`         |
 

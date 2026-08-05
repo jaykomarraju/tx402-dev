@@ -49,14 +49,17 @@ raw private key in its main configuration.
 
 ```bash
 # TypeScript / Node 20+
-npm install tx402
+npm install tx402                    # core + CLI, no chain
+npm install tx402 @x402/evm viem     # + Base / EVM
 
 # Python 3.10+
-pip install tx402
+pip install tx402                    # core + CLI, no chain
+pip install "tx402[evm]"             # + Base / EVM
 ```
 
 Both packages are unscoped and named `tx402`. Chain support is opt-in: the core import path
-loads **no chain library** in either language.
+loads **no chain library** in either language. Add the chain row for anything that reaches a
+chain — the [quickstart](./start/quickstart/) lists Solana's too.
 
 ## Three lines
 
@@ -89,6 +92,11 @@ npx tx402 call https://api.example.com/paid-resource --max-spend "0.10 USDC" --d
 
 `--dry-run` does everything a real call does **except** reserve budget and sign. It is the
 fastest way to find out what a merchant is asking for and what tx402 would do about it.
+
+It is not, however, free of setup: planning ranks the offered routes by reading your balance on
+each, so `--dry-run` needs a **chain row installed and a key configured**, and says so with exit
+`5` if either is missing. The question that needs neither is `client.inspect()`, which returns
+the merchant's terms without touching a chain.
 
 ## Where to go next
 

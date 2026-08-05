@@ -107,5 +107,12 @@ With a cap, it is the cap.
 
 The layered answer is: an external signer so the key cannot be exfiltrated, a domain allowlist so
 an arbitrary URL cannot be paid, and an hourly cap so a permitted domain cannot be drained.
-`--dry-run` is worth building into an agent's own tooling for the same reason — it lets the agent
-find out what something costs without being able to pay for it.
+
+`client.inspect()` is worth building into an agent's own tooling for the same reason — it lets the
+agent find out what something costs **without being able to pay for it**. It performs the request,
+decodes and validates the merchant's challenge, and stops: no signer, no chain, no budget. A
+client constructed with no signers at all can still call it.
+
+`--dry-run` is a different guarantee and is not a substitute here. It never signs — that much is
+structural — but it does rank routes, which means a configured key and an installed chain adapter,
+so it is a tool for someone who *could* pay and is deciding whether to.

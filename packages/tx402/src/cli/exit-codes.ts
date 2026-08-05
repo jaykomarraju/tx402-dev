@@ -19,7 +19,12 @@
  *  - `7` transport — the network failed. Retryable by caller policy.
  *  - `8` ambiguous payment — money may have moved and tx402 cannot tell. **Never retry
  *    blindly on this one**; it is its own code precisely so a script can stop.
- *  - `9` resource failure — payment was fine, the resource was not delivered.
+ *  - `9` resource failure — the resource was not delivered. This one covers both halves of a
+ *    range and the halves want opposite actions, so the code alone is not enough to act on:
+ *    `context.paid` is `false` when the merchant refused the settlement or exhausted the
+ *    permitted attempts (no money moved, retrying is safe) and `true` when the payment
+ *    settled and delivery then failed (do not retry). The CLI branches on `paid`, never on
+ *    the exit code, and a `settlement` object is emitted only in the second case.
  */
 
 import { TX402_ERROR_CODES, isTx402Error, type Tx402ErrorCode } from "../core/errors.js";

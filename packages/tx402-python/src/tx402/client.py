@@ -418,6 +418,7 @@ class _Core:
         evm_rpc_transport: object,
         solana_rpc_transport: object,
         allow_insecure_localhost: bool,
+        initial_request_timeout_ms: int | None,
         payment_retry_timeout_ms: int,
         disable_request_id_header: bool,
         logger: Tx402Logger,
@@ -430,6 +431,7 @@ class _Core:
         self.manifest = manifest
         self.clock = clock
         self.allow_insecure_localhost = allow_insecure_localhost
+        self.initial_request_timeout_ms = initial_request_timeout_ms
         self.payment_retry_timeout_ms = payment_retry_timeout_ms
         self.disable_request_id_header = disable_request_id_header
         self.logger = logger
@@ -1287,6 +1289,23 @@ def _validate_retry_timeout(value: object) -> int:
     return value
 
 
+def _validate_initial_timeout(value: object) -> int | None:
+    """SPEC §4.3 ``timeouts.initialRequestMs`` — absent, or a positive integer.
+
+    Absent is the default and is the specified behaviour: the SDK never silently shortens a
+    caller's own timeout, so with nothing set the httpx timeout the caller configured is the
+    only deadline. Supplying one adds a deadline *alongside* that, never replacing it.
+
+    The ``configPath`` reported on failure is the SPEC field name rather than the Python
+    keyword, so the same mistake is diagnosed identically in both languages (ADR-005).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise _configuration("timeouts.initialRequestMs", "expected-positive-integer")
+    return value
+
+
 def _validate_logger(logger: object) -> None:
     """Reject a logger that cannot receive events, rather than dropping them in silence.
 
@@ -1316,6 +1335,7 @@ def _build_core(
     evm_rpc_transport: object,
     solana_rpc_transport: object,
     allow_insecure_localhost: bool,
+    initial_request_timeout_ms: int | None,
     payment_retry_timeout_ms: int,
     disable_request_id_header: bool,
     logger: Tx402Logger,
@@ -1327,6 +1347,7 @@ def _build_core(
         context=Tx402ErrorContext(request_id="configuration", phase="initial"),
         now_epoch_ms=clock(),
     )
+    _validate_initial_timeout(initial_request_timeout_ms)
     _validate_retry_timeout(payment_retry_timeout_ms)
     _validate_logger(logger)
     # `is None`, not `or`: a perfectly valid adapter that defines `__len__` or `__bool__`
@@ -1346,6 +1367,7 @@ def _build_core(
         evm_rpc_transport=evm_rpc_transport,
         solana_rpc_transport=solana_rpc_transport,
         allow_insecure_localhost=allow_insecure_localhost,
+        initial_request_timeout_ms=initial_request_timeout_ms,
         payment_retry_timeout_ms=payment_retry_timeout_ms,
         disable_request_id_header=disable_request_id_header,
         logger=logger,
@@ -1361,6 +1383,28 @@ class Tx402Transport(httpx.BaseTransport):
         self._inner = inner
         self._core = core
 
+    def _issue_initial(self, request: httpx.Request, request_id: str) -> httpx.Response:
+        """The unpaid request, under the caller's deadline plus any the SDK was given.
+
+        SPEC §4.3's ``timeouts.initialRequestMs`` is absent by default, in which case this
+        is exactly the call it always was and httpx's own timeout is the only bound. When
+        one is configured it is added *alongside* that, never in place of it: the SDK does
+        not silently shorten a caller's timeout, and it cannot lengthen one either.
+
+        Nothing has been signed at this point, so a deadline here is unambiguously safe —
+        unlike the paid retry, where a timeout means the signature is already on the wire.
+        """
+        core = self._core
+        try:
+            if core.initial_request_timeout_ms is None:
+                return self._inner.handle_request(request)
+            return with_deadline(
+                lambda: self._inner.handle_request(request),
+                core.initial_request_timeout_ms,
+            )
+        except (TimeoutError, httpx.HTTPError) as error:
+            raise _transport_error(error, request_id, "initial") from error
+
     def inspect(self, request: httpx.Request) -> PaymentInspection:
         core = self._core
         started_at = core.monotonic()
@@ -1368,10 +1412,7 @@ class Tx402Transport(httpx.BaseTransport):
         try:
             core.prepare(request, request_id)
             core.log_request_started(request_id, request)
-            try:
-                response = self._inner.handle_request(request)
-            except httpx.HTTPError as error:
-                raise _transport_error(error, request_id, "initial") from error
+            response = self._issue_initial(request, request_id)
             if response.status_code != 402:
                 return PaymentInspection(request_id, response, None)
             response.read()
@@ -1397,10 +1438,7 @@ class Tx402Transport(httpx.BaseTransport):
         try:
             _body, host = core.prepare(request, request_id)
             core.log_request_started(request_id, request)
-            try:
-                response = self._inner.handle_request(request)
-            except httpx.HTTPError as error:
-                raise _transport_error(error, request_id, "initial") from error
+            response = self._issue_initial(request, request_id)
             if response.status_code != 402:
                 return PaymentPlan(request_id, response)
             response.read()
@@ -1430,10 +1468,7 @@ class Tx402Transport(httpx.BaseTransport):
         request_id = _request_id(core.clock())
         body, host = core.prepare(request, request_id)
         core.log_request_started(request_id, request)
-        try:
-            response = self._inner.handle_request(request)
-        except httpx.HTTPError as error:
-            raise _transport_error(error, request_id, "initial") from error
+        response = self._issue_initial(request, request_id)
         if response.status_code != 402:
             return response
         response.read()
@@ -1528,6 +1563,21 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
         self._inner = inner
         self._core = core
 
+    async def _issue_initial(
+        self, request: httpx.Request, request_id: str
+    ) -> httpx.Response:
+        """Asynchronous counterpart to :meth:`Tx402Transport._issue_initial`."""
+        core = self._core
+        try:
+            if core.initial_request_timeout_ms is None:
+                return await self._inner.handle_async_request(request)
+            return await with_deadline_async(
+                self._inner.handle_async_request(request),
+                core.initial_request_timeout_ms,
+            )
+        except (TimeoutError, httpx.HTTPError) as error:
+            raise _transport_error(error, request_id, "initial") from error
+
     async def inspect(self, request: httpx.Request) -> PaymentInspection:
         core = self._core
         started_at = core.monotonic()
@@ -1535,10 +1585,7 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
         try:
             await core.prepare_async(request, request_id)
             core.log_request_started(request_id, request)
-            try:
-                response = await self._inner.handle_async_request(request)
-            except httpx.HTTPError as error:
-                raise _transport_error(error, request_id, "initial") from error
+            response = await self._issue_initial(request, request_id)
             if response.status_code != 402:
                 return PaymentInspection(request_id, response, None)
             await response.aread()
@@ -1557,10 +1604,7 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
         try:
             _body, host = await core.prepare_async(request, request_id)
             core.log_request_started(request_id, request)
-            try:
-                response = await self._inner.handle_async_request(request)
-            except httpx.HTTPError as error:
-                raise _transport_error(error, request_id, "initial") from error
+            response = await self._issue_initial(request, request_id)
             if response.status_code != 402:
                 return PaymentPlan(request_id, response)
             await response.aread()
@@ -1586,10 +1630,7 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
         request_id = _request_id(core.clock())
         body, host = await core.prepare_async(request, request_id)
         core.log_request_started(request_id, request)
-        try:
-            response = await self._inner.handle_async_request(request)
-        except httpx.HTTPError as error:
-            raise _transport_error(error, request_id, "initial") from error
+        response = await self._issue_initial(request, request_id)
         if response.status_code != 402:
             return response
         await response.aread()
@@ -1684,6 +1725,7 @@ class Tx402Client:
         manifest: Mapping[str, Any] = BUNDLED_MANIFEST,
         clock: Clock = _system_clock,
         allow_insecure_localhost: bool = False,
+        initial_request_timeout_ms: int | None = None,
         payment_retry_timeout_ms: int = _PAYMENT_RETRY_TIMEOUT_MS,
         disable_request_id_header: bool = False,
         logger: Tx402Logger = NOOP_LOGGER,
@@ -1700,6 +1742,7 @@ class Tx402Client:
             evm_rpc_transport=evm_rpc_transport,
             solana_rpc_transport=solana_rpc_transport,
             allow_insecure_localhost=allow_insecure_localhost,
+            initial_request_timeout_ms=initial_request_timeout_ms,
             payment_retry_timeout_ms=payment_retry_timeout_ms,
             disable_request_id_header=disable_request_id_header,
             logger=logger,
@@ -1776,6 +1819,7 @@ class AsyncTx402Client:
         manifest: Mapping[str, Any] = BUNDLED_MANIFEST,
         clock: Clock = _system_clock,
         allow_insecure_localhost: bool = False,
+        initial_request_timeout_ms: int | None = None,
         payment_retry_timeout_ms: int = _PAYMENT_RETRY_TIMEOUT_MS,
         disable_request_id_header: bool = False,
         logger: Tx402Logger = NOOP_LOGGER,
@@ -1792,6 +1836,7 @@ class AsyncTx402Client:
             evm_rpc_transport=evm_rpc_transport,
             solana_rpc_transport=solana_rpc_transport,
             allow_insecure_localhost=allow_insecure_localhost,
+            initial_request_timeout_ms=initial_request_timeout_ms,
             payment_retry_timeout_ms=payment_retry_timeout_ms,
             disable_request_id_header=disable_request_id_header,
             logger=logger,

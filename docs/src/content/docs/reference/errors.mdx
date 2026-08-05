@@ -56,17 +56,17 @@ refused" with "the interpreter died" would make a script unable to tell them apa
 
 <div class="exit-codes">
 
-| Exit | Meaning           | What to do                                                                                      |
-| ---- | ----------------- | ----------------------------------------------------------------------------------------------- |
-| 0    | success           | The call completed. Under `--json`, `ok` may still be `false` if the merchant answered non-2xx. |
-| 2    | usage / config    | The invocation or the environment is wrong. Fix the command.                                    |
-| 3    | policy            | tx402's own guardrail refused. Raise the cap or accept the refusal.                             |
-| 4    | liquidity         | The wallet cannot cover it. Fund it.                                                            |
-| 5    | protocol          | This client and this merchant cannot agree on the challenge. Nothing local helps.               |
-| 6    | signer            | The key or the signing device failed.                                                           |
-| 7    | transport         | The network failed. Retryable under caller policy.                                              |
-| 8    | ambiguous payment | Money may have moved and tx402 cannot tell. **Never retry blindly.**                            |
-| 9    | resource failure  | Payment was fine; the resource was not delivered.                                               |
+| Exit | Meaning           | What to do                                                                                                                                                                            |
+| ---- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | success           | The call completed. Under `--json`, `ok` may still be `false` if the merchant answered non-2xx.                                                                                       |
+| 2    | usage / config    | The invocation or the environment is wrong. Fix the command.                                                                                                                          |
+| 3    | policy            | tx402's own guardrail refused. Raise the cap or accept the refusal.                                                                                                                   |
+| 4    | liquidity         | The wallet cannot cover it. Fund it.                                                                                                                                                  |
+| 5    | protocol          | This client and this merchant cannot agree on the challenge. Nothing local helps.                                                                                                     |
+| 6    | signer            | The key or the signing device failed.                                                                                                                                                 |
+| 7    | transport         | The network failed. Retryable under caller policy.                                                                                                                                    |
+| 8    | ambiguous payment | Money may have moved and tx402 cannot tell. **Never retry blindly.**                                                                                                                  |
+| 9    | resource failure  | The resource was not delivered. Read `context.paid` — it is `false` when the merchant refused the settlement and no money moved, and `true` when it settled and delivery then failed. |
 
 </div>
 
