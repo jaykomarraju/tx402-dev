@@ -2383,6 +2383,21 @@ mypy strict over 25 source files, **586 passed at 92.92 % coverage** against a 9
 **CI at `75c1c98` verified independently before starting:** run **#55 is 11 / 11**, read from
 the GitHub API.
 
+**CI and the publish, both measured after the fact.** `main` was fast-forwarded to `920ac0d`
+and pushed to `jaykomarraju/tx402-dev` — not `neogeeks/tx402`. **CI run #56 on `920ac0d` is
+11 / 11 green**, read from the GitHub API. **Docs run #10 fails as designed**, step for step
+identical to #8 and #9: only `A deploy from main requires the deploy credentials` fails, with
+the three deploy steps skipped. That is O56 fail-closed and not a regression.
+
+**The documentation was rebuilt and published**, on the user's authorization — deployment
+`2c557b87`, source `920ac0d`. Verified over the public internet afterwards: `docs:live`
+**8 / 8**, an internal-citation sweep across **all sixteen** live pages returns clean, and each
+of the six corrections was checked against the live bytes rather than the built `dist/`.
+**Propagation staggered harder than at S21 or S23** — four sweeps over roughly eighty seconds
+before every page agreed, with `operations/publishing` the last to settle and one page briefly
+serving new bytes for one assertion and old bytes for another. Polling until every claim agrees,
+rather than until the first one does, is the form of this check that works.
+
 **§11.3 is still not discharged, and S25 cannot discharge it.** Four consecutive cold re-runs
 have now returned findings. The trend is real and worth stating plainly: S22 and S24 both found
 **zero defects in payment behaviour**, and the findings have moved from blockers to prose and
