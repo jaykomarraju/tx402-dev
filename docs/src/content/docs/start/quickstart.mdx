@@ -357,17 +357,28 @@ covers four unrelated causes. The message names which:
 The last two are merchant defects, not yours. `--json` puts the machine-readable form of any of
 them on stdout, and `details.schemaPath` points at the exact field.
 
-Exit `9` is worth expanding for the opposite reason: it looks like one outcome and is two, and
-the two want opposite actions. It means "you did not get the resource" — it does **not** mean
+Exit `9` is worth expanding for the opposite reason: it looks like one outcome, and is five
+merchant behaviours falling into two dispositions that want opposite actions. It means "you did not get the resource" — it does **not** mean
 "you paid". Run it again with `--json` and read `error.context.paid`:
 
 | `context.paid` | `settlement` | What happened                                                         | Do                                                                             |
 | :------------- | :----------- | :--------------------------------------------------------------------- | :------------------------------------------------------------------------------ |
-| `false`        | `null`       | The merchant refused the settlement, or re-challenged until the attempts ran out. **No money moved** — a signature was produced and transmitted, but nothing settled | Retrying is safe. Your budget reservation was already released |
+| `false`        | `null`       | The merchant did not accept the payment — four behaviours produce this, tabulated below. **No money moved**: a signature was produced and transmitted, but nothing settled | Retrying is safe. Your budget reservation was already released |
 | `true`         | an object    | The payment settled and the merchant then failed to deliver             | **Do not retry.** Reconcile with the merchant, quoting `settlement.transaction` and `settlement.payer` — both are also printed to stderr without `--json` |
 
-`details.reason` names which merchant behaviour it was — `settlement-unsuccessful` and
-`max-paid-attempts-exhausted` are the unpaid ones. When money did move, tx402 prints the
-identifiers to stderr on its own, so establishing that never requires re-running a payment.
+`details.reason` names which merchant behaviour it was. **Four of the five mean no money moved,
+and only one means it did** — `context.paid` above is the field to branch on, and this table is
+what each value can be caused by:
+
+| `details.reason`                         | `context.paid` | The merchant…                                              |
+| :--------------------------------------- | :------------- | :----------------------------------------------------------- |
+| `settlement-unsuccessful`                | `false`        | …reported the settlement as unsuccessful                    |
+| `max-paid-attempts-exhausted`            | `false`        | …re-challenged until the permitted attempts ran out         |
+| `paid-request-rejected`                  | `false`        | …refused the signed request outright                        |
+| `rechallenge-undecodable`                | `false`        | …re-challenged with a `PAYMENT-REQUIRED` that does not decode |
+| `settlement-succeeded-resource-unusable` | `true`         | …reported a **successful** settlement and then failed to deliver |
+
+When money did move, tx402 prints the identifiers to stderr on its own, so establishing that
+never requires re-running a payment.
 
 Full detail for every code is in the [error reference](../../reference/errors/).

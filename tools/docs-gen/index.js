@@ -321,7 +321,7 @@ another process. Reconciling a settlement from code starts with \`plan\` and end
 | ------ | ----- | -------- |
 | \`tx402/evm\` | \`viem\`, \`@x402/evm\` | You pay on an EVM network and want the bundled adapter. |
 | \`tx402/solana\` | \`@solana/kit\`, \`@x402/svm\` | You pay on Solana and want the bundled adapter. |
-| \`tx402/signers\` | \`viem/accounts\` | Development only — wraps a raw private key as an \`EvmSigner\`. |
+| \`tx402/signers\` | \`viem/accounts\`, and \`@solana/kit\` lazily | Development only. \`privateKeyToEvmSigner\` wraps a raw hex key as an \`EvmSigner\`; \`keypairToSolanaSigner\` wraps a keypair as a \`SolanaSigner\`. |
 
 The Python package mirrors this split with extras: \`pip install tx402\` is the core,
 \`tx402[evm]\`, \`tx402[svm]\`, and \`tx402[all]\` add the chain libraries. \`import tx402\` loads no
