@@ -2777,6 +2777,20 @@ against what CI actually executes.
 exit 0 at CI's scope — ruff clean, ruff format over **53 files**, `mypy --strict src` over 25
 files, **597 passed at 93.01 % coverage**.
 
+**CI and the publish, both measured after the fact.** `main` was fast-forwarded to `58cd5ed` and
+pushed to `jaykomarraju/tx402-dev`. **CI run #65 on `58cd5ed` is 11 / 11 green**, read from the
+GitHub API. **Docs run #14 fails as designed**, step for step identical to #8 through #13.
+O56 fail-closed.
+
+**The documentation was rebuilt and published** — deployment `d19cdf8b`, source `58cd5ed`.
+`docs:live` **8 / 8**, and both changed pages verified **byte-identical** between the live site
+and a fresh build of the committed tree, which is a stronger check than grepping for phrases.
+Propagation took two sweeps.
+
+**No testnet funds were spent** — every probe ran against the RPC stub and the in-process test
+merchant. Balances stand where S32 left them: Base Sepolia **15,798,000 atomic**, Solana Devnet
+**28,598,000 atomic**.
+
 **§11.3 is still not discharged, and S33 cannot discharge it.** Eight cold re-runs, eight
 remediations — and the shape of what they return keeps narrowing: **five consecutive passes with
 no defect in payment behaviour**, two findings this round against four last round and six the
