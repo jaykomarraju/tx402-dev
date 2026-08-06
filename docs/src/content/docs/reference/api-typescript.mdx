@@ -135,3 +135,7 @@ another process. Reconciling a settlement from code starts with `plan` and ends 
 The Python package mirrors this split with extras: `pip install tx402` is the core,
 `tx402[evm]`, `tx402[svm]`, and `tx402[all]` add the chain libraries. `import tx402` loads no
 chain library in either language.
+
+Both SDKs are `0.0.0` on the registries today — an inert name placeholder that contains no working
+code; the first functional release is `0.1.0`. Until then, `npm install tx402` and
+`pip install tx402` fetch the placeholder. Do not depend on `0.0.0`.
