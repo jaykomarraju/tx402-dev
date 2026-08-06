@@ -27,7 +27,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any, Final, TypeVar
+from typing import Any, Final, Literal, TypeVar
 from urllib.parse import urlsplit
 
 import httpx
@@ -70,6 +70,7 @@ from tx402.errors import (
     ConfigurationError,
     NonReplayableRequestError,
     PaidRedirectBlockedError,
+    Phase,
     ReservedHeaderError,
     ResourceDeliveryError,
     TransportError,
@@ -977,9 +978,41 @@ class _Core:
                 cause=error,
             ) from error
 
+    @staticmethod
+    def _route_context(
+        selection: _Selection,
+        request_id: str,
+        phase: Phase,
+        *,
+        paid: bool | Literal["unknown"] | None = None,
+        reservation_id: str | None = None,
+    ) -> Tx402ErrorContext:
+        """The post-routing error context, carrying the selected route (SPEC §8).
+
+        TypeScript builds one such object the moment a route is chosen and spreads it into
+        every downstream failure (``client.ts:928``); Python built a bare
+        ``request_id``/``phase`` context at each site, so ``--json``'s ``error.context``
+        dropped ``network``/``scheme``/``amountAtomic``/``assetId`` on every post-routing
+        failure — the parity break S34 found (O107). This is that one object, so the two
+        CLIs emit the same document. Every field it carries is a public identifier or an
+        atomic figure, never a signer payload or an RPC URL (SEC-003).
+        """
+        requirement = selection.requirement.requirement
+        return Tx402ErrorContext(
+            request_id=request_id,
+            phase=phase,
+            network=requirement["network"],
+            scheme=requirement["scheme"],
+            amount_atomic=requirement["amountAtomic"],
+            asset_id=selection.requirement.asset_id,
+            paid=paid,
+            reservation_id=reservation_id,
+        )
+
     def commit_or_fail(
         self,
         *,
+        selection: _Selection,
         request_id: str,
         reservation: SpendReservation,
         settlement_id: str | None,
@@ -1019,9 +1052,10 @@ class _Core:
             )
             raise ResourceDeliveryError(
                 "The payment settled but the spend store could not record it",
-                context=Tx402ErrorContext(
-                    request_id=request_id,
-                    phase="complete",
+                context=self._route_context(
+                    selection,
+                    request_id,
+                    "complete",
                     paid=True,
                     reservation_id=reservation.reservation_id,
                 ),
@@ -1037,6 +1071,7 @@ class _Core:
     def unresolved(
         self,
         *,
+        selection: _Selection,
         request_id: str,
         reservation: SpendReservation,
         disposition: PaidAttemptDisposition,
@@ -1050,9 +1085,10 @@ class _Core:
         reported ``AmbiguousPaymentError`` instead (O52). The money disposition is identical
         either way — retained to TTL — so the fix is an identity fix and nothing more.
         """
-        context = Tx402ErrorContext(
-            request_id=request_id,
-            phase="retry",
+        context = self._route_context(
+            selection,
+            request_id,
+            "retry",
             paid="unknown",
             reservation_id=reservation.reservation_id,
         )
@@ -1088,6 +1124,7 @@ class _Core:
     def transmission_failed(
         self,
         *,
+        selection: _Selection,
         request_id: str,
         reservation: SpendReservation,
         attempt: int,
@@ -1104,6 +1141,7 @@ class _Core:
             result=PaidAttemptResult(kind="transport-failure"),
         )
         return self.unresolved(
+            selection=selection,
             request_id=request_id,
             reservation=reservation,
             disposition=disposition,
@@ -1113,6 +1151,7 @@ class _Core:
     def settle(
         self,
         *,
+        selection: _Selection,
         response: httpx.Response,
         request: httpx.Request,
         prepared: _Prepared,
@@ -1129,6 +1168,7 @@ class _Core:
                 result=PaidAttemptResult(kind="redirect-blocked"),
             )
             raise self.unresolved(
+                selection=selection,
                 request_id=request_id,
                 reservation=reservation,
                 disposition=disposition,
@@ -1167,6 +1207,7 @@ class _Core:
                     },
                 )
             raise self.unresolved(
+                selection=selection,
                 request_id=request_id,
                 reservation=reservation,
                 disposition=disposition,
@@ -1176,6 +1217,7 @@ class _Core:
         # money moved — and only then report the delivery failure, with ``paid=True``.
         if disposition.kind == "paid-undelivered":
             self.commit_or_fail(
+                selection=selection,
                 request_id=request_id,
                 reservation=reservation,
                 settlement_id=settlement_id,
@@ -1194,9 +1236,10 @@ class _Core:
             raise ResourceDeliveryError(
                 "The merchant reported a successful settlement but did not deliver "
                 "the resource",
-                context=Tx402ErrorContext(
-                    request_id=request_id,
-                    phase="complete",
+                context=self._route_context(
+                    selection,
+                    request_id,
+                    "complete",
                     paid=True,
                     reservation_id=reservation.reservation_id,
                 ),
@@ -1230,27 +1273,25 @@ class _Core:
             try:
                 return _Rechallenged(self.decode(response, prepared.request, request_id))
             except Tx402Error as error:
-                details: dict[str, Any] = {
-                    "status": response.status_code,
-                    "reason": RECHALLENGE_UNDECODABLE_REASON,
-                    "attempt": attempt,
-                    "maxPaidAttempts": self.policy.max_paid_attempts,
-                }
-                # Carried through so the operator still learns *how* the header is
-                # malformed, which is the only actionable part of the original error.
-                for key in ("reason", "schemaPath"):
-                    value = error.details.get(key)
-                    if isinstance(value, str):
-                        details["decodeReason" if key == "reason" else key] = value
+                # Mirrors the TypeScript reference exactly (``client.ts:1129``) so the two
+                # CLIs emit the same ``--json`` (O107): spread the decode failure's own
+                # details first — that is what keeps ``schemaPath`` — then let this error's
+                # ``status`` and ``reason`` win. The route context carries the reservation,
+                # which the bare context previously dropped here alone.
                 raise ResourceDeliveryError(
-                    "Merchant re-challenged after the signature with a PAYMENT-REQUIRED "
-                    "that does not decode",
-                    context=Tx402ErrorContext(
-                        request_id=request_id,
-                        phase="complete",
+                    "Merchant re-challenged undecodably",
+                    context=self._route_context(
+                        selection,
+                        request_id,
+                        "complete",
                         paid=False,
+                        reservation_id=reservation.reservation_id,
                     ),
-                    details=details,
+                    details={
+                        **error.details,
+                        "status": response.status_code,
+                        "reason": RECHALLENGE_UNDECODABLE_REASON,
+                    },
                     cause=error,
                 ) from error
 
@@ -1260,9 +1301,10 @@ class _Core:
                 f"{self.policy.max_paid_attempts} permitted paid attempts"
                 if disposition.reason == MAX_PAID_ATTEMPTS_REASON
                 else "Merchant did not deliver the paid resource",
-                context=Tx402ErrorContext(
-                    request_id=request_id,
-                    phase="complete"
+                context=self._route_context(
+                    selection,
+                    request_id,
+                    "complete"
                     if disposition.reason == "settlement-unsuccessful"
                     else "retry",
                     paid=False,
@@ -1277,6 +1319,7 @@ class _Core:
             )
 
         self.commit_or_fail(
+            selection=selection,
             request_id=request_id,
             reservation=reservation,
             settlement_id=settlement_id,
@@ -1592,6 +1635,7 @@ class Tx402Transport(httpx.BaseTransport):
             # — a deadline and a reset are the same fact about settlement — so both reach
             # the disposition table as one input and share its category.
             raise core.transmission_failed(
+                selection=selection,
                 request_id=request_id,
                 reservation=reservation,
                 attempt=attempt,
@@ -1599,6 +1643,7 @@ class Tx402Transport(httpx.BaseTransport):
             ) from error
         paid.read()
         return core.settle(
+            selection=selection,
             response=paid,
             request=retry,
             prepared=prepared,
@@ -1744,6 +1789,7 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
             )
         except (TimeoutError, httpx.HTTPError) as error:
             raise core.transmission_failed(
+                selection=selection,
                 request_id=request_id,
                 reservation=reservation,
                 attempt=attempt,
@@ -1751,6 +1797,7 @@ class AsyncTx402Transport(httpx.AsyncBaseTransport):
             ) from error
         await paid.aread()
         return core.settle(
+            selection=selection,
             response=paid,
             request=retry,
             prepared=prepared,

@@ -4,7 +4,7 @@
 guardrails, and a drop-in `httpx` wrapper for autonomous agents.
 
 > ⚠️ **This is a pre-release (`0.0.0`).** The Python SDK is feature-complete through M6 and
-> at behavioural parity with the TypeScript SDK: both execute the same 67 language-neutral
+> at behavioural parity with the TypeScript SDK: both execute the same 73 language-neutral
 > conformance fixtures. What remains before `0.1.0` is release engineering — an independent
 > security review, registry trusted-publisher configuration, and a release signing key.
 

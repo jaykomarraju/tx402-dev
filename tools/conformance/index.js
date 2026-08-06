@@ -97,16 +97,42 @@ const CLAIM_FILES = [
 const CLAIM_DIRS = ["docs/src/content/docs"];
 
 /**
- * Each pattern's first capture group is the claimed count.
+ * A count claim is a 2–4 digit number followed, within a bounded window, by the noun
+ * `(conformance )?(vectors|fixtures)`. The window is **structural, not a vocabulary**: any
+ * run of letters, whitespace (newlines included), and the continuation markers `>`, `*`,
+ * `-` — but no digit and no clause punctuation — so it spans adjectives the check has never
+ * seen and a blockquote or list wrap without an allowlist to keep current.
  *
- * Two forms, because the documents use both: "N (frozen|shared|cross-language) conformance
- * vectors|fixtures", and the bare "N vectors" that the conformance README and CONTRIBUTING
- * use where the subject is already established.
+ * That allowlist is the bug this had. Its predecessor enumerated `frozen|shared|
+ * cross-language` and matched `conformance` with `\s+`, so `packages/tx402-python/
+ * README.md`'s "67 language-neutral … conformance fixtures" escaped twice over —
+ * `language-neutral` was not in the list, and the claim wrapped onto a `> ` continuation
+ * line that `\s+` cannot cross. The stale number shipped to PyPI while this gate stayed
+ * green (O106). Widening the allowlist is what the project has done five times before
+ * (O72→O77, O79→O82, O81→O85, O85's guard→O95, ADR-023's principle→O104); the sixth writer
+ * picks a sixth adjective. A structural window ends that.
+ *
+ * The group captures the count. The quantifier is a single bounded lazy class — no nested
+ * repetition — so it cannot backtrack catastrophically; a naive nested version was measured
+ * to hang.
  */
-const CLAIM_PATTERNS = [
-  /\b(\d{2,4})\s+(?:frozen\s+|shared\s+|cross-language\s+)*conformance\s+(?:vectors|fixtures)\b/giu,
-  /\b(\d{2,4})\s+(?:frozen\s+|shared\s+)*(?:vectors|fixtures)\b/giu,
-];
+const CLAIM_RE = /\b(\d{2,4})[A-Za-z\s>*-]{0,60}?(?:vectors|fixtures)\b/giu;
+
+/**
+ * The independent half of the guard (the "gate proved something" assertion). A *counting
+ * context* uses the same structural window as `CLAIM_RE` but a wider span, so it is a strict
+ * superset: whatever `CLAIM_RE` parses, this also spans, and then some. A line that trips
+ * this but yields no parsed claim is a phrasing the extractor dropped — filler longer than
+ * `CLAIM_RE`'s window — and `claimProblems` fails loud on it rather than reporting a green
+ * line that proved nothing.
+ *
+ * The window keeps `CLAIM_RE`'s class rather than "any character", on purpose: the two
+ * documented near-misses — `core-spec/conformance/README.md`'s "M0 vectors" (no two-digit
+ * number) and its "six `policy.host-normalization` vectors, added at S15b" (the digit sits
+ * behind a code span) — must stay uncaught, exactly as the audit measured. A broader class
+ * would flag the `S15b` line and fail on prose that states no count.
+ */
+const COUNTING_CONTEXT_RE = /\b\d{2,4}[A-Za-z\s>*-]{0,100}?(?:vectors|fixtures)\b/giu;
 
 /** @param {string} dir @returns {string[]} absolute paths to prose files, sorted */
 function findProse(dir) {
@@ -120,25 +146,60 @@ function findProse(dir) {
   return found;
 }
 
+/** @param {string} text @param {number} index @returns {number} 1-based line of `index` */
+function lineOf(text, index) {
+  return text.slice(0, index).split("\n").length;
+}
+
+/**
+ * Every count claim the structural matcher recognizes, agreeing or not. Recording the
+ * agreeing ones too is what lets the caller assert a scanned counting context actually
+ * produced a match, rather than reporting success for a file whose only claim slipped past.
+ *
+ * @param {string} text
+ * @returns {{claimed: number, line: number, quote: string}[]}
+ */
+function findClaims(text) {
+  const lines = text.split("\n");
+  /** @type {{claimed: number, line: number, quote: string}[]} */
+  const claims = [];
+  for (const match of text.matchAll(CLAIM_RE)) {
+    const line = lineOf(text, match.index);
+    claims.push({ claimed: Number(match[1]), line, quote: (lines[line - 1] ?? "").trim() });
+  }
+  return claims.sort((left, right) => left.line - right.line);
+}
+
 /**
  * @param {string} text
  * @param {number} expected
  * @returns {{claimed: number, line: number, quote: string}[]} every disagreeing claim
  */
 function staleClaims(text, expected) {
+  return findClaims(text).filter((claim) => claim.claimed !== expected);
+}
+
+/**
+ * Lines that put a number beside the noun but yielded no parseable claim — the silent-escape
+ * signature. Returned so the caller can fail on them instead of trusting the extractor's
+ * silence.
+ *
+ * @param {string} text
+ * @returns {{line: number, quote: string}[]}
+ */
+function unmatchedCountingContexts(text) {
   const lines = text.split("\n");
-  /** @type {{claimed: number, line: number, quote: string}[]} */
-  const stale = [];
-  for (const pattern of CLAIM_PATTERNS) {
-    for (const match of text.matchAll(pattern)) {
-      const claimed = Number(match[1]);
-      if (claimed === expected) continue;
-      const before = text.slice(0, match.index).split("\n");
-      const line = before.length;
-      stale.push({ claimed, line, quote: (lines[line - 1] ?? "").trim() });
-    }
+  const claimedLines = new Set(findClaims(text).map((claim) => claim.line));
+  /** @type {{line: number, quote: string}[]} */
+  const unmatched = [];
+  for (const match of text.matchAll(COUNTING_CONTEXT_RE)) {
+    const line = lineOf(text, match.index);
+    // A claim matched on this line accounts for the context; only an unaccounted-for line is
+    // evidence the extractor dropped something.
+    if (!claimedLines.has(line))
+      unmatched.push({ line, quote: (lines[line - 1] ?? "").trim() });
   }
-  return stale.sort((left, right) => left.line - right.line);
+  return unmatched;
 }
 
 /** @param {number} expected @returns {string[]} human-readable problems */
@@ -150,9 +211,18 @@ function claimProblems(expected) {
   /** @type {string[]} */
   const problems = [];
   for (const file of files) {
-    for (const stale of staleClaims(readFileSync(file, "utf8"), expected)) {
+    const text = readFileSync(file, "utf8");
+    const relative = path.relative(repoRoot, file);
+    for (const stale of staleClaims(text, expected)) {
+      problems.push(`  ${relative}:${stale.line} claims ${stale.claimed}: ${stale.quote}`);
+    }
+    // The gate must prove it matched something: a counting context that produced no claim on
+    // its line is a phrasing the matcher could not parse, and it fails loud here rather than
+    // passing silent (O106).
+    for (const context of unmatchedCountingContexts(text)) {
       problems.push(
-        `  ${path.relative(repoRoot, file)}:${stale.line} claims ${stale.claimed}: ${stale.quote}`,
+        `  ${relative}:${context.line} states a vector count the matcher could not parse ` +
+          `(rephrase so a 2-4 digit number sits beside "conformance vectors"): ${context.quote}`,
       );
     }
   }
@@ -283,10 +353,28 @@ function check() {
     return 1;
   }
 
+  // Report what was actually verified, not how many files were opened. The old wording —
+  // "${CLAIM_FILES.length} documents … agree" — printed unconditionally, so a claim that
+  // matched no pattern was indistinguishable from a claim that agreed (O106).
+  const matched = claimMatchCount();
   console.log("OK    conformance index matches the vectors on disk");
-  console.log(`OK    ${CLAIM_FILES.length} documents and the docs site agree on the count`);
+  console.log(
+    `OK    ${matched} documented vector-count claims all read ${rebuilt.vectors.length}`,
+  );
   summarize(rebuilt);
   return 0;
+}
+
+/** @returns {number} count claims the matcher actually parsed across every scanned file */
+function claimMatchCount() {
+  const files = [
+    ...CLAIM_FILES.map((file) => path.join(repoRoot, file)),
+    ...CLAIM_DIRS.flatMap((dir) => findProse(path.join(repoRoot, dir))),
+  ];
+  return files.reduce(
+    (total, file) => total + findClaims(readFileSync(file, "utf8")).length,
+    0,
+  );
 }
 
 /**
@@ -297,6 +385,11 @@ function check() {
  * must *not* flag, because a check that fires on historical prose gets deleted.
  */
 function selftest() {
+  // The real suite is 73; a case is flagged if its number disagrees with that, or if it puts
+  // a number beside the noun in a way the matcher cannot parse into a claim at all.
+  const EXPECTED = 73;
+  const filler = "adjective ".repeat(8); // ~80 chars: past CLAIM_RE's window, inside the guard's
+
   /** @type {[string, string, boolean][]} name, text, expected-to-be-flagged */
   const cases = [
     ["plain claim", "held to 65 conformance vectors today", true],
@@ -305,15 +398,31 @@ function selftest() {
     ["cross-language claim", "replays all 65 cross-language conformance vectors", true],
     ["bare noun", "holds 65 vectors that both SDKs execute", true],
     ["fixtures spelling", "the 65 conformance fixtures are frozen", true],
-    ["correct count", "All 67 conformance vectors execute in both languages", false],
-    ["historical, detached", "67 vectors across M0–M6 — 65 at the freeze", false],
+    // The class bug itself: an adjective the old allowlist never enumerated.
+    ["novel adjective", "65 language-neutral conformance fixtures", true],
+    // The exact O106 escape: an unlisted adjective *and* a wrap onto a `> ` continuation.
+    ["blockquote-wrapped (O106)", "67 language-neutral\n> conformance fixtures", true],
+    ["list-wrapped", "65 shared\n- conformance vectors", true],
+    // The guard, not the extractor: a count buried behind filler longer than CLAIM_RE's
+    // window still trips COUNTING_CONTEXT_RE, so it must fail loud rather than pass silent.
+    ["over-window filler (guard)", `73 ${filler}conformance vectors`, true],
+    ["correct count", "All 73 conformance vectors execute in both languages", false],
+    ["historical, detached", "73 vectors across M0–M6 — 65 at the freeze", false],
     ["unrelated number", "a 65-byte EVM signature, and 65,537 decoded bytes", false],
     ["unrelated noun", "65 requests per hour", false],
+    // The two repository near-misses that must stay uncaught (core-spec/conformance/README).
+    [
+      "near-miss, code span",
+      "the six `policy.host-normalization` vectors, added at S15b",
+      false,
+    ],
+    ["near-miss, one digit", "M0 vectors must execute; M1 is Stage A only", false],
   ];
 
   let failures = 0;
   for (const [name, text, shouldFlag] of cases) {
-    const flagged = staleClaims(text, 67).length > 0;
+    const flagged =
+      staleClaims(text, EXPECTED).length > 0 || unmatchedCountingContexts(text).length > 0;
     if (flagged !== shouldFlag) {
       failures += 1;
       console.error(
