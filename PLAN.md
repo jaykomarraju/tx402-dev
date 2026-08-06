@@ -3321,6 +3321,20 @@ session owns:
   key (O12), and push the curated tree to `neogeeks/tx402` — only with the user's explicit
   in-session approval (§8 standing rule).
 
+**No agent attribution on the public repository — a hard requirement (set by the user at S39).**
+Claude / Anthropic must **not** appear as a contributor on `neogeeks/tx402` in any form. This is
+mechanical, so treat it mechanically: GitHub's contributor graph and its per-commit co-author
+rendering are driven by the **author**, **committer**, and `Co-Authored-By:` fields. Therefore
+every commit that reaches the public repo has **author _and_ committer = `Jayanth Komarraju
+<jay.komarraju@gmail.com>`** and **no `Co-Authored-By` (or any other agent-attribution) trailer** —
+the §8 standing rule, load-bearing here. The public history must be **authored clean** and **not
+derived from any commit that carries such a trailer**: note that two S39 commits on
+`jaykomarraju/tx402-dev` — `d6fb581` and `b1bb3e3` — do carry one, so a curated public push must
+not import them (a fresh/squashed clean history is the safe route). Nothing in the repo _content_
+may credit the agent either. **Before finishing, verify** `neogeeks/tx402` → Insights →
+Contributors lists only the user, and that no commit's author, committer, or co-author references
+Claude or Anthropic.
+
 **The human-review gate is cleared.** O8 — the independent security review (SPEC §12.4) — is
 **complete and approved** (user-confirmed, S39). The remaining USER prerequisites for §11.4 are
 **O10** (npm/PyPI trusted-publisher config), **O12** (release signing key), and **O56**
