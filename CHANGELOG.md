@@ -12,6 +12,11 @@ a minor to break you but this project still refuses to let it happen quietly.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-06
+
+First functional release. The `0.0.0` that preceded it on npm and PyPI was an inert placeholder
+published only to hold the name.
+
 ### Added
 
 - **The buyer-side SDK, in TypeScript and Python.** `createTx402Client` / `Tx402Client` /
@@ -63,4 +68,5 @@ a minor to break you but this project still refuses to let it happen quietly.
   `AmbiguousPaymentError` with the reservation retained to its TTL — never an automatic retry.
 - Importing the core package loads no chain library in either language, asserted in a subprocess.
 
-[Unreleased]: https://github.com/neogeeks/tx402/commits/main
+[Unreleased]: https://github.com/neogeeks/tx402/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/neogeeks/tx402/releases/tag/v0.1.0

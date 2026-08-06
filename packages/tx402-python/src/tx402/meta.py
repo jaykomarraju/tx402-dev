@@ -1,14 +1,9 @@
 """Package and project identity.
 
 Mirrors ``packages/tx402/src/meta.ts`` exactly. Every constant here is part of the
-cross-language contract enforced by the conformance suite (ADR-005), so the two files
-must be changed together.
-
-Development happens in the private ``tx402-dev`` repository; the public open-source
-repository is ``neogeeks/tx402`` (PLAN.md open item O3, resolved S11). Every outward-facing
-URL is routed through this module so the migration is a single-file change. The git remote
-itself moves at S12; these constants lead it, because published package metadata must name
-the public repository from the first release rather than a private one nobody can open.
+cross-language contract enforced by the conformance suite, so the two files must be changed
+together. Every outward-facing URL is routed through this module, so no repository or
+documentation URL is ever hardcoded at a call site.
 """
 
 from __future__ import annotations

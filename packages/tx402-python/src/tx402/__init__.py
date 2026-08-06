@@ -24,9 +24,9 @@ Chain support lives behind extras and is *not* re-exported here: ``tx402.solana`
 ``solders``, so importing it from this module would make the core install depend on a chain
 library. Reach it as ``from tx402.solana import SolanaSigner`` after installing
 ``tx402[svm]`` — the same split the TypeScript package draws with its ``tx402/solana``
-subpath export (ADR-009).
+subpath export.
 
-Status: implemented through M6 against the frozen cross-language conformance fixtures.
+Both SDKs are validated against the same frozen cross-language conformance fixtures.
 """
 
 from __future__ import annotations

@@ -21,13 +21,6 @@ that is a bug in this page.
 Everything here happens on **testnets** with valueless tokens. Nothing on this page can spend
 real money.
 
-:::caution[Pre-release: you are installing a 0.0.0 placeholder]
-The `tx402` published to npm and PyPI is version **`0.0.0`** — an inert name placeholder that
-contains no working code. The first functional release is `0.1.0` and is not published yet, so
-`npm install tx402` / `pip install "tx402[evm]"` and every `npx tx402` command below pull that
-placeholder rather than a working SDK until `0.1.0` ships. Do not depend on `0.0.0`.
-:::
-
 ## Before you start
 
 You need one funded testnet wallet. Pick either chain — you do not need both.
@@ -104,8 +97,9 @@ It prints one JSON line and keeps running:
 
 Use that `url` wherever this page says `<merchant-url>` — the path is `/resource`, so the
 full URL is `http://127.0.0.1:54321/resource`. Swap `--requirements baseSepolia` for
-`solanaDevnet` to be offered a Solana route instead, or pass both, comma-separated, to be
-offered a choice and watch the router pick.
+`solanaDevnet` to be offered a Solana route instead, or pass both, comma-separated, so the
+merchant offers both. The CLI pays a single route you name with `--network` (step 4); ranking
+across several offered routes is the SDK router's job — see [Routing](../../guides/routing/).
 
 :::note[Why `http://` is accepted here]
 The SDK requires HTTPS everywhere except localhost, where the CLI opts in explicitly. A

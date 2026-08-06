@@ -8,9 +8,6 @@ guardrails, and a drop-in `fetch` wrapper for autonomous agents.
 [Source](https://github.com/neogeeks/tx402) ·
 [Python SDK](https://pypi.org/project/tx402/)
 
-> **`0.0.0` is an inert name placeholder and contains no working code.** The first functional
-> release is `0.1.0`. Do not depend on `0.0.0`.
-
 ## Why
 
 An AI agent running a fifty-step workflow cannot afford to have step 45 die because the merchant

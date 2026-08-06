@@ -8,4 +8,4 @@
  */
 
 /** The published package version, identical to `package.json` and to `pyproject.toml`. */
-export const PACKAGE_VERSION = "0.0.0";
+export const PACKAGE_VERSION = "0.1.0";

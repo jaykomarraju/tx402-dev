@@ -1,12 +1,8 @@
 /**
  * Package and project identity.
  *
- * Development happens in the private `tx402-dev` repository; the public open-source
- * repository is `neogeeks/tx402` (PLAN.md open item O3, resolved S11). Every outward-facing
- * URL is routed through this module so that the migration is a single-file change and no
- * repo URL is ever hardcoded at a call site. The git remote itself moves at S12; these
- * constants lead it, because published package metadata must name the public repository
- * from the first release rather than a private one nobody can open.
+ * Every outward-facing URL is routed through this module, so no repository or documentation
+ * URL is ever hardcoded at a call site and there is a single place to change if one moves.
  */
 
 /** npm and PyPI package name. Unscoped and identical on both registries — see ADR-009. */

@@ -4,11 +4,6 @@ Four runnable programs, two per language, each written to be read top to bottom.
 "runnable versions" the [quickstart](https://docs.tx402.io/start/quickstart/) links to, and they
 do the same two things the quickstart does from the CLI.
 
-> **Pre-release.** The `tx402` on npm and PyPI is version `0.0.0` — an inert name placeholder that
-> contains no working code. The first functional release is `0.1.0`, not yet published, so the
-> `pip install "tx402[evm]"` below pulls the placeholder until it ships. Do not depend on `0.0.0`.
-> (The TypeScript examples run against this repo's workspace package and are unaffected.)
-
 | File                       | What it does                                                 |
 | :------------------------- | :----------------------------------------------------------- |
 | `typescript/quickstart.ts` | Pays for one resource and prints the response                |

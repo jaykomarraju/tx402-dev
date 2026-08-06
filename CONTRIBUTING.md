@@ -1,7 +1,7 @@
 # Contributing to tx402
 
-Thanks for wanting to help. This document is the short version of how the project works; the
-long version is `SPEC.md`, which governs.
+Thanks for wanting to help. This document is how the project works — how it is built, what
+gets a change merged, and what gets one sent back.
 
 **If you are reporting a security vulnerability, stop and read [`SECURITY.md`](SECURITY.md)
 instead.** Do not open a public issue.
@@ -10,13 +10,13 @@ instead.** Do not open a public issue.
 
 Understanding these will save you a rejected PR.
 
-### 1. `SPEC.md` governs, and changing a MUST requires an ADR
+### 1. Behaviour is defined by the docs and the conformance vectors
 
-`SPEC.md` is the authoritative behavioural specification. `PRD.md` explains _why_ and never
-overrides _what_. If your change alters a MUST or MUST NOT, it needs a new ADR in
-[`adr/`](adr/) recording the decision and its consequences — not a comment, and not a commit
-message. Existing ADRs are append-only: a reversed decision gets a new ADR that supersedes the
-old one.
+The [documentation](https://docs.tx402.io) states what tx402 guarantees, and the frozen
+conformance vectors in `core-spec/` pin those guarantees in executable form. A change that
+alters a documented guarantee — a MUST or a MUST NOT — is a contract change, not a bug fix:
+open an issue to discuss it first, and land it in the docs and the vectors together with the
+code. Reversing an earlier decision is fine; doing it silently is not.
 
 ### 2. The conformance fixtures are frozen
 
@@ -26,7 +26,7 @@ keeps TypeScript and Python identical.
 **Adding** a vector is ordinary work. **Changing or removing** one is a contract change.
 
 If a run disagrees with a frozen vector, establish whether the defect is in TypeScript, in
-Python, or in the vector's reading of `SPEC.md` **before editing anything**. Editing the fixture
+Python, or in the vector's reading of the intended behaviour **before editing anything**. Editing the fixture
 first is exactly how a cross-language contract quietly becomes a record of whatever the two
 implementations happen to do. This has caught real bugs — four Python client behaviours were
 wrong and the fixtures were right. Rules and rationale: `core-spec/conformance/README.md`.
@@ -70,7 +70,7 @@ pnpm lint                 # eslint, --max-warnings 0
 pnpm format:check         # prettier
 pnpm typecheck            # tsc, strict + noUncheckedIndexedAccess + exactOptionalPropertyTypes
 pnpm test                 # vitest, 90 % coverage gate
-pnpm build && pnpm size   # the bundle-size gate (ADR-008)
+pnpm build && pnpm size   # the bundle-size gate
 pnpm conformance:check    # fixture index integrity
 pnpm manifest:verify      # manifest signature
 pnpm docs:check           # generated docs pages are current
@@ -92,13 +92,13 @@ needs the coverage.
 ## Things that will get a PR sent back
 
 - **A JS `number` or a Python `float` anywhere near money.** Every amount is an integer count of
-  atomic units, end to end (ADR-006).
-- **A signer call before policy and reservation.** That ordering is SEC-002 and it holds on
-  every attempt, not only the first.
+  atomic units, end to end.
+- **A signer call before policy and reservation.** Policy evaluation and budget reservation come
+  first, on every attempt, not only the first.
 - **A signature, key, or authorization payload reachable from a log, an error, or a
-  diagnostic event** (SEC-003).
+  diagnostic event.**
 - **A private key accepted anywhere in the main configuration**, or any CLI flag that could
-  carry one (SEC-001).
+  carry one.
 - **A chain library imported from the core path.** `viem`, `@solana/kit`, `solders`, and the
   upstream scheme packages are reached lazily. A package-contract test asserts this in both
   languages.
@@ -135,7 +135,7 @@ Write the test that would have caught the bug, not the test that passes.
 - Conventional commits: `feat(scope):`, `fix(scope):`, `docs(scope):`, `chore(scope):`.
 - The subject line says what changed; the body says **why**, and what you considered instead.
 - One logical change per PR. A refactor and a behaviour change in one diff cannot be reviewed.
-- Reference the SPEC section, ADR, or test ID your change relates to.
+- Reference the docs section, issue, or test ID your change relates to.
 
 ## Documentation
 

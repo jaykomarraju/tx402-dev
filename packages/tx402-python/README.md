@@ -3,10 +3,8 @@
 **Resilient x402 buyer SDK for Python.** Deterministic multi-chain payment routing, local spend
 guardrails, and a drop-in `httpx` wrapper for autonomous agents.
 
-> ⚠️ **This is a pre-release (`0.0.0`).** The Python SDK is feature-complete through M6 and
-> at behavioural parity with the TypeScript SDK: both execute the same 73 language-neutral
-> conformance fixtures. What remains before `0.1.0` is release engineering — an independent
-> security review, registry trusted-publisher configuration, and a release signing key.
+Feature-complete and at behavioural parity with the TypeScript SDK — both execute the same 73
+language-neutral conformance fixtures.
 
 ## What it does
 
@@ -93,12 +91,11 @@ pip install "tx402[all]"     # everything
 
 Requires Python 3.10+.
 
-## Status
+## Parity with the TypeScript SDK
 
-Pre-alpha, feature-complete through M6, covering Base and Solana. The TypeScript SDK
-([`tx402` on npm](https://www.npmjs.com/package/tx402)) is at behavioural parity — both are
-validated against the same language-neutral conformance fixtures, and a behavioural change
-lands in both languages together or not at all.
+The TypeScript SDK ([`tx402` on npm](https://www.npmjs.com/package/tx402)) is the reference
+implementation. Both are validated against the same language-neutral conformance fixtures, and a
+behavioural change lands in both languages together or not at all.
 
 ## License
 

@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tx402"
-version = "0.0.0"
+version = "0.1.0"
 description = "Resilient x402 buyer SDK — deterministic multi-chain payment routing, local spend guardrails, and a drop-in httpx wrapper for autonomous agents."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 keywords = ["x402", "http-402", "payments", "usdc", "stablecoin", "ai-agents", "base", "solana", "httpx", "sdk"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",

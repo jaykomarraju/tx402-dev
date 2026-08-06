@@ -11,4 +11,4 @@ from __future__ import annotations
 from typing import Final
 
 #: The published package version, identical to ``pyproject.toml`` and ``package.json``.
-PACKAGE_VERSION: Final = "0.0.0"
+PACKAGE_VERSION: Final = "0.1.0"

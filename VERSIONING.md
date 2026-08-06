@@ -1,8 +1,6 @@
 # Versioning and Release Policy
 
-This document is the compatibility contract between tx402 and the code that depends on it. It is
-derived from [`SPEC.md`](SPEC.md) §15, which governs; where this file and SPEC.md disagree, SPEC.md
-is right and this file is a bug.
+This document is the compatibility contract between tx402 and the code that depends on it.
 
 ## Semantic versioning, and what 0.x actually means
 
@@ -96,7 +94,7 @@ after 1.0. Adding one is a patch.
 
 A release is cut from `main`, by CI, and never from a laptop.
 
-1. Every [SPEC §12.4](SPEC.md) release gate is green on protected `main`: P0/P1 tests, no
+1. Every release gate is green on protected `main`: P0/P1 tests, no
    unresolved critical or high security finding, 100 % TypeScript↔Python conformance parity,
    SBOM + licence check + provenance + reproducible build, the public testnet smoke suite passing
    twice from clean environments, published documentation, and a clear independent security review.

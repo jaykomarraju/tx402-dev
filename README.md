@@ -18,11 +18,6 @@ payment routing across whatever chains the merchant offered, and one signature p
 
 </div>
 
-> [!IMPORTANT]
-> **`0.1.0` is not released yet.** The `0.0.0` on npm and PyPI is an inert name placeholder — it
-> contains no working code. Both SDKs are feature-complete and at behavioural parity, and the
-> project is in pre-publication review. Do not depend on `0.0.0`.
-
 ---
 
 ## The problem
@@ -188,7 +183,6 @@ docs/                    the documentation site (Astro Starlight)
 examples/                runnable quickstart and dry-run, both languages
 tools/                   size gate, manifest signer, conformance index, test merchant,
                          RPC stubs, fuzz + performance harnesses, supply-chain gates
-adr/                     every architectural decision, including each deviation from SPEC.md
 ```
 
 **The two SDKs are held together by files, not by intent.** All 73 conformance vectors execute in
@@ -234,8 +228,8 @@ Scope, response times, and the guarantees a report can be filed against are in
 ## Contributing
 
 [CONTRIBUTING.md](CONTRIBUTING.md) leads with the three rules that actually get a PR rejected:
-`SPEC.md` governs, the 73 conformance fixtures are frozen, and behavioural changes land in both
-languages together. Participation is governed by the
+the docs and the 73 frozen conformance vectors define behaviour, those vectors run identically in
+both languages, and behavioural changes land in both languages together. Participation is governed by the
 [Contributor Covenant](CODE_OF_CONDUCT.md).
 
 ## License
