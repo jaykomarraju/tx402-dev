@@ -117,10 +117,16 @@ after `verify` passes. Without that, a pushed tag publishes on its own.
 ## The release signing key
 
 The bundled manifest is signed with an Ed25519 key whose public half is compiled into both
-packages. `tx402-release-1` is a **development** key: it was generated on a workstation, and
-anything generated on a workstation should be assumed to have been readable there.
+packages. `tx402-release-1` was the original **development** key: it was generated on a
+workstation, and anything generated on a workstation should be assumed to have been readable
+there. It no longer signs releases — it stays in the trusted set only so prior and
+conformance manifests keep verifying.
 
-**A published release must be signed by a key that was never on a developer's machine.**
+**A published release should be signed by a key that was never on a developer's machine.**
+`0.1.0` is a deliberate, recorded exception: `tx402-release-2` was generated locally to ship
+the first release, so it should be treated as readable on that machine. The next rotation
+moves signing into a key that lives only in a secret manager or CI OIDC — the process below
+is written for that key.
 
 ### Generating it
 
@@ -157,7 +163,9 @@ delete it, not after.
 
 Doing steps 1 and 2 in the same release is the mistake worth naming: a client that has not
 yet upgraded would reject the new signature, and manifest verification failure is a
-construction failure, not a warning.
+construction failure, not a warning. (`0.1.0` combined them safely only because it is the
+first functional release: there is no earlier client in the field, and tx402 fetches no key
+at runtime.)
 
 ### Verifying
 

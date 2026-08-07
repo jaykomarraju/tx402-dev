@@ -36,7 +36,7 @@ reaching for the filesystem would break serverless and edge deployments.
 node tools/manifest-signer/index.js verify
 
 # After editing bundled.manifest.json
-node tools/manifest-signer/index.js sign --key core-spec/manifests/keys/tx402-release-1.private.pem
+node tools/manifest-signer/index.js sign --key core-spec/manifests/keys/tx402-release-2.private.pem
 node tools/manifest-signer/index.js embed     # regenerate both SDK copies
 pnpm check                                     # both suites re-verify the signature
 ```
@@ -74,15 +74,19 @@ key is never rotated.
 
 ## Key handling
 
-The current key, `tx402-release-1`, was generated locally for development.
-It lives at `core-spec/manifests/keys/tx402-release-1.private.pem`, which is gitignored.
+Releases are signed by `tx402-release-2`. `tx402-release-1` was the original development
+key; it is kept in the trusted set only so the manifest conformance vectors and any manifest
+it previously signed keep verifying, and the release pipeline refuses to publish a manifest
+still signed by it.
 
-**Back it up somewhere durable.** If it is lost, every manifest it signed stops being
+Both private keys live at `core-spec/manifests/keys/<id>.private.pem`, which is gitignored.
+**Back them up somewhere durable.** If a key is lost, every manifest it signed stops being
 re-signable and a new key must be issued — see rotation below.
 
-**Before `0.1.0`**, the release key must be regenerated inside a secure
-environment and held in CI OIDC or a secret manager, never as a plaintext repository
-variable. The development key must not sign a published release.
+`tx402-release-2` was generated locally for the `0.1.0` release, so it should be treated as
+readable on the machine that made it. A subsequent rotation should move signing into a key
+that lives only in a secret manager or CI OIDC and never touches a developer's machine — see
+_Releasing → The release signing key_.
 
 ### Rotation
 
