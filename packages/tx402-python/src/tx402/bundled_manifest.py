@@ -99,7 +99,7 @@ BUNDLED_MANIFEST: Final[dict[str, Any]] = {
     },
     "signature": {
         "algorithm": "ed25519",
-        "keyId": "tx402-release-1",
-        "value": "hnLn7HmXRjiBc/VfyvZZibx93O/4+3hZdQrgNy4hYyao4fd2xoXRMDM+IRumKB7xBvmIfs5+oK0/U2Hlu45RAA==",
+        "keyId": "tx402-release-2",
+        "value": "lxXl/oLGlPsUfy79pZw2G5aWgYh1FU5TDPyIFXYyegpyQwFy9ggOPaTycOBIsvXXAA7NMcmN9N+tEfIIGIkZAw==",
     },
 }

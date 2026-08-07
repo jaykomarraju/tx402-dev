@@ -20,6 +20,7 @@
 /** keyId to standard-alphabet base64 of the raw 32-byte Ed25519 public key. */
 export const TRUSTED_MANIFEST_KEYS: Readonly<Record<string, string>> = Object.freeze({
   "tx402-release-1": "pFKQxLkGxeV4ZEsRFapcsfe0lulPBOfpnGygqazrgDY=",
+  "tx402-release-2": "8wcL7EWGIMVSK75rZ8lnGIwBYiJKQQMsLllpGkaoLt4=",
 });
 
 /**

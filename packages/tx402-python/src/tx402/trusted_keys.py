@@ -27,6 +27,7 @@ __all__ = ["MANIFEST_SIGNING_DOMAIN", "TRUSTED_MANIFEST_KEYS"]
 TRUSTED_MANIFEST_KEYS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "tx402-release-1": "pFKQxLkGxeV4ZEsRFapcsfe0lulPBOfpnGygqazrgDY=",
+        "tx402-release-2": "8wcL7EWGIMVSK75rZ8lnGIwBYiJKQQMsLllpGkaoLt4=",
     }
 )
 
